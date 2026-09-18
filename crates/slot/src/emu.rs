@@ -5,6 +5,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::cable::{self, Cable};
 use slot_retro::{
     ButtonMask, Link, LinkChannel, RetroCore, Rumble, GBA_H, GBA_W, NETPACKET_RELIABLE,
 };
@@ -167,6 +168,10 @@ enum Cmd {
     /// Drops the transport — which is what actually closes the wire, see `TcpLink`'s `Drop`
     /// — and marks the session no longer active.
     EndLink,
+    /// The emulated cable, rather than netpacket. `player` is which port this device drives.
+    /// The core runs both consoles, so the frame clock moves to `cable.rs` and the transport
+    /// carries button masks instead of the core's own packets.
+    BeginCable(u8, Box<dyn LinkChannel>),
 }
 
 struct Shared {
@@ -211,6 +216,9 @@ struct Shared {
     /// The transport's far end went away during a session. Cleared when a session begins or
     /// ends. See `EmuHandle::link_lost`.
     link_lost: AtomicBool,
+    /// Frames stepped through `run_frame_linked`. The one thing that separates a cable session
+    /// that is running from one that is merely begun.
+    linked: AtomicU64,
     /// The transport's far end said it was ending the session, rather than merely going away.
     /// Cleared when a session begins or ends, exactly like `link_lost` — and deliberately a
     /// flag of its own, because a peer that says goodbye and then drops its wire sets both,
@@ -268,6 +276,7 @@ impl EmuHandle {
             resume_refused: AtomicBool::new(false),
             sav_refused: AtomicBool::new(false),
             link_lost: AtomicBool::new(false),
+            linked: AtomicU64::new(0),
             peer_ended: AtomicBool::new(false),
             runahead: AtomicU8::new(0),
             kick: Mutex::new(None),
@@ -318,6 +327,11 @@ impl EmuHandle {
 
     /// The transport's far end went away during a session. Cleared when a session begins or
     /// ends.
+    /// Frames stepped through the emulated cable.
+    pub fn linked_frames(&self) -> u64 {
+        self.shared.linked.load(Ordering::Relaxed)
+    }
+
     pub fn link_lost(&self) -> bool {
         self.shared.link_lost.load(Ordering::Relaxed)
     }
@@ -338,6 +352,12 @@ impl EmuHandle {
     /// own: 0 the host, 1 the joiner, the only two this product has.
     pub fn begin_link(&self, client_id: u16, transport: Box<dyn LinkChannel>) {
         let _ = self.cmds.send(Cmd::BeginLink(client_id, transport));
+    }
+
+    /// Wires a transport to the emulated cable instead of netpacket. `player` is which port
+    /// this device drives: the core runs both consoles, and the frame clock moves to `cable.rs`.
+    pub fn begin_cable(&self, player: u8, transport: Box<dyn LinkChannel>) {
+        let _ = self.cmds.send(Cmd::BeginCable(player, transport));
     }
 
     /// Drops the transport and marks the session no longer active. Safe to call whether or
@@ -694,9 +714,12 @@ impl Worker {
         // not `Sync`-shaped state a render-thread read would make sense of, only something
         // this loop drains and feeds once a frame.
         let mut transport: Option<Box<dyn LinkChannel>> = None;
+        // `Some` only on the in-core route. Netpacket sessions leave this `None` and keep the
+        // frame clock they always had.
+        let mut cable: Option<Cable> = None;
         while !self.shared.stop.load(Ordering::Relaxed) {
             for cmd in self.cmds.try_iter() {
-                self.apply(cmd, core.as_mut(), &mut transport, &link);
+                self.apply(cmd, core.as_mut(), &mut transport, &mut cable, &link);
             }
 
             // Pumped every present regardless of speed or phase, not only while the core is
@@ -705,7 +728,17 @@ impl Worker {
             // device paused its own picture. Neither direction may block the frame —
             // `try_recv` already never does — so this is always safe to run.
             if let Some(t) = transport.as_mut() {
-                drain_transport(t.as_mut(), &link, MAX_LINK_PACKETS_PER_PRESENT);
+                // One transport, two routes, and only one of them may read it: `drain_transport`
+                // empties the wire into the core's own packet queue, which on the cable route
+                // would swallow every button mask before `cable` ever saw it.
+                match cable.as_mut() {
+                    Some(c) => {
+                        while let Some(buf) = t.try_recv() {
+                            c.accept(&buf);
+                        }
+                    }
+                    None => drain_transport(t.as_mut(), &link, MAX_LINK_PACKETS_PER_PRESENT),
+                }
                 // Both checked after the drain, so the last packets a peer sent before leaving
                 // still reach the core. Which of the two the screen acts on is decided by
                 // whoever reads them (`Session::update`), not here: a peer that ends a session
@@ -807,7 +840,7 @@ impl Worker {
                 // and a netpacket session must never be run twice and wound back, since the
                 // peer would hear every packet the hidden frames sent.
                 let ahead = match speed {
-                    Speed::Normal if !link.is_active() && runahead_on => {
+                    Speed::Normal if !link.is_active() && cable.is_none() && runahead_on => {
                         self.shared.runahead.load(Ordering::Relaxed)
                     }
                     _ => 0,
@@ -852,7 +885,35 @@ impl Worker {
                         let last = ran >= ceiling || began.elapsed() + frame_peak * 2 > budget;
                         core.set_frame_skip(!last);
                         let frame_began = Instant::now();
-                        core.run_frame(input);
+                        match cable.as_mut() {
+                            // The in-core route. One `run_frame_linked` steps both consoles, so
+                            // the frame cannot start until both masks are in hand; a late peer
+                            // stalls the present rather than being guessed at, because a stepped
+                            // frame is not something either device can take back.
+                            Some(c) => {
+                                // Sent here rather than with the drain, so this frame's buttons
+                                // leave on the frame that sampled them.
+                                if let Some(t) = transport.as_deref_mut() {
+                                    t.send(NETPACKET_RELIABLE, &c.sample(input));
+                                }
+                                match c.ready() {
+                                    Some((p0, p1)) => {
+                                        core.run_frame_linked(p0, p1);
+                                        c.advance();
+                                        self.shared.linked.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    None => {
+                                        c.stall();
+                                        self.shared.link_lost.store(
+                                            c.stalled() >= cable::QUIET_FRAMES,
+                                            Ordering::Relaxed,
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                            None => core.run_frame(input),
+                        }
                         worst = worst.max(frame_began.elapsed());
                         if last {
                             break;
@@ -985,7 +1046,7 @@ impl Worker {
         // lost; `Cmd::EndLink` is the goodbye a deliberate ending owes the peer. The core is
         // still alive here to answer: it is dropped when this function returns.
         for cmd in self.cmds.try_iter() {
-            self.apply(cmd, core.as_mut(), &mut transport, &link);
+            self.apply(cmd, core.as_mut(), &mut transport, &mut cable, &link);
         }
         // The ring belongs to the session, so a cart that left while fast forwarding would
         // otherwise take every sound after it with it.
@@ -1004,6 +1065,7 @@ impl Worker {
         cmd: Cmd,
         core: &mut dyn RetroCore,
         transport: &mut Option<Box<dyn LinkChannel>>,
+        cable: &mut Option<Cable>,
         link: &Link,
     ) {
         match cmd {
@@ -1051,9 +1113,19 @@ impl Worker {
                 link.set_active(true);
                 *transport = Some(t);
             }
+            Cmd::BeginCable(player, t) => {
+                self.shared.link_lost.store(false, Ordering::Relaxed);
+                self.shared.peer_ended.store(false, Ordering::Relaxed);
+                // No `start_link` and no `link.set_active`: this route never goes through
+                // libretro's netpacket interface at all, so a core with no `start` callback is
+                // not a gap here the way it is for `BeginLink`.
+                *cable = Some(Cable::new(player));
+                *transport = Some(t);
+            }
             Cmd::EndLink => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
+                *cable = None;
                 // `Cmd::BeginLink`'s counterpart: tells the core the session is over,
                 // if it registered a `stop` to hear it through (`RetroCore::stop_link`
                 // — libretro documents `stop` as OPTIONAL, unlike `start`, so this is
