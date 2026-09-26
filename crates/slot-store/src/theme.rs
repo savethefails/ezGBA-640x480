@@ -27,6 +27,18 @@ pub struct Theme {
     pub scrim: [u8; 3],
     /// `menu off` keeps MENU on the shelf from opening the settings menu.
     pub menu: bool,
+    /// `picture 4:3` fills the panel; `picture 3:2` keeps the GBA's own shape with thin bars.
+    pub picture: Aspect,
+}
+
+/// The shape of the game picture on a 640x480 panel.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Aspect {
+    /// The whole panel, the GBA picture a little narrower than it should be.
+    #[default]
+    FourThree,
+    /// The GBA's own 3:2 at the full panel width, with a thin bar above and below.
+    ThreeTwo,
 }
 
 impl Default for Theme {
@@ -38,6 +50,7 @@ impl Default for Theme {
             edge: [0x4d, 0x4d, 0x57],
             scrim: [0x00, 0x00, 0x00],
             menu: true,
+            picture: Aspect::FourThree,
         }
     }
 }
@@ -71,6 +84,8 @@ impl Theme {
             match (name.as_str(), value.to_ascii_lowercase().as_str()) {
                 ("menu", "off") => theme.menu = false,
                 ("menu", "on") => theme.menu = true,
+                ("picture", "4:3") => theme.picture = Aspect::FourThree,
+                ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
                 _ => {}
             }
             let Some(rgb) = hex(value) else {

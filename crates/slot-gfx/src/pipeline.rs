@@ -2,15 +2,19 @@ use crate::lcd3x::mask_texture_rgba8;
 use crate::power::{screen_brightness, screen_rect};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{GfxError, GAME_H, GAME_W, OUT_H, OUT_W};
+use crate::surface::{game_rect, GfxError, OUT_H, OUT_W};
 
 /// The GBA's own picture, which every platform's frame is centred inside.
 pub const SRC_W: u32 = 240;
 pub const SRC_H: u32 = 160;
 
 /// Whether the LCD3x grille can be drawn at all. It is a 3x3 table that only lines up with the
-/// source at exactly 3x, which a 640 wide panel is not, so on the RG35XXSP it is off.
-const GRILLE_FITS: bool = GAME_W == SRC_W * 3 && GAME_H == SRC_H * 3;
+/// source at exactly 3x both ways, which a 640 wide panel never is, so on the RG35XXSP it is
+/// off whichever shape the picture is.
+fn grille_fits() -> bool {
+    let (_, _, w, h) = game_rect();
+    w == SRC_W * 3 && h == SRC_H * 3
+}
 
 /// Origin then size, in texture coordinates: everything there is. The default, what a GBA
 /// picture is always drawn with, and what a still is always drawn with.
@@ -82,7 +86,7 @@ impl GamePass {
             u_uv,
             u_grille,
             u_out,
-            grille: GRILLE_FITS,
+            grille: true,
             power: 1.0,
             src: WHOLE_TEXTURE,
         })
@@ -92,7 +96,7 @@ impl GamePass {
     /// compositor turns it off when the composite is downscaled onto a smaller panel, and the
     /// picture is shaded by the grille's average instead.
     pub fn set_grille(&mut self, on: bool) {
-        self.grille = on && GRILLE_FITS;
+        self.grille = on;
     }
 
     pub fn set_power(&mut self, t: f32) {
@@ -166,7 +170,8 @@ impl GamePass {
             // because the game and a still deliberately want different answers.
             gl::Uniform4f(self.u_uv, src[0], src[1], src[2], src[3]);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
-            gl::Uniform1f(self.u_grille, if self.grille { 1.0 } else { 0.0 });
+            let grille = self.grille && grille_fits();
+            gl::Uniform1f(self.u_grille, if grille { 1.0 } else { 0.0 });
             // The size the picture is drawn at this frame, which the power curve squeezes: the
             // scaler measures its panel pixels against the rect they are actually in.
             gl::Uniform2f(self.u_out, w, h);

@@ -1,5 +1,5 @@
 use slot_gfx::{
-    blue_light_gain, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H,
+    blue_light_gain, game_rect, set_picture, Compositor, Draw, HeadlessSurface, Picture, OUT_H,
     OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -9,8 +9,12 @@ static GL: Mutex<()> = Mutex::new(());
 
 /// A GL context is not available everywhere. Skip rather than fail, the same way the mGBA
 /// test skips a missing dylib.
+///
+/// In the 3:2 picture, the one with bars: most of what these check is where the picture ends,
+/// and 4:3 ends at the panel's own edge. `in_four_three` is the other shape.
 fn compositor() -> Option<(MutexGuard<'static, ()>, HeadlessSurface, Compositor)> {
     let guard = GL.lock().unwrap_or_else(PoisonError::into_inner);
+    set_picture(Picture::ThreeTwo);
     let surface = HeadlessSurface::new().ok()?;
     let compositor = Compositor::new(&surface).ok()?;
     Some((guard, surface, compositor))
@@ -74,8 +78,8 @@ fn shaded(rgb: [u8; 3]) -> [i32; 3] {
 /// pixels stretched over the game area. The sharp filter only blends at a cell's edges, so
 /// here the source comes through untouched.
 fn centre_of(sx: usize, sy: usize, w: usize, h: usize) -> (usize, usize) {
-    let x = GAME_X as f32 + (sx as f32 + 0.5) * GAME_W as f32 / w as f32;
-    let y = GAME_Y as f32 + (sy as f32 + 0.5) * GAME_H as f32 / h as f32;
+    let x = game_rect().0 as f32 + (sx as f32 + 0.5) * game_rect().2 as f32 / w as f32;
+    let y = game_rect().1 as f32 + (sy as f32 + 0.5) * game_rect().3 as f32 / h as f32;
     (x as usize, y as usize)
 }
 
@@ -98,7 +102,10 @@ fn a_flat_frame_fills_the_game_area_flat_and_nothing_else() {
     let frame = c.read_frame();
 
     let want = shaded([0x80; 3]);
-    let (top, bottom) = (GAME_Y as usize, (GAME_Y + GAME_H) as usize);
+    let (top, bottom) = (
+        game_rect().1 as usize,
+        (game_rect().1 + game_rect().3) as usize,
+    );
     for y in 0..OUT_H as usize {
         for x in 0..OUT_W as usize {
             let got = px(&frame, x, y);
@@ -124,7 +131,7 @@ fn the_game_frame_keeps_its_orientation_from_upload_to_readback() {
     c.draw_game();
     let frame = c.read_frame();
 
-    let (x0, y0) = (GAME_X as usize, GAME_Y as usize);
+    let (x0, y0) = (game_rect().0 as usize, game_rect().1 as usize);
     for y in y0..y0 + 2 {
         for x in x0..x0 + 2 {
             assert!(
@@ -136,12 +143,12 @@ fn the_game_frame_keeps_its_orientation_from_upload_to_readback() {
     assert_eq!(px(&frame, x0 + 5, y0), [0, 0, 0], "bled one cell right");
     assert_eq!(px(&frame, x0, y0 + 5), [0, 0, 0], "bled one cell down");
     assert_eq!(
-        px(&frame, x0, (GAME_Y + GAME_H) as usize - 1),
+        px(&frame, x0, (game_rect().1 + game_rect().3) as usize - 1),
         [0, 0, 0],
         "frame is upside down"
     );
     assert_eq!(
-        px(&frame, (GAME_X + GAME_W) as usize - 1, y0),
+        px(&frame, (game_rect().0 + game_rect().2) as usize - 1, y0),
         [0, 0, 0],
         "frame is mirrored"
     );
@@ -167,7 +174,10 @@ fn the_picture_strikes_as_a_band_at_the_centre_before_it_fills_the_frame() {
 
     let (striking, bright) = peak(&mut c, 0.35);
     let lit = |frame: &[u8], y: usize| (0..OUT_W as usize).any(|x| px(frame, x, y) != [0, 0, 0]);
-    let (top, bottom) = (GAME_Y as usize, (GAME_Y + GAME_H) as usize - 1);
+    let (top, bottom) = (
+        game_rect().1 as usize,
+        (game_rect().1 + game_rect().3) as usize - 1,
+    );
     assert!(lit(&striking, (top + bottom) / 2), "nothing at the centre");
     assert!(
         !lit(&striking, top + 1),
@@ -258,12 +268,16 @@ fn a_saved_shot_is_drawn_through_the_game_pass() {
 
     assert_ne!(plain, lit, "the shot is not going through the game pass");
     let want = shaded([200; 3]);
-    for (x, y) in [(0, GAME_Y), (320, 240), (639, GAME_Y + GAME_H - 1)] {
+    for (x, y) in [
+        (0, game_rect().1),
+        (320, 240),
+        (639, game_rect().1 + game_rect().3 - 1),
+    ] {
         let got = px(&lit, x as usize, y as usize);
         assert!(close(got, want), "{x},{y}: {got:?} against {want:?}");
     }
     assert_eq!(
-        px(&lit, 320, GAME_Y as usize - 1),
+        px(&lit, 320, game_rect().1 as usize - 1),
         [0, 0, 0],
         "the shot is over the bar"
     );
@@ -534,7 +548,7 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
     c.upload_game(&src);
     c.draw_game();
     let actual = c.read_frame();
-    let got = px(&actual, GAME_X as usize, GAME_Y as usize);
+    let got = px(&actual, game_rect().0 as usize, game_rect().1 as usize);
     assert!(
         close(got, shaded(MARGIN)),
         "at actual size the picture's corner is not the margin: {got:?}"
@@ -546,9 +560,9 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
     c.draw_game();
     let full = c.read_frame();
 
-    let (first_x, first_y) = (GAME_X as usize, GAME_Y as usize);
-    let last_x = (GAME_X + GAME_W) as usize - 1;
-    let last_y = (GAME_Y + GAME_H) as usize - 1;
+    let (first_x, first_y) = (game_rect().0 as usize, game_rect().1 as usize);
+    let last_x = (game_rect().0 + game_rect().2) as usize - 1;
+    let last_y = (game_rect().1 + game_rect().3) as usize - 1;
     for (name, (x, y), rgb) in [
         ("top left", (first_x, first_y), [255, 0, 0]),
         ("top right", (last_x, first_y), [0, 255, 0]),
@@ -601,7 +615,10 @@ fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
         // Along one row through the middle of the picture: every pixel is either one of the
         // two flat values, or a lone blend between them. Two blends side by side is a band.
         let (_, y) = centre_of(w / 2, h / 2, w, h);
-        let (x0, x1) = (GAME_X as usize + 8, (GAME_X + GAME_W) as usize - 8);
+        let (x0, x1) = (
+            game_rect().0 as usize + 8,
+            (game_rect().0 + game_rect().2) as usize - 8,
+        );
         let white = shaded([255; 3])[0];
         let grey = |x: usize| {
             let v = px(&frame, x, y)[0] as i32;
@@ -611,7 +628,10 @@ fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
         assert_eq!(wide, None, "{name}: a blend two pixels wide at x {wide:?}");
         // And down one column.
         let (x, _) = centre_of(w / 2, h / 2, w, h);
-        let (y0, y1) = (GAME_Y as usize + 8, (GAME_Y + GAME_H) as usize - 8);
+        let (y0, y1) = (
+            game_rect().1 as usize + 8,
+            (game_rect().1 + game_rect().3) as usize - 8,
+        );
         let grey = |y: usize| {
             let v = px(&frame, x, y)[0] as i32;
             v > 2 && v < white - 2
@@ -646,7 +666,7 @@ fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
         c.upload_game(&column(at));
         c.draw_game();
         let frame = c.read_frame();
-        let y = (GAME_Y + GAME_H / 2) as usize;
+        let y = (game_rect().1 + game_rect().3 / 2) as usize;
         (0..OUT_W as usize)
             .map(|x| px(&frame, x, y)[1] as f32)
             .collect::<Vec<_>>()
@@ -669,4 +689,49 @@ fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
             "column {at} leaves {lit} pixels of light, not 8/3"
         );
     }
+}
+
+/// 4:3, the default: the picture is the whole panel, and 480 rows over 160 is exactly 3, so a
+/// flat frame fills every pixel and no row of a hard horizontal edge is blended.
+#[test]
+fn in_four_three_the_picture_fills_the_panel_and_rows_are_whole() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    set_picture(Picture::FourThree);
+    assert_eq!(game_rect(), (0, 0, OUT_W, OUT_H));
+    c.set_screen_power(1.0);
+
+    let grey = vec![0x80u8; (SRC_W * SRC_H * 4) as usize];
+    c.begin_frame();
+    c.upload_game(&grey);
+    c.draw_game();
+    let frame = c.read_frame();
+    for (x, y) in [(0, 0), (639, 0), (0, 479), (639, 479), (320, 240)] {
+        assert!(
+            close(px(&frame, x, y), [0x80; 3]),
+            "{x},{y} is not the picture"
+        );
+    }
+
+    // Rows alternating white and black: every panel row is one or the other, never between.
+    let rows: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+        .flat_map(|i| match (i / SRC_W as usize) % 2 {
+            0 => [255, 255, 255, 0],
+            _ => [0, 0, 0, 0],
+        })
+        .collect();
+    c.begin_frame();
+    c.upload_game(&rows);
+    c.draw_game();
+    let frame = c.read_frame();
+    for y in 0..OUT_H as usize {
+        let v = px(&frame, 320, y)[0];
+        let want = if (y / 3) % 2 == 0 { 255 } else { 0 };
+        assert!(
+            v.abs_diff(want) <= 1,
+            "row {y} is {v}, not {want}: a row was blended at 3x"
+        );
+    }
+    set_picture(Picture::ThreeTwo);
 }

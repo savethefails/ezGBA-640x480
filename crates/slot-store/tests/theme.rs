@@ -1,4 +1,4 @@
-use slot_store::Theme;
+use slot_store::{Aspect, Theme};
 
 /// The card is edited on a desktop by hand. Every way that can go wrong has to leave a device
 /// that still boots and a slot that is still visible.
@@ -62,4 +62,22 @@ fn menu_off_is_read_and_the_menu_is_on_by_default() {
     assert!(!t.menu);
     assert_eq!(t.scrim, [0xf7, 0xe7, 0xce]);
     assert!(Theme::parse("menu maybe").menu);
+}
+
+/// 4:3 fills the panel and is what a card with no `picture` line gets; 3:2 is asked for by
+/// name. Anything else leaves the default, as a misspelt colour does.
+#[test]
+fn the_picture_is_four_three_unless_the_card_asks_for_three_two() {
+    assert_eq!(Theme::parse("").picture, Aspect::FourThree);
+    assert_eq!(Theme::parse("picture 3:2").picture, Aspect::ThreeTwo);
+    assert_eq!(Theme::parse("PICTURE 3:2").picture, Aspect::ThreeTwo);
+    assert_eq!(
+        Theme::parse("picture 3:2\npicture 4:3").picture,
+        Aspect::FourThree
+    );
+    assert_eq!(Theme::parse("picture 16:9").picture, Aspect::FourThree);
+    assert_eq!(
+        Theme::parse("picture 3:2 please").picture,
+        Aspect::FourThree
+    );
 }

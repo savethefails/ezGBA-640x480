@@ -1,4 +1,4 @@
-use slot_gfx::{Draw, TexId, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W};
+use slot_gfx::{game_rect, Draw, TexId, OUT_H, OUT_W};
 use slot_power::Battery;
 use slot_store::{parse_stamp, StateEntry};
 
@@ -183,7 +183,8 @@ impl Polaroids {
     }
 
     fn draw_photo(&self, out: &mut Vec<Draw>) {
-        let (w, h) = (GAME_W as f32, GAME_H as f32);
+        let (x, y, w, h) = game_rect();
+        let (x, y, w, h) = (x as f32, y as f32, w as f32, h as f32);
         out.push(match self.faces.get(self.index) {
             // Through the game pass, not over it: the shot is a still of the same panel at
             // the same scale, so it is filtered exactly as the live frame is.
@@ -191,8 +192,8 @@ impl Polaroids {
             // Opaque, and the same colour a missing thumbnail decodes to. The paused game is
             // still underneath, and a screenshot it showed through would read as live.
             None => Draw::Rect {
-                x: GAME_X as f32,
-                y: GAME_Y as f32,
+                x,
+                y,
                 w,
                 h,
                 colour: [

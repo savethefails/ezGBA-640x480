@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use slot_gfx::{Draw, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W};
+use slot_gfx::{game_rect, Draw, OUT_H, OUT_W};
 use slot_store::{StateEntry, RING_MAX};
 use slot_ui::{
     hint_face, hint_width, Polaroids, Printed, DOT, HINT_H, LEGEND, PHOTO_H, PHOTO_W, PLATE_H,
@@ -108,8 +108,14 @@ fn the_screenshot_fills_the_game_area() {
     let p = switcher_with(3);
     let out = draw(&p);
     let photo = *quads(&out).first().expect("no screenshot drawn");
-    assert_eq!((photo.w, photo.h), (GAME_W as f32, GAME_H as f32));
-    assert_eq!((photo.x, photo.y), (GAME_X as f32, GAME_Y as f32));
+    assert_eq!(
+        (photo.w, photo.h),
+        (game_rect().2 as f32, game_rect().3 as f32)
+    );
+    assert_eq!(
+        (photo.x, photo.y),
+        (game_rect().0 as f32, game_rect().1 as f32)
+    );
     assert_eq!((PHOTO_W, PHOTO_H), (240, 160));
 }
 

@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use slot::thumb;
 use slot_gfx::{
-    Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W, SRC_H, SRC_W,
+    game_rect, set_picture, Compositor, Draw, HeadlessSurface, Picture, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use slot_retro::{ButtonMask, MockCore, RetroCore};
 use slot_store::{Core, Platform, StateRing};
@@ -16,6 +16,8 @@ static GL: Mutex<()> = Mutex::new(());
 
 fn compositor() -> Option<(MutexGuard<'static, ()>, HeadlessSurface, Compositor)> {
     let guard = GL.lock().unwrap_or_else(PoisonError::into_inner);
+    // The 3:2 picture, whose bars these tests check stay black.
+    set_picture(Picture::ThreeTwo);
     let surface = HeadlessSurface::new().ok()?;
     let compositor = Compositor::new(&surface).ok()?;
     Some((guard, surface, compositor))
@@ -29,8 +31,8 @@ fn px(frame: &[u8], x: usize, y: usize) -> [u8; 3] {
 /// The panel pixel at the middle of a source pixel's cell in the 640x427 picture. The sharp
 /// bilinear filter only blends at a cell's edges, so here the source comes through untouched.
 fn centre(sx: usize, sy: usize) -> (usize, usize) {
-    let x = GAME_X as f32 + (sx as f32 + 0.5) * GAME_W as f32 / SRC_W as f32;
-    let y = GAME_Y as f32 + (sy as f32 + 0.5) * GAME_H as f32 / SRC_H as f32;
+    let x = game_rect().0 as f32 + (sx as f32 + 0.5) * game_rect().2 as f32 / SRC_W as f32;
+    let y = game_rect().1 as f32 + (sy as f32 + 0.5) * game_rect().3 as f32 / SRC_H as f32;
     (x as usize, y as usize)
 }
 
@@ -195,6 +197,9 @@ fn the_switcher_magnifies_its_screenshot_without_resampling_it() {
         "the screenshot differs from the game by {worst}"
     );
     // And nothing of it outside the game area: the bars above and below stay black.
-    assert_eq!(px(&frame, 320, GAME_Y as usize - 1), [0, 0, 0]);
-    assert_eq!(px(&frame, 320, (GAME_Y + GAME_H) as usize), [0, 0, 0]);
+    assert_eq!(px(&frame, 320, game_rect().1 as usize - 1), [0, 0, 0]);
+    assert_eq!(
+        px(&frame, 320, (game_rect().1 + game_rect().3) as usize),
+        [0, 0, 0]
+    );
 }

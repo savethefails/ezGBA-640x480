@@ -59,18 +59,23 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 |---|---|
 | `menu off` | Hide the settings menu, so little hands can't change anything |
 | `scrim #F7E7CE` | Background color behind the shelf |
+| `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
 
 ## The RG35XXSP's 640×480 screen
 
 Everything is drawn for 640×480 directly, not made for another screen and shrunk to fit:
 
 - **The shelf, menus, clock and About label are laid out for 640×480**, pixel for pixel.
-- **The game fills the full width at 640×427.** That keeps the GBA's 3:2 shape, with thin
-  black bars above and below. The GBA's 240×160 doesn't go into 640 a whole number of
-  times, so each game pixel is 2 or 3 screen pixels wide. A sharp filter keeps the pixels
-  crisp and blends only a one-pixel edge between them, so scrolling doesn't shimmer.
-- **No LCD grid lines.** The grid only lines up at exactly 3× the GBA's size, so it's off
-  here, and the picture is shaded to the same brightness the grid gave it.
+- **The game fills the whole screen.** The GBA is a little wider than 4:3, so games look
+  about 11% narrower than on a real GBA. To keep the GBA's exact shape instead, add
+  `picture 3:2` to `System/theme.txt`: the game is then 640×427, with thin black bars above
+  and below.
+- **Sharp pixels, no shimmer.** 240 doesn't go into 640 a whole number of times, so each game
+  pixel is 2 or 3 screen pixels wide. The picture is scaled with sharp-shimmerless, the
+  RetroArch shader, which keeps every pixel solid and blends only the one screen pixel where
+  two meet, so scrolling doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game
+  pixel, so nothing is blended at all.
+- **No LCD grid lines.** They only line up at exactly 3× the GBA's size in both directions.
 
 ## Setup
 

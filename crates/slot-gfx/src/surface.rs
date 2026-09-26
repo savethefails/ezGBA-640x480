@@ -1,19 +1,53 @@
 use std::ffi::c_void;
 use std::fmt;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// The RG35XXSP's panel, and the size everything is composed at. The UI is laid out for it
 /// directly, so on the device the blit is 1:1.
 pub const OUT_W: u32 = 640;
 pub const OUT_H: u32 = 480;
 
-/// Where the game picture sits in the frame. The GBA's 3:2 at the full panel width: 240x160
-/// at 2.67x is 640x426.7, rounded to whole rows so its edges land on pixel boundaries, which
-/// leaves a 26 px bar above it and 27 px below. Not a whole multiple of the source, so the
-/// game pass scales it with a sharp bilinear filter rather than nearest (see `GAME_FRAG`).
-pub const GAME_W: u32 = OUT_W;
-pub const GAME_H: u32 = 427;
-pub const GAME_X: u32 = (OUT_W - GAME_W) / 2;
-pub const GAME_Y: u32 = (OUT_H - GAME_H) / 2;
+/// The shape the game picture is drawn at, chosen by `picture` in `System/theme.txt`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Picture {
+    /// The whole 640x480 panel. The GBA's 3:2 is squeezed to 4:3, about 11% narrower than
+    /// it should be, and in exchange there are no bars and every source row is exactly three
+    /// panel rows: only the columns are blended.
+    #[default]
+    FourThree,
+    /// The GBA's own shape at the full panel width: 240x160 at 2.67x is 640x426.7, rounded
+    /// to whole rows so its edges land on pixel boundaries, leaving a 26 px bar above and 27 px
+    /// below.
+    ThreeTwo,
+}
+
+/// Read by every draw, set once at boot from the card. An atomic rather than a `OnceLock`
+/// because the tests draw both shapes in one process.
+static PICTURE: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_picture(picture: Picture) {
+    PICTURE.store(picture as u8, Ordering::Relaxed);
+}
+
+pub fn picture() -> Picture {
+    match PICTURE.load(Ordering::Relaxed) {
+        1 => Picture::ThreeTwo,
+        _ => Picture::FourThree,
+    }
+}
+
+/// Where the game picture sits in the frame, as x, y, width and height in panel pixels.
+/// Neither shape is a whole multiple of the source across, so the game pass scales it with
+/// sharp-shimmerless rather than nearest (see `GAME_FRAG`).
+pub fn game_rect() -> (u32, u32, u32, u32) {
+    match picture() {
+        Picture::FourThree => (0, 0, OUT_W, OUT_H),
+        Picture::ThreeTwo => {
+            let h = 427;
+            (0, (OUT_H - h) / 2, OUT_W, h)
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum GfxError {

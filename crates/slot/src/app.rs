@@ -6,8 +6,8 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Cart, Core, Platform, SlotState,
-    StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, Platform,
+    SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -762,7 +762,12 @@ impl App {
         crate::root::migrate(root);
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
-        slot_ui::set_theme(Theme::read(root));
+        let theme = Theme::read(root);
+        slot_gfx::set_picture(match theme.picture {
+            Aspect::FourThree => slot_gfx::Picture::FourThree,
+            Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
+        });
+        slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
         app.root = Some(root.to_path_buf());
         app.state = read_slot_state(root);

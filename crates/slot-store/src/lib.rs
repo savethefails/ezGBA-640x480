@@ -25,4 +25,4 @@ pub use slot_state::{
 pub use stamp::{
     civil_from_days, days_from_civil, days_in_month, format_stamp, parse_stamp, stamp_now,
 };
-pub use theme::{Theme, THEME_FILE};
+pub use theme::{Aspect, Theme, THEME_FILE};
