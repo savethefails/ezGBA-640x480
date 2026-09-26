@@ -44,10 +44,18 @@ pub fn fit_rect(win_w: u32, win_h: u32) -> (i32, i32, i32, i32) {
     ((win_w as i32 - w) / 2, (win_h as i32 - h) / 2, w, h)
 }
 
+/// Whether a target can hold the 720x480 composite at a whole multiple. When it cannot — the
+/// RG35XXSP's 640x480 panel — the blit is a fractional downscale, which has to be filtered
+/// rather than nearest (nearest drops every ninth row and column) and cannot carry the LCD3x
+/// grille (its 3 px triads beat against the 8/9 resample into bands).
+pub fn blit_is_whole(window: (u32, u32)) -> bool {
+    window.0 >= OUT_W && window.1 >= OUT_H
+}
+
 /// The composite scaled to fit, aspect preserved, for a panel too small to hold it whole.
-/// The scale is fractional, so the mask is resampled and the picture is soft. That is the
-/// bring-up trade on a 640x480 device panel, where the integer path would crop 80 px of
-/// chrome off the sides instead.
+/// The scale is fractional, so the picture is filtered and slightly soft. On the RG35XXSP's
+/// 640x480 panel that is 640x427 with 26 px bars above and below: the GBA's 3:2 at the largest
+/// size the panel holds, where the integer path would crop 80 px of chrome off the sides.
 pub fn blit_rect_fit(panel: (u32, u32), shake: f32) -> (i32, i32, i32, i32) {
     let scale = (panel.0 as f32 / OUT_W as f32).min(panel.1 as f32 / OUT_H as f32);
     let w = (OUT_W as f32 * scale).round() as i32;
@@ -68,7 +76,7 @@ pub fn blit_rect_fit(panel: (u32, u32), shake: f32) -> (i32, i32, i32, i32) {
 pub fn blit_rect(window: (u32, u32), shake: f32) -> (i32, i32, i32, i32) {
     // Below native there is no whole multiple left to crop to, so a target that cannot hold
     // the composite shows all of it softly rather than part of it sharply.
-    if window.0 < OUT_W || window.1 < OUT_H {
+    if !blit_is_whole(window) {
         return blit_rect_fit(window, shake);
     }
     let (x, y, w, h) = fit_rect(window.0, window.1);

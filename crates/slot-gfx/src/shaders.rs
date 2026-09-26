@@ -77,6 +77,11 @@ void main() {
 /// exactly one source pixel; stretched, a source pixel is wider than a cell and the grille
 /// stops landing on pixel edges. That is what a blown-up Game Boy picture looked like, and it
 /// is the honest consequence of the stretch rather than a defect to design around.
+///
+/// `u_grille` is 1.0 wherever the composite reaches the panel at a whole multiple and 0.0 where
+/// it is downscaled (the RG35XXSP's 640x480). Off, the mask is replaced by its own average,
+/// `u_flat`, so the picture keeps the brightness it had with the grille rather than jumping by
+/// a third.
 pub const GAME_FRAG: &str = r#"
 precision mediump float;
 uniform sampler2D u_game;
@@ -84,10 +89,13 @@ uniform sampler2D u_mask;
 uniform vec2 u_src;
 uniform vec4 u_uv;
 uniform float u_bright;
+uniform float u_grille;
+uniform vec3 u_flat;
 varying vec2 v_uv;
 void main() {
     vec2 uv = u_uv.xy + v_uv * u_uv.zw;
-    vec3 rgb = texture2D(u_game, uv).rgb * texture2D(u_mask, v_uv * u_src).rgb;
+    vec3 mask = mix(u_flat, texture2D(u_mask, v_uv * u_src).rgb, u_grille);
+    vec3 rgb = texture2D(u_game, uv).rgb * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);
 }
 "#;

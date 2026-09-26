@@ -5,6 +5,9 @@
 ezGBA turns an Anbernic RG SP into a Game Boy Advance that anyone can pick up and play.
 Made for kids, and for grown-ups who just want a simple GBA.
 
+This fork runs on the **RG35XXSP** and its 640×480 screen. It reads the screen size from the
+device, so the same build still works on a 720×480 RG34XXSP.
+
 <p align="center">
   <img src="media/shelf-advance-wars.png" width="45%" alt="The shelf: Advance Wars selected, its box art filling the screen above the carts">
   <img src="media/shelf-wario-land.png" width="45%" alt="The shelf: Wario Land 4 selected">
@@ -58,6 +61,21 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 | `menu off` | Hide the settings menu, so little hands can't change anything |
 | `scrim #F7E7CE` | Background color behind the shelf |
 
+## The RG35XXSP's 640×480 screen
+
+ezGBA draws everything at 720×480, which is three times the GBA's 240×160. On a 640×480
+screen it shrinks that whole picture to fit:
+
+- **The game fills the full width at 640×427**, the biggest size that keeps the GBA's shape.
+  The leftover space becomes thin black bars above and below.
+- **It's smoothed, not chopped.** The shrink blends pixels together instead of dropping
+  every ninth row and column, so text and sprites don't wobble or tear.
+- **No LCD grid lines.** The grid only lines up at exactly 3×. At this size it would turn
+  into stripes, so it's off, and the picture is dimmed slightly so it's as bright as before.
+- **The screen size comes from the device.** ezGBA asks the display driver how big the
+  screen is. If the driver doesn't answer, it assumes 640×480. It writes the size it picked
+  to the log as `slot: panel 640x480, ...`.
+
 ## Setup
 
 1. Set up your RG SP using [slot.'s install guide](https://slot.kowalski.io).
@@ -66,7 +84,8 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 4. **Add box art (optional).** Box art isn't included, since it belongs to the publishers.
    Put a 720×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
    `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
-   so the carts don't cover it.
+   so the carts don't cover it. Use 720×480 on the RG35XXSP too: the whole screen gets
+   shrunk to fit, box art included.
 
 ## AI disclosure
 

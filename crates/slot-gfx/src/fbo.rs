@@ -3,7 +3,7 @@ use crate::grade::blue_light_gain;
 use crate::pipeline::GamePass;
 use crate::quad::Quad;
 use crate::shaders::{BLIT_FRAG, BLIT_VERT};
-use crate::surface::{blit_rect, GfxError, Surface, OUT_H, OUT_W};
+use crate::surface::{blit_is_whole, blit_rect, GfxError, Surface, OUT_H, OUT_W};
 
 /// Backdrop behind everything drawn into the offscreen target. Distinct from the black
 /// letterbox so the blit rect is visible even with nothing else on screen.
@@ -19,6 +19,9 @@ pub struct Compositor {
     u_gain: gl::types::GLint,
     gain: [f32; 3],
     shake: f32,
+    /// Whether the last present was a whole multiple. Tracked so the filter and the grille
+    /// are only switched when the target changes, not every frame.
+    whole: bool,
     quad: Quad,
     game: GamePass,
     sprites: Sprites,
@@ -28,7 +31,8 @@ impl Compositor {
     pub fn new(surface: &dyn Surface) -> Result<Self, GfxError> {
         crate::gl::load(surface);
         let blit = crate::shaders::program(BLIT_VERT, BLIT_FRAG)?;
-        // Nearest and clamped: the blit is an integer multiply, never a resample.
+        // Nearest and clamped: at a whole multiple the blit is an integer multiply, never a
+        // resample. `fit_to` switches it to linear for a smaller panel.
         let tex = crate::gl::texture(OUT_W, OUT_H, gl::NEAREST, gl::CLAMP_TO_EDGE, gl::RGBA, None);
         unsafe {
             let mut fbo = 0;
@@ -53,17 +57,39 @@ impl Compositor {
             gl::Uniform1i(crate::gl::uniform_location(blit, "u_tex"), 0);
             let u_gain = crate::gl::uniform_location(blit, "u_gain");
 
-            Ok(Compositor {
+            let mut compositor = Compositor {
                 fbo,
                 tex,
                 blit,
                 u_gain,
                 gain: blue_light_gain(0),
                 shake: 0.0,
+                whole: true,
                 quad: Quad::new(),
                 game: GamePass::new()?,
                 sprites: Sprites::new()?,
-            })
+            };
+            compositor.fit_to(surface.window_size());
+            Ok(compositor)
+        }
+    }
+
+    /// Match the blit to the target. At a whole multiple, nearest and the LCD3x grille, as
+    /// the composite was designed. Onto a smaller panel — the RG35XXSP's 640x480 — linear, so
+    /// the 8/9 downscale blends rows and columns rather than dropping every ninth, and no
+    /// grille, whose triads would beat against the resample into visible bands.
+    fn fit_to(&mut self, window: (u32, u32)) {
+        let whole = blit_is_whole(window);
+        if whole == self.whole {
+            return;
+        }
+        self.whole = whole;
+        self.game.set_grille(whole);
+        let filter = if whole { gl::NEAREST } else { gl::LINEAR } as gl::types::GLint;
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, self.tex);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, filter);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, filter);
         }
     }
 
@@ -168,6 +194,7 @@ impl Compositor {
     }
 
     pub fn end_frame(&mut self, window: (u32, u32)) {
+        self.fit_to(window);
         let (x, y, w, h) = blit_rect(window, self.shake);
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);

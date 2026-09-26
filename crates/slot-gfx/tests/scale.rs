@@ -1,4 +1,4 @@
-use slot_gfx::{blit_rect, blit_rect_fit, fit_rect, fit_scale};
+use slot_gfx::{blit_is_whole, blit_rect, blit_rect_fit, fit_rect, fit_scale};
 
 #[test]
 fn integer_scale_never_fractional() {
@@ -49,4 +49,19 @@ fn the_fit_is_centred_and_shakes_with_the_picture() {
     assert_eq!((x, w), ((800 - w) / 2, 720));
     assert_eq!((y, h), (0, 480));
     assert!(blit_rect_fit((800, 480), 6.0).0 > x);
+}
+
+#[test]
+fn the_rg35xxsp_panel_shows_the_whole_composite_at_640x427() {
+    // 720x480 at 8/9 is 640x426.67, rounded to 427: the full width, with the 53 px left over
+    // split into bars above and below.
+    assert_eq!(blit_rect((640, 480), 0.0), (0, 26, 640, 427));
+}
+
+#[test]
+fn only_a_target_that_holds_the_composite_whole_is_blitted_sharp() {
+    assert!(!blit_is_whole((640, 480)));
+    assert!(blit_is_whole((720, 480)));
+    assert!(blit_is_whole((1440, 960)));
+    assert!(!blit_is_whole((720, 400)));
 }
