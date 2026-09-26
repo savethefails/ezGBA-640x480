@@ -1,5 +1,6 @@
 use slot_gfx::{
-    blue_light_gain, lcd3x_mask, Compositor, Draw, HeadlessSurface, OUT_H, OUT_W, SRC_H, SRC_W,
+    blue_light_gain, grille_mean, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X,
+    GAME_Y, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -63,30 +64,32 @@ fn gb_shaped(inside: impl Fn(usize, usize) -> [u8; 3], margin: [u8; 3]) -> Vec<u
     buf
 }
 
-/// A source pixel through one mask cell, as the pass computes it. The tolerance is the byte
-/// the shader rounds to, not slack in the relationship.
-fn masked(rgb: [u8; 3], ox: usize, oy: usize) -> [i32; 3] {
-    let cell = lcd3x_mask()[oy][ox];
-    [0, 1, 2].map(|ch| (rgb[ch] as f32 * cell[ch]).round() as i32)
+/// A source pixel as the pass draws it with the grille off: shaded by the grille's average,
+/// so a 640 panel is exactly as bright as the 3x picture the grille was drawn for. The
+/// tolerance is the byte the shader rounds to, not slack in the relationship.
+fn shaded(rgb: [u8; 3]) -> [i32; 3] {
+    let gain = grille_mean();
+    [0, 1, 2].map(|ch| (rgb[ch] as f32 * gain[ch]).round() as i32)
 }
 
-/// The smallest shift, in panel pixels, that leaves every pixel of the band where it was —
-/// which is the period of whatever pattern is on the panel, read off the panel. `None` when
-/// nothing up to eight pixels does, which is what a grille come unstuck looks like.
-fn period_x(frame: &[u8], xs: std::ops::Range<usize>, ys: std::ops::Range<usize>) -> Option<usize> {
-    (1..=8).find(|p| {
-        (xs.start..xs.end - p).all(|x| ys.clone().all(|y| px(frame, x, y) == px(frame, x + p, y)))
-    })
+/// The panel pixel at the middle of a source pixel's cell, for a picture of `w` by `h` source
+/// pixels stretched over the game area. The sharp filter only blends at a cell's edges, so
+/// here the source comes through untouched.
+fn centre_of(sx: usize, sy: usize, w: usize, h: usize) -> (usize, usize) {
+    let x = GAME_X as f32 + (sx as f32 + 0.5) * GAME_W as f32 / w as f32;
+    let y = GAME_Y as f32 + (sy as f32 + 0.5) * GAME_H as f32 / h as f32;
+    (x as usize, y as usize)
 }
 
-fn period_y(frame: &[u8], xs: std::ops::Range<usize>, ys: std::ops::Range<usize>) -> Option<usize> {
-    (1..=8).find(|p| {
-        (ys.start..ys.end - p).all(|y| xs.clone().all(|x| px(frame, x, y) == px(frame, x, y + p)))
-    })
+fn close(got: [u8; 3], want: [i32; 3]) -> bool {
+    (0..3).all(|ch| (want[ch] - got[ch] as i32).abs() <= 1)
 }
 
+/// The LCD3x grille only lines up at exactly 3x, which a 640 panel is not, so the picture is
+/// drawn without it: a flat frame comes out flat over the whole 640x427 game area, at the
+/// grille's average brightness, and the bars above and below it stay black.
 #[test]
-fn game_pass_multiplies_every_output_cell_by_the_lcd3x_mask() {
+fn a_flat_frame_fills_the_game_area_flat_and_nothing_else() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
@@ -96,18 +99,17 @@ fn game_pass_multiplies_every_output_cell_by_the_lcd3x_mask() {
     c.draw_game();
     let frame = c.read_frame();
 
-    let mask = lcd3x_mask();
-    let mut worst = 0i32;
+    let want = shaded([0x80; 3]);
+    let (top, bottom) = (GAME_Y as usize, (GAME_Y + GAME_H) as usize);
     for y in 0..OUT_H as usize {
         for x in 0..OUT_W as usize {
             let got = px(&frame, x, y);
-            for (ch, gain) in mask[y % 3][x % 3].iter().enumerate() {
-                let want = (128.0 * gain).round() as i32;
-                worst = worst.max((want - got[ch] as i32).abs());
+            match (top..bottom).contains(&y) {
+                true => assert!(close(got, want), "{x},{y} is {got:?}, not {want:?}"),
+                false => assert_eq!(got, [0, 0, 0], "{x},{y} is outside the picture"),
             }
         }
     }
-    assert!(worst <= 1, "max channel deviation {worst} from the mask");
 }
 
 /// The FBO is stored bottom up and the source is top down, so a missing flip anywhere in
@@ -124,23 +126,24 @@ fn the_game_frame_keeps_its_orientation_from_upload_to_readback() {
     c.draw_game();
     let frame = c.read_frame();
 
-    for y in 0..3 {
-        for x in 0..3 {
+    let (x0, y0) = (GAME_X as usize, GAME_Y as usize);
+    for y in y0..y0 + 2 {
+        for x in x0..x0 + 2 {
             assert!(
                 px(&frame, x, y)[0] > 100,
                 "top left source pixel missing at {x},{y}"
             );
         }
     }
-    assert_eq!(px(&frame, 3, 0), [0, 0, 0], "bled one cell right");
-    assert_eq!(px(&frame, 0, 3), [0, 0, 0], "bled one cell down");
+    assert_eq!(px(&frame, x0 + 5, y0), [0, 0, 0], "bled one cell right");
+    assert_eq!(px(&frame, x0, y0 + 5), [0, 0, 0], "bled one cell down");
     assert_eq!(
-        px(&frame, 0, OUT_H as usize - 1),
+        px(&frame, x0, (GAME_Y + GAME_H) as usize - 1),
         [0, 0, 0],
         "frame is upside down"
     );
     assert_eq!(
-        px(&frame, OUT_W as usize - 1, 0),
+        px(&frame, (GAME_X + GAME_W) as usize - 1, y0),
         [0, 0, 0],
         "frame is mirrored"
     );
@@ -166,17 +169,25 @@ fn the_picture_strikes_as_a_band_at_the_centre_before_it_fills_the_frame() {
 
     let (striking, bright) = peak(&mut c, 0.35);
     let lit = |frame: &[u8], y: usize| (0..OUT_W as usize).any(|x| px(frame, x, y) != [0, 0, 0]);
-    assert!(lit(&striking, OUT_H as usize / 2), "nothing at the centre");
-    assert!(!lit(&striking, 1), "the picture already reaches the top");
+    let (top, bottom) = (GAME_Y as usize, (GAME_Y + GAME_H) as usize - 1);
+    assert!(lit(&striking, (top + bottom) / 2), "nothing at the centre");
     assert!(
-        !lit(&striking, OUT_H as usize - 2),
+        !lit(&striking, top + 1),
+        "the picture already reaches the top"
+    );
+    assert!(
+        !lit(&striking, bottom - 1),
         "the picture already reaches the bottom"
     );
 
     let (settled, normal) = peak(&mut c, 1.0);
     assert!(
-        lit(&settled, 1) && lit(&settled, OUT_H as usize - 2),
+        lit(&settled, top) && lit(&settled, bottom),
         "the settled picture is short"
+    );
+    assert!(
+        !lit(&settled, top - 1) && !lit(&settled, bottom + 1),
+        "the settled picture runs into the bars"
     );
     assert!(
         bright > normal,
@@ -220,10 +231,11 @@ fn the_game_marker_draws_the_picture_where_it_sits_in_the_list() {
     );
 }
 
-/// The switcher shows a still of the same panel, at the same 3x, so it has to carry the same
-/// 3x3 cell structure. Blitted flat it reads as a different machine to the game behind it.
+/// The switcher shows a still of the same panel, so it goes through the same pass into the same
+/// game area as the live picture. Blitted flat over the whole panel it reads as a different
+/// machine to the game behind it.
 #[test]
-fn a_saved_shot_is_drawn_through_the_lcd_pass() {
+fn a_saved_shot_is_drawn_through_the_game_pass() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
@@ -246,17 +258,17 @@ fn a_saved_shot_is_drawn_through_the_lcd_pass() {
     c.draw_list(&[Draw::Shot { tex }]);
     let lit = c.read_frame();
 
-    assert_ne!(plain, lit, "the shot is not going through the lcd pass");
-    for (y, row) in lcd3x_mask().iter().enumerate() {
-        for (x, cell) in row.iter().enumerate() {
-            let got = px(&lit, x, y)[0] as f32;
-            let want = 200.0 * cell[0];
-            assert!(
-                (got - want).abs() < 3.0,
-                "cell {x},{y} does not match the mask: {got} against {want}"
-            );
-        }
+    assert_ne!(plain, lit, "the shot is not going through the game pass");
+    let want = shaded([200; 3]);
+    for (x, y) in [(0, GAME_Y), (320, 240), (639, GAME_Y + GAME_H - 1)] {
+        let got = px(&lit, x as usize, y as usize);
+        assert!(close(got, want), "{x},{y}: {got:?} against {want:?}");
     }
+    assert_eq!(
+        px(&lit, 320, GAME_Y as usize - 1),
+        [0, 0, 0],
+        "the shot is over the bar"
+    );
 }
 
 /// A still is a photograph, taken at some earlier moment, and `thumb::png` encodes the whole
@@ -446,8 +458,7 @@ fn a_quarter_turn_takes_the_top_left_corner_to_the_top_right() {
 }
 
 /// The default sub-rect is the whole texture, which is the arithmetic the pass did before
-/// there was a sub-rect to ask for: nearest sampled at exactly 3x, one source pixel under
-/// each 3x3 mask cell. Checked against that arithmetic recomputed here rather than against a
+/// there was a sub-rect to ask for: every source pixel in its own cell of the 640x427 picture. Checked against that arithmetic recomputed here rather than against a
 /// recorded frame, so it pins the relationship and not one capture of it — and then asked for
 /// explicitly as well, because a default that only happens to agree is one that can drift.
 ///
@@ -478,19 +489,13 @@ fn the_default_source_rect_draws_exactly_as_before() {
 
     for (sx, sy) in [(0, 0), (1, 0), (0, 1), (113, 37), (120, 80), (239, 159)] {
         let o = (sy * SRC_W as usize + sx) * 4;
-        let want_rgb = [src[o + 2], src[o + 1], src[o]];
-        for oy in 0..3 {
-            for ox in 0..3 {
-                let got = px(&default, sx * 3 + ox, sy * 3 + oy);
-                for (ch, want) in masked(want_rgb, ox, oy).iter().enumerate() {
-                    assert!(
-                        (want - got[ch] as i32).abs() <= 1,
-                        "source {sx},{sy} cell {ox},{oy} channel {ch}: {} against {want}",
-                        got[ch],
-                    );
-                }
-            }
-        }
+        let want = shaded([src[o + 2], src[o + 1], src[o]]);
+        let (x, y) = centre_of(sx, sy, SRC_W as usize, SRC_H as usize);
+        let got = px(&default, x, y);
+        assert!(
+            close(got, want),
+            "source {sx},{sy}: {got:?} against {want:?}"
+        );
     }
 
     c.set_game_source_rect(WHOLE);
@@ -503,8 +508,8 @@ fn the_default_source_rect_draws_exactly_as_before() {
     );
 }
 
-/// Fullscreen draws only the Game Boy's own picture, over the whole panel. The picture's
-/// corner texels land in the panel's corners, and the margin `video_refresh` leaves around it
+/// Fullscreen draws only the Game Boy's own picture, over the whole game area. The picture's
+/// corner texels land in that area's corners, and the margin `video_refresh` leaves around it
 /// is nowhere on screen at all — which is the difference between a stretch and a crop that
 /// merely moved.
 #[test]
@@ -531,13 +536,11 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
     c.upload_game(&src);
     c.draw_game();
     let actual = c.read_frame();
-    let got = px(&actual, 0, 0);
-    for (ch, want) in masked(MARGIN, 0, 0).iter().enumerate() {
-        assert!(
-            (want - got[ch] as i32).abs() <= 1,
-            "at actual size the panel's corner is not the margin: {got:?}"
-        );
-    }
+    let got = px(&actual, GAME_X as usize, GAME_Y as usize);
+    assert!(
+        close(got, shaded(MARGIN)),
+        "at actual size the picture's corner is not the margin: {got:?}"
+    );
 
     c.set_game_source_rect(GB_RECT);
     c.begin_frame();
@@ -545,22 +548,18 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
     c.draw_game();
     let full = c.read_frame();
 
-    let last_x = OUT_W as usize - 1;
-    let last_y = OUT_H as usize - 1;
+    let (first_x, first_y) = (GAME_X as usize, GAME_Y as usize);
+    let last_x = (GAME_X + GAME_W) as usize - 1;
+    let last_y = (GAME_Y + GAME_H) as usize - 1;
     for (name, (x, y), rgb) in [
-        ("top left", (0, 0), [255, 0, 0]),
-        ("top right", (last_x, 0), [0, 255, 0]),
-        ("bottom left", (0, last_y), [0, 0, 255]),
+        ("top left", (first_x, first_y), [255, 0, 0]),
+        ("top right", (last_x, first_y), [0, 255, 0]),
+        ("bottom left", (first_x, last_y), [0, 0, 255]),
         ("bottom right", (last_x, last_y), [255, 255, 0]),
     ] {
-        let cell = masked(rgb, x % 3, y % 3);
+        let want = shaded(rgb);
         let got = px(&full, x, y);
-        for (ch, want) in cell.iter().enumerate() {
-            assert!(
-                (want - got[ch] as i32).abs() <= 1,
-                "{name}: {got:?} against {cell:?}"
-            );
-        }
+        assert!(close(got, want), "{name}: {got:?} against {want:?}");
     }
 
     // Cyan is the margin and nothing in the picture is cyan, so one cyan-dominant pixel
@@ -574,57 +573,52 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
     assert!(!strayed, "the margin is still on screen in fullscreen");
 }
 
-/// The mask is sampled at `v_uv * u_src` and the quad is always the whole panel, so the
-/// grille is locked to the panel rather than to the texture: stretching the picture must not
-/// disturb its regularity. Measured off the composited frame, because the uniform saying 240
-/// is not evidence about what a panel shows.
+/// A source pixel's edge is one panel pixel of blend and no more, in both modes and on both
+/// axes, although fullscreen stretches a Game Boy's picture 4x across and under 3x down. The
+/// filter scaled for the wrong axis blends a wider band, which at the edge of a Game Boy
+/// picture means the border around it bleeding in.
 #[test]
-fn the_mask_period_is_three_pixels_in_both_modes() {
+fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
-    // Flat inside the window and black outside it, so any structure the measurement finds
-    // is the grille and nothing the picture brought with it.
-    let src = gb_shaped(|_, _| [0x80, 0x80, 0x80], [0, 0, 0]);
+    // Columns and rows alternating black and white, so every cell boundary is an edge.
+    let src = gb_shaped(
+        |x, y| match (x + y) % 2 {
+            0 => [255, 255, 255],
+            _ => [0, 0, 0],
+        },
+        [0, 0, 0],
+    );
     c.set_screen_power(1.0);
-
-    c.set_game_source_rect(WHOLE);
-    c.begin_frame();
-    c.upload_game(&src);
-    c.draw_game();
-    let actual = c.read_frame();
-
-    c.set_game_source_rect(GB_RECT);
-    c.begin_frame();
-    c.upload_game(&src);
-    c.draw_game();
-    let full = c.read_frame();
-
-    // At actual size the picture is 480x432 in the middle of the panel; measure inside it,
-    // since the black margin either side has no grille to have a period.
-    let lit_x = GB_X * 3..(GB_X + GB_W) * 3;
-    let lit_y = GB_Y * 3..(GB_Y + GB_H) * 3;
-    assert_eq!(
-        period_x(&actual, lit_x.clone(), lit_y.clone()),
-        Some(3),
-        "actual size: the grille does not repeat every 3 px across"
-    );
-    assert_eq!(
-        period_y(&actual, lit_x, lit_y),
-        Some(3),
-        "actual size: the grille does not repeat every 3 px down"
-    );
-
-    // Fullscreen has no margin, so the measurement runs edge to edge — including the columns
-    // that were black a moment ago.
-    assert_eq!(
-        period_x(&full, 0..OUT_W as usize, 0..OUT_H as usize),
-        Some(3),
-        "fullscreen: the grille does not repeat every 3 px across"
-    );
-    assert_eq!(
-        period_y(&full, 0..OUT_W as usize, 0..OUT_H as usize),
-        Some(3),
-        "fullscreen: the grille does not repeat every 3 px down"
-    );
+    for (name, rect, w, h) in [
+        ("actual size", WHOLE, SRC_W as usize, SRC_H as usize),
+        ("fullscreen", GB_RECT, GB_W, GB_H),
+    ] {
+        c.set_game_source_rect(rect);
+        c.begin_frame();
+        c.upload_game(&src);
+        c.draw_game();
+        let frame = c.read_frame();
+        // Along one row through the middle of the picture: every pixel is either one of the
+        // two flat values, or a lone blend between them. Two blends side by side is a band.
+        let (_, y) = centre_of(w / 2, h / 2, w, h);
+        let (x0, x1) = (GAME_X as usize + 8, (GAME_X + GAME_W) as usize - 8);
+        let white = shaded([255; 3])[0];
+        let grey = |x: usize| {
+            let v = px(&frame, x, y)[0] as i32;
+            v > 2 && v < white - 2
+        };
+        let wide = (x0..x1).find(|&x| grey(x) && grey(x + 1));
+        assert_eq!(wide, None, "{name}: a blend two pixels wide at x {wide:?}");
+        // And down one column.
+        let (x, _) = centre_of(w / 2, h / 2, w, h);
+        let (y0, y1) = (GAME_Y as usize + 8, (GAME_Y + GAME_H) as usize - 8);
+        let grey = |y: usize| {
+            let v = px(&frame, x, y)[0] as i32;
+            v > 2 && v < white - 2
+        };
+        let tall = (y0..y1).find(|&y| grey(y) && grey(y + 1));
+        assert_eq!(tall, None, "{name}: a blend two pixels tall at y {tall:?}");
+    }
 }

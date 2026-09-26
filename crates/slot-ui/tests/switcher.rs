@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use slot_gfx::{Draw, OUT_H, OUT_W};
+use slot_gfx::{Draw, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W};
 use slot_store::{StateEntry, RING_MAX};
 use slot_ui::{
     hint_face, hint_width, Polaroids, Printed, DOT, HINT_H, LEGEND, PHOTO_H, PHOTO_W, PLATE_H,
@@ -101,15 +101,16 @@ fn has_hint(p: &Polaroids, out: &[Draw], key: &str) -> bool {
     p.hints().iter().any(|h| h.key == key) && hint_quads(out).len() == p.hints().len()
 }
 
+/// Where the screenshot will go once it arrives is the game's own 640x427 area, so the paused
+/// game does not jump as the switcher opens over it.
 #[test]
-fn the_screenshot_fills_the_screen_at_exactly_3x() {
+fn the_screenshot_fills_the_game_area() {
     let p = switcher_with(3);
     let out = draw(&p);
     let photo = *quads(&out).first().expect("no screenshot drawn");
-    assert_eq!((photo.w, photo.h), (OUT_W as f32, OUT_H as f32));
-    assert_eq!((photo.x, photo.y), (0.0, 0.0));
-    assert_eq!(OUT_W / PHOTO_W, 3);
-    assert_eq!(OUT_H / PHOTO_H, 3);
+    assert_eq!((photo.w, photo.h), (GAME_W as f32, GAME_H as f32));
+    assert_eq!((photo.x, photo.y), (GAME_X as f32, GAME_Y as f32));
+    assert_eq!((PHOTO_W, PHOTO_H), (240, 160));
 }
 
 /// The paused game is still underneath. A screenshot that did not cover it would read as the

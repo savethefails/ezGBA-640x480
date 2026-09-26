@@ -5,8 +5,7 @@
 ezGBA turns an Anbernic RG SP into a Game Boy Advance that anyone can pick up and play.
 Made for kids, and for grown-ups who just want a simple GBA.
 
-This fork runs on the **RG35XXSP** and its 640×480 screen. It reads the screen size from the
-device, so the same build still works on a 720×480 RG34XXSP.
+This fork is laid out for the **RG35XXSP** and its 640×480 screen.
 
 <p align="center">
   <img src="media/shelf-advance-wars.png" width="45%" alt="The shelf: Advance Wars selected, its box art filling the screen above the carts">
@@ -63,18 +62,15 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 
 ## The RG35XXSP's 640×480 screen
 
-ezGBA draws everything at 720×480, which is three times the GBA's 240×160. On a 640×480
-screen it shrinks that whole picture to fit:
+Everything is drawn for 640×480 directly, not made for another screen and shrunk to fit:
 
-- **The game fills the full width at 640×427**, the biggest size that keeps the GBA's shape.
-  The leftover space becomes thin black bars above and below.
-- **It's smoothed, not chopped.** The shrink blends pixels together instead of dropping
-  every ninth row and column, so text and sprites don't wobble or tear.
-- **No LCD grid lines.** The grid only lines up at exactly 3×. At this size it would turn
-  into stripes, so it's off, and the picture is dimmed slightly so it's as bright as before.
-- **The screen size comes from the device.** ezGBA asks the display driver how big the
-  screen is. If the driver doesn't answer, it assumes 640×480. It writes the size it picked
-  to the log as `slot: panel 640x480, ...`.
+- **The shelf, menus, clock and About label are laid out for 640×480**, pixel for pixel.
+- **The game fills the full width at 640×427.** That keeps the GBA's 3:2 shape, with thin
+  black bars above and below. The GBA's 240×160 doesn't go into 640 a whole number of
+  times, so each game pixel is 2 or 3 screen pixels wide. A sharp filter keeps the pixels
+  crisp and blends only a one-pixel edge between them, so scrolling doesn't shimmer.
+- **No LCD grid lines.** The grid only lines up at exactly 3× the GBA's size, so it's off
+  here, and the picture is shaded to the same brightness the grid gave it.
 
 ## Setup
 
@@ -82,10 +78,10 @@ screen it shrinks that whole picture to fit:
 2. Download the latest ezGBA from [releases](../../releases).
 3. Unzip it and copy it onto the second SD card, just like slot.
 4. **Add box art (optional).** Box art isn't included, since it belongs to the publishers.
-   Put a 720×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
+   Put a 640×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
    `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
-   so the carts don't cover it. Use 720×480 on the RG35XXSP too: the whole screen gets
-   shrunk to fit, box art included.
+   so the carts don't cover it. Art made for the 720×480 RG SP still works: it is centred
+   and loses 40 pixels off each side.
 
 ## AI disclosure
 

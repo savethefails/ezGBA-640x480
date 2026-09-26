@@ -2,13 +2,15 @@ use crate::lcd3x::mask_texture_rgba8;
 use crate::power::{screen_brightness, screen_rect};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{GfxError, OUT_H, OUT_W};
+use crate::surface::{GfxError, GAME_H, GAME_W, OUT_H, OUT_W};
 
-/// The only scale that exists. 240x160 to 720x480, nearest, which is what collapses LCD3x
-/// to a 3x3 mask tiled once per source pixel.
-pub const SCALE: u32 = 3;
-pub const SRC_W: u32 = OUT_W / SCALE;
-pub const SRC_H: u32 = OUT_H / SCALE;
+/// The GBA's own picture, which every platform's frame is centred inside.
+pub const SRC_W: u32 = 240;
+pub const SRC_H: u32 = 160;
+
+/// Whether the LCD3x grille can be drawn at all. It is a 3x3 table that only lines up with the
+/// source at exactly 3x, which a 640 wide panel is not, so on the RG35XXSP it is off.
+const GRILLE_FITS: bool = GAME_W == SRC_W * 3 && GAME_H == SRC_H * 3;
 
 /// Origin then size, in texture coordinates: everything there is. The default, what a GBA
 /// picture is always drawn with, and what a still is always drawn with.
@@ -22,6 +24,7 @@ pub struct GamePass {
     u_bright: gl::types::GLint,
     u_uv: gl::types::GLint,
     u_grille: gl::types::GLint,
+    u_scale: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -36,7 +39,9 @@ pub struct GamePass {
 impl GamePass {
     pub fn new() -> Result<Self, GfxError> {
         let prog = crate::shaders::program(RECT_VERT, GAME_FRAG)?;
-        let game = crate::gl::texture(SRC_W, SRC_H, gl::NEAREST, gl::CLAMP_TO_EDGE, gl::BGRA, None);
+        // Linear, because the sharp bilinear filter blends the one boundary texel pair it
+        // lands between; it snaps every other sample to a texel centre itself.
+        let game = crate::gl::texture(SRC_W, SRC_H, gl::LINEAR, gl::CLAMP_TO_EDGE, gl::BGRA, None);
         let mask = crate::gl::texture(
             3,
             3,
@@ -45,7 +50,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille);
+        let (u_rect, u_bright, u_uv, u_grille, u_scale);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -66,7 +71,8 @@ impl GamePass {
             u_bright = crate::gl::uniform_location(prog, "u_bright");
             u_uv = crate::gl::uniform_location(prog, "u_uv");
             u_grille = crate::gl::uniform_location(prog, "u_grille");
-            let flat = mask_mean();
+            u_scale = crate::gl::uniform_location(prog, "u_scale");
+            let flat = grille_mean();
             gl::Uniform3f(
                 crate::gl::uniform_location(prog, "u_flat"),
                 flat[0],
@@ -82,7 +88,8 @@ impl GamePass {
             u_bright,
             u_uv,
             u_grille,
-            grille: true,
+            u_scale,
+            grille: GRILLE_FITS,
             power: 1.0,
             src: WHOLE_TEXTURE,
         })
@@ -92,7 +99,7 @@ impl GamePass {
     /// compositor turns it off when the composite is downscaled onto a smaller panel, and the
     /// picture is shaded by the grille's average instead.
     pub fn set_grille(&mut self, on: bool) {
-        self.grille = on;
+        self.grille = on && GRILLE_FITS;
     }
 
     pub fn set_power(&mut self, t: f32) {
@@ -167,6 +174,13 @@ impl GamePass {
             gl::Uniform4f(self.u_uv, src[0], src[1], src[2], src[3]);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
             gl::Uniform1f(self.u_grille, if self.grille { 1.0 } else { 0.0 });
+            // Against the settled picture rather than the rect the power curve squeezes it
+            // into: the edges stay the width they will be once it is up.
+            gl::Uniform2f(
+                self.u_scale,
+                GAME_W as f32 / (SRC_W as f32 * src[2]),
+                GAME_H as f32 / (SRC_H as f32 * src[3]),
+            );
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);
@@ -179,7 +193,7 @@ impl GamePass {
 
 /// The grille's average per channel, from the same bytes the mask texture is made of, so a
 /// picture without the grille is as bright as one with it.
-fn mask_mean() -> [f32; 3] {
+pub fn grille_mean() -> [f32; 3] {
     let tex = mask_texture_rgba8();
     let mut sum = [0.0f32; 3];
     for texel in tex.chunks_exact(4) {

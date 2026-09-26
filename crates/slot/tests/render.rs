@@ -1,10 +1,13 @@
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use slot::thumb;
-use slot_gfx::{lcd3x_mask, Compositor, Draw, HeadlessSurface, OUT_W, SRC_H, SRC_W};
+use slot_gfx::{
+    grille_mean, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W,
+    SRC_H, SRC_W,
+};
 use slot_retro::{ButtonMask, MockCore, RetroCore};
 use slot_store::{Core, Platform, StateRing};
 use slot_ui::{photo_face, Polaroids, Printed};
@@ -22,6 +25,45 @@ fn compositor() -> Option<(MutexGuard<'static, ()>, HeadlessSurface, Compositor)
 fn px(frame: &[u8], x: usize, y: usize) -> [u8; 3] {
     let o = (y * OUT_W as usize + x) * 4;
     [frame[o], frame[o + 1], frame[o + 2]]
+}
+
+/// The panel pixel at the middle of a source pixel's cell in the 640x427 picture. The sharp
+/// bilinear filter only blends at a cell's edges, so here the source comes through untouched.
+fn centre(sx: usize, sy: usize) -> (usize, usize) {
+    let x = GAME_X as f32 + (sx as f32 + 0.5) * GAME_W as f32 / SRC_W as f32;
+    let y = GAME_Y as f32 + (sy as f32 + 0.5) * GAME_H as f32 / SRC_H as f32;
+    (x as usize, y as usize)
+}
+
+/// Worst channel error between each listed source pixel, shaded by the grille's average, and
+/// the panel at the middle of its cell.
+fn worst_at_centres(frame: &[u8], src: &[u8], at: &[(usize, usize)]) -> i32 {
+    let gain = grille_mean();
+    let mut worst = 0;
+    for &(sx, sy) in at {
+        let o = (sy * SRC_W as usize + sx) * 4;
+        let want_rgb = [src[o + 2], src[o + 1], src[o]];
+        let (x, y) = centre(sx, sy);
+        let got = px(frame, x, y);
+        for ch in 0..3 {
+            let want = (want_rgb[ch] as f32 * gain[ch]).round() as i32;
+            worst = worst.max((want - got[ch] as i32).abs());
+        }
+    }
+    worst
+}
+
+fn save_png(frame: &[u8], name: &str) {
+    let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") else {
+        return;
+    };
+    let file = std::fs::File::create(Path::new(&dir).join(name)).expect("create png");
+    let mut e = png::Encoder::new(std::io::BufWriter::new(file), OUT_W, OUT_H);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    e.write_header()
+        .and_then(|mut w| w.write_image_data(frame))
+        .expect("write png");
 }
 
 /// The switcher's photo item alone, with the plates left off so the picture can be read at
@@ -63,21 +105,12 @@ fn a_mock_frame_keeps_its_colours_through_the_game_pass() {
     c.draw_game();
     let frame = c.read_frame();
 
-    let mask = lcd3x_mask();
-    let mut worst = 0i32;
-    for (sx, sy) in [(0, 0), (5, 1), (113, 37), (120, 80), (239, 159)] {
-        let o = (sy * SRC_W as usize + sx) * 4;
-        let want_rgb = [src[o + 2], src[o + 1], src[o]];
-        for (oy, row) in mask.iter().enumerate() {
-            for (ox, cell) in row.iter().enumerate() {
-                let got = px(&frame, sx * 3 + ox, sy * 3 + oy);
-                for (ch, gain) in cell.iter().enumerate() {
-                    let want = (want_rgb[ch] as f32 * gain).round() as i32;
-                    worst = worst.max((want - got[ch] as i32).abs());
-                }
-            }
-        }
-    }
+    save_png(&frame, "game-mock.png");
+    let worst = worst_at_centres(
+        &frame,
+        &src,
+        &[(0, 0), (5, 1), (113, 37), (120, 80), (239, 159)],
+    );
     assert!(
         worst <= 1,
         "max channel deviation {worst} from the mock frame"
@@ -121,9 +154,9 @@ fn a_saved_frame_arrives_intact_on_its_screenshot() {
     }
 }
 
-/// Full screen is 3x, and 3x has to be the same integer scale the game runs at. A linear tap
-/// samples between texels there, which turns every edge in the frame into a two pixel ramp:
-/// the switcher would show a blurred copy of a frame the game drew sharp.
+/// The switcher's screenshot goes through the same sharp filter, into the same 640x427 area,
+/// as the game it was taken of. A plain linear tap would soften every edge across the whole
+/// cell; a different rect would make the paused game jump as the switcher opens.
 #[test]
 fn the_switcher_magnifies_its_screenshot_without_resampling_it() {
     let Some((_g, _s, mut c)) = compositor() else {
@@ -149,26 +182,21 @@ fn the_switcher_magnifies_its_screenshot_without_resampling_it() {
     c.draw_list(&switcher_photo(&switcher));
     let frame = c.read_frame();
 
-    let mask = lcd3x_mask();
-    for (sx, sy) in [
-        (0, 0),
-        (1, 0),
-        (113, 37),
-        (SRC_W as usize - 1, SRC_H as usize - 1),
-    ] {
-        let o = (sy * SRC_W as usize + sx) * 4;
-        let want_rgb = [src[o + 2], src[o + 1], src[o]];
-        for (oy, row) in mask.iter().enumerate() {
-            for (ox, cell) in row.iter().enumerate() {
-                let got = px(&frame, sx * 3 + ox, sy * 3 + oy);
-                for (ch, gain) in cell.iter().enumerate() {
-                    let want = (want_rgb[ch] as f32 * gain).round() as i32;
-                    assert!(
-                        (want - got[ch] as i32).abs() <= 1,
-                        "source pixel {sx},{sy} bled into its neighbours"
-                    );
-                }
-            }
-        }
-    }
+    let worst = worst_at_centres(
+        &frame,
+        &src,
+        &[
+            (0, 0),
+            (1, 0),
+            (113, 37),
+            (SRC_W as usize - 1, SRC_H as usize - 1),
+        ],
+    );
+    assert!(
+        worst <= 1,
+        "the screenshot differs from the game by {worst}"
+    );
+    // And nothing of it outside the game area: the bars above and below stay black.
+    assert_eq!(px(&frame, 320, GAME_Y as usize - 1), [0, 0, 0]);
+    assert_eq!(px(&frame, 320, (GAME_Y + GAME_H) as usize), [0, 0, 0]);
 }

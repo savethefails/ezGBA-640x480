@@ -57,7 +57,7 @@ fn the_tip_is_at_the_bottom_and_the_cable_fades_out_at_the_top() {
 #[test]
 fn the_port_opens_at_the_top_of_the_strip() {
     let a = link_art();
-    let slot = px(&a.port, 360, 12);
+    let slot = px(&a.port, PORT_W / 2, 12);
     assert!(
         slot[0] < 0x12 && slot[3] == 255,
         "no dark port at the centre: {slot:?}"

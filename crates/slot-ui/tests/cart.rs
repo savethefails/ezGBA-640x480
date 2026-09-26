@@ -157,10 +157,13 @@ fn the_cart_box_matches_the_traced_outline() {
         (ratio - 1.778).abs() < 0.02,
         "aspect {ratio:.3}, the svg is being stretched"
     );
+    // The selection and a 0.70 neighbour either side, with an even 16 px gap between each
+    // and at both edges: the 640 row the shelf is laid out for, exactly.
+    let side = (CART_W as f32 * 0.70).round() as u32;
     assert_eq!(
-        CART_W * 3,
+        CART_W + 2 * side + 4 * 16,
         OUT_W,
-        "three carts no longer span the shelf exactly"
+        "the selection and its two neighbours no longer span the shelf exactly"
     );
 }
 

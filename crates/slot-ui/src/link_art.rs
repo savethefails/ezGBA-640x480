@@ -11,7 +11,7 @@ const PLUG_HOST_SVG: &str = include_str!("../assets/link_plug_host.svg");
 const PLUG_JOIN_SVG: &str = include_str!("../assets/link_plug_join.svg");
 const ADAPTER_SVG: &str = include_str!("../assets/link_adapter.svg");
 
-pub const PORT_W: u32 = 720;
+pub const PORT_W: u32 = 640;
 pub const PORT_H: u32 = 92;
 /// Top of the console strip on the canvas.
 pub const PORT_Y: f32 = 388.0;
@@ -26,18 +26,18 @@ pub const ADAPTER_BASE_X: f32 = 134.0;
 pub const ADAPTER_BASE_Y: f32 = 144.0;
 /// The right-hand arcs' faces on the canvas for a seated adapter: left, top, width, height.
 pub const ARCS: [(f32, f32, u32, u32); 3] = [
-    (508.0, 290.0, 16, 56),
-    (530.0, 274.0, 20, 88),
-    (552.0, 258.0, 25, 120),
+    (468.0, 290.0, 16, 56),
+    (490.0, 274.0, 20, 88),
+    (512.0, 258.0, 25, 120),
 ];
-pub const CLICKS_X: f32 = 270.0;
+pub const CLICKS_X: f32 = 230.0;
 pub const CLICKS_Y: f32 = 360.0;
 pub const CLICKS_W: u32 = 180;
 pub const CLICKS_H: u32 = 30;
 pub const ARROW_W: u32 = 16;
 pub const ARROW_H: u32 = 22;
-pub const ARROW_LEFT_X: f32 = 268.0;
-pub const ARROW_RIGHT_X: f32 = 436.0;
+pub const ARROW_LEFT_X: f32 = 228.0;
+pub const ARROW_RIGHT_X: f32 = 396.0;
 pub const ARROW_Y: f32 = 52.0;
 
 /// The adapter is drawn at 1.75× its traced units.

@@ -33,7 +33,7 @@ impl PowerChoice {
     }
 }
 
-/// The menu is read at arm's length on a 720x480 panel while the user is deciding something
+/// The menu is read at arm's length on a 640x480 panel while the user is deciding something
 /// they cannot undo, so it is set well above the key-caption type the rest of the chrome
 /// uses. The shutdown line that follows a choice is rastered at the same size: the words
 /// change but the voice should not.

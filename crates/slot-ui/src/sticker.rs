@@ -24,11 +24,17 @@ const WORDMARK_SVG: &str = include_str!("../assets/wordmark.svg");
 /// How wide the lockup sits on the label. Set by its keyline rather than by the block it sits
 /// in: the outline is what makes it that logotype, and below about this width it thins to
 /// nothing and the whole thing collapses into solid letters.
-const WORDMARK_W: u32 = 250;
+const WORDMARK_W: u32 = 232;
 
-/// The traced outline's own aspect, so it rasterises unstretched.
-pub const STICKER_W: u32 = 660;
-pub const STICKER_H: u32 = 228;
+/// The traced outline's own aspect, so it rasterises unstretched. 612 wide leaves a 14 px
+/// margin either side of a 640 panel; the label was drawn at 660 for a 720 one, and every size
+/// on it below is that design's, scaled by `K`, so the layout is the same label made smaller
+/// rather than a new one.
+pub const STICKER_W: u32 = 612;
+pub const STICKER_H: u32 = 212;
+
+/// This label against the 660 px one its type sizes were set for.
+const K: f32 = STICKER_W as f32 / 660.0;
 
 const BLACK: [u8; 3] = [0x23, 0x1f, 0x20];
 const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
@@ -44,11 +50,11 @@ const PANEL_FH: f32 = 35.433 / 71.116;
 /// the real codepoint so the line reads correctly to anything but the rasteriser.
 pub const DC: char = '\u{2393}';
 
-const MARGIN: f32 = 11.0;
-const HEAD_PX: f32 = 11.0;
-const BODY_PX: f32 = 8.5;
-const SERIAL_PX: f32 = 26.0;
-const SMALL_PX: f32 = 9.0;
+const MARGIN: f32 = 11.0 * K;
+const HEAD_PX: f32 = 11.0 * K;
+const BODY_PX: f32 = 8.5 * K;
+const SERIAL_PX: f32 = 26.0 * K;
+const SMALL_PX: f32 = 9.0 * K;
 
 /// Everything the label says that is not fixed for the life of the binary.
 pub struct StickerFields<'a> {
@@ -305,8 +311,8 @@ pub fn sticker_face(f: &StickerFields) -> UndoFace {
     c.print(col_right - maker_w, y, ORIGIN[1], BODY_PX, WHITE);
 
     // The barcode, over the white panel, with a quiet zone either side.
-    let bars_y = panel_y + 14;
-    let bars_h = 62;
+    let bars_y = panel_y + (14.0 * K).round() as u32;
+    let bars_h = (62.0 * K).round() as u32;
     // Model, unit and the dirty marker: a scan says everything the label does about which
     // build this is, the way a product barcode carries model and serial together.
     let payload = format!("SLOT-{}-{}", f.serial, f.dirty_digit);

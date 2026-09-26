@@ -7,7 +7,7 @@
 //!
 //! `SCRATCH_PNG_DIR=/tmp cargo test -p slot --test render_shelf -- --nocapture`
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod common;
 

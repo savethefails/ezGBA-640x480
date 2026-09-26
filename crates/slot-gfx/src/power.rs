@@ -2,7 +2,7 @@
 //! and blooms, and it dies back down to a dot. `t` is 0.0 dark and 1.0 fully on throughout,
 //! so power off is the same curve walked backwards.
 
-use crate::surface::{OUT_H, OUT_W};
+use crate::surface::{GAME_H, GAME_W, GAME_X, GAME_Y};
 
 /// The line the picture opens from and closes to. Two pixels rather than one: an odd height
 /// centred in an even frame lands on a half pixel and the line reads as grey.
@@ -20,13 +20,13 @@ const OVERSHOOT: f32 = 0.6;
 /// which is a panel striking rather than a blind going up.
 pub fn screen_scale(t: f32) -> f32 {
     let left = 1.0 - t.clamp(0.0, 1.0);
-    1.0 - (1.0 - LINE_PX / OUT_H as f32) * left * left
+    1.0 - (1.0 - LINE_PX / GAME_H as f32) * left * left
 }
 
 /// Width, and only over the last of the collapse. This is the dot the line closes to.
 pub fn screen_width(t: f32) -> f32 {
     let left = 1.0 - (t.clamp(0.0, 1.0) / DOT_T).min(1.0);
-    1.0 - (1.0 - LINE_PX / OUT_W as f32) * left
+    1.0 - (1.0 - LINE_PX / GAME_W as f32) * left
 }
 
 /// Gain on the game layer. Brightest as the line appears and settling to exactly 1.0, so a
@@ -36,10 +36,15 @@ pub fn screen_brightness(t: f32) -> f32 {
     1.0 + OVERSHOOT * left * left
 }
 
-/// The rect the game layer fills, in offscreen pixels. Centred: the line is at the vertical
-/// middle of the frame, not at the slot.
+/// The rect the game layer fills, in offscreen pixels: the 3:2 game area, collapsing about its
+/// own centre. The line is at the vertical middle of the picture, not at the slot.
 pub fn screen_rect(t: f32) -> (f32, f32, f32, f32) {
-    let w = OUT_W as f32 * screen_width(t);
-    let h = OUT_H as f32 * screen_scale(t);
-    ((OUT_W as f32 - w) / 2.0, (OUT_H as f32 - h) / 2.0, w, h)
+    let w = GAME_W as f32 * screen_width(t);
+    let h = GAME_H as f32 * screen_scale(t);
+    (
+        GAME_X as f32 + (GAME_W as f32 - w) / 2.0,
+        GAME_Y as f32 + (GAME_H as f32 - h) / 2.0,
+        w,
+        h,
+    )
 }

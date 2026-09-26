@@ -2,17 +2,14 @@
 //! the two each cart was last left in.
 //!
 //! The Game Boy and the Game Boy Color had no shoulder buttons, so on one of their carts slot
-//! takes L and R: L stretches the picture to fill the panel, R gives back the largest whole
-//! multiple of it, centred. On a GBA cart the two are the GBA's own and this file has nothing
-//! to say — a GBA picture already fills the panel at exactly 3x, and there is no second size
-//! for it to have.
+//! takes L and R: L stretches the picture to fill the 3:2 game area, R gives back its own
+//! size, centred. On a GBA cart the two are the GBA's own and this file has nothing to say — a
+//! GBA picture already fills the 640x427 game area, and there is no second size for it to have.
 //!
-//! The stretch distorts, deliberately. 160x144 is 10:9 against a 3:2 panel, so a fullscreen
-//! Game Boy picture comes out about 35% wider than it is tall. That is what a Game Boy picture
-//! blown up to fill a television looked like, and it is the mode the user asked for by name.
-//! The aspect-correct alternative — 533x480 with 93 px bars either side — is neither fullscreen
-//! nor period-correct, and it would cost the panel-locked grille as well (see `GAME_FRAG`), so
-//! it is not offered.
+//! The stretch distorts, deliberately. 160x144 is 10:9 against the 3:2 game area, so a
+//! fullscreen Game Boy picture comes out about 35% wider than it is tall. That is what a Game
+//! Boy picture blown up to fill a television looked like, and it is the mode the user asked for
+//! by name.
 
 use std::path::Path;
 
@@ -28,9 +25,9 @@ pub const VIDEO_MODE_FILE: &str = "System/video_mode.ini";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum VideoMode {
-    /// The picture at the largest whole multiple of itself the panel holds, centred. A Game
-    /// Boy's 160x144 comes out 480x432 with 120 px of nothing either side and 24 top and
-    /// bottom, and every source pixel sits under exactly one mask cell.
+    /// The picture at the same scale a GBA one is drawn at, centred where `video_refresh` put
+    /// it in the 240x160 buffer: a Game Boy's 160x144 comes out 427x384 in the middle of the
+    /// game area, square pixels and the right shape.
     #[default]
     Actual,
     /// The picture over the whole panel, aspect and all.

@@ -654,7 +654,7 @@ fn sync_greeting(app: &mut App, compositor: &mut Compositor, state: &mut Greetin
     app.set_greeting_face(id);
 }
 
-/// Built only once the screen is up: it is a 660 by 228 rasterisation and most sessions never
+/// Built only once the screen is up: it is a 612 by 212 rasterisation and most sessions never
 /// open it.
 fn sync_about(app: &mut App, compositor: &mut Compositor, state: &mut AboutFace) {
     if !matches!(app.phase(), Phase::About) {

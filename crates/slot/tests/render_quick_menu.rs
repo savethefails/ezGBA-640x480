@@ -3,7 +3,7 @@
 //!
 //! `SCRATCH_PNG_DIR=/tmp cargo test -p slot --test render_quick_menu -- --nocapture`
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod common;
 
@@ -107,7 +107,7 @@ fn the_quick_menu_renders_full_screen() {
             "{name}: the bar breaks somewhere across the row"
         );
         assert_eq!(
-            at(&px, 360, top + 1),
+            at(&px, 320, top + 1),
             ground,
             "{name}: the bar is not inset"
         );
@@ -124,7 +124,7 @@ fn the_quick_menu_renders_full_screen() {
         // inside its own advance.
         for row in QuickRow::ALL {
             let top = (QUICK_TOP + QUICK_PITCH * row.index() as f32) as usize;
-            let label = inked(&px, 0..360, top);
+            let label = inked(&px, 0..320, top);
             let first = *label.first().expect("a row with no label");
             assert!(
                 (32..=36).contains(&first),
@@ -133,10 +133,10 @@ fn the_quick_menu_renders_full_screen() {
             if row == QuickRow::About {
                 continue;
             }
-            let value = inked(&px, 360..OUT_W as usize, top);
+            let value = inked(&px, 320..OUT_W as usize, top);
             let last = *value.last().expect("a row with no value");
             assert!(
-                (679..=688).contains(&last),
+                (599..=608).contains(&last),
                 "{name}: {row:?}'s value ends at x {last}"
             );
         }
@@ -181,21 +181,21 @@ fn every_fast_forward_speed_sits_on_the_rows_right_edge_and_clears_the_label() {
     let top = QUICK_TOP as usize;
     for name in ["2x", "3x", "4x", "6x", "8x"] {
         let px = composed(&mut f, &mut c, name);
-        let value = inked(&px, 360..OUT_W as usize, top);
+        let value = inked(&px, 320..OUT_W as usize, top);
         let last = *value
             .last()
             .unwrap_or_else(|| panic!("{name}: the Fast Forward row has no value"));
         assert!(
-            (679..=688).contains(&last),
+            (599..=608).contains(&last),
             "{name} ends at x {last}, off the edge every other value keeps"
         );
         // The row in hand carries an arrow either side of its value, so nothing on it may be
         // inked across the middle of the row, where the label is heading.
         assert!(
-            inked(&px, 350..370, top).is_empty(),
+            inked(&px, 290..330, top).is_empty(),
             "{name} and its arrows reach the middle of the row"
         );
-        let label = inked(&px, 0..350, top);
+        let label = inked(&px, 0..290, top);
         let first = *label
             .first()
             .unwrap_or_else(|| panic!("{name}: the Fast Forward row has no label"));

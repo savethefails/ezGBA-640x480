@@ -1,8 +1,19 @@
 use std::ffi::c_void;
 use std::fmt;
 
-pub const OUT_W: u32 = 720;
+/// The RG35XXSP's panel, and the size everything is composed at. The UI is laid out for it
+/// directly, so on the device the blit is 1:1.
+pub const OUT_W: u32 = 640;
 pub const OUT_H: u32 = 480;
+
+/// Where the game picture sits in the frame. The GBA's 3:2 at the full panel width: 240x160
+/// at 2.67x is 640x426.7, rounded to whole rows so its edges land on pixel boundaries, which
+/// leaves a 26 px bar above it and 27 px below. Not a whole multiple of the source, so the
+/// game pass scales it with a sharp bilinear filter rather than nearest (see `GAME_FRAG`).
+pub const GAME_W: u32 = OUT_W;
+pub const GAME_H: u32 = 427;
+pub const GAME_X: u32 = (OUT_W - GAME_W) / 2;
+pub const GAME_Y: u32 = (OUT_H - GAME_H) / 2;
 
 #[derive(Debug)]
 pub enum GfxError {
@@ -30,9 +41,9 @@ pub trait Surface {
     fn proc_address(&self, name: &str) -> *const c_void;
 }
 
-/// Largest whole multiple of the 720x480 output that fits in the window, floored at 1.
-/// A fractional blit would resample the LCD3x mask and destroy its per pixel phase, so
-/// undersized windows crop rather than shrink.
+/// Largest whole multiple of the 640x480 output that fits in the window, floored at 1.
+/// A fractional blit would resample the whole UI and soften it, so a desktop window is shown
+/// at whole multiples only.
 pub fn fit_scale(win_w: u32, win_h: u32) -> u32 {
     (win_w / OUT_W).min(win_h / OUT_H).max(1)
 }
@@ -44,8 +55,7 @@ pub fn fit_rect(win_w: u32, win_h: u32) -> (i32, i32, i32, i32) {
     ((win_w as i32 - w) / 2, (win_h as i32 - h) / 2, w, h)
 }
 
-/// Whether a target can hold the 720x480 composite at a whole multiple. When it cannot — the
-/// RG35XXSP's 640x480 panel — the blit is a fractional downscale, which has to be filtered
+/// Whether a target can hold the 640x480 composite at a whole multiple. When it cannot the blit is a fractional downscale, which has to be filtered
 /// rather than nearest (nearest drops every ninth row and column) and cannot carry the LCD3x
 /// grille (its 3 px triads beat against the 8/9 resample into bands).
 pub fn blit_is_whole(window: (u32, u32)) -> bool {
@@ -53,9 +63,8 @@ pub fn blit_is_whole(window: (u32, u32)) -> bool {
 }
 
 /// The composite scaled to fit, aspect preserved, for a panel too small to hold it whole.
-/// The scale is fractional, so the picture is filtered and slightly soft. On the RG35XXSP's
-/// 640x480 panel that is 640x427 with 26 px bars above and below: the GBA's 3:2 at the largest
-/// size the panel holds, where the integer path would crop 80 px of chrome off the sides.
+/// The scale is fractional, so the picture is filtered and slightly soft. Only a panel smaller
+/// than the RG35XXSP's takes this path.
 pub fn blit_rect_fit(panel: (u32, u32), shake: f32) -> (i32, i32, i32, i32) {
     let scale = (panel.0 as f32 / OUT_W as f32).min(panel.1 as f32 / OUT_H as f32);
     let w = (OUT_W as f32 * scale).round() as i32;

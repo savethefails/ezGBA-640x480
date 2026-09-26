@@ -1,4 +1,4 @@
-use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
+use slot_gfx::{Draw, TexId, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W};
 use slot_power::Battery;
 use slot_store::{parse_stamp, StateEntry};
 
@@ -8,9 +8,9 @@ use crate::footer::{draw_printed, Printed};
 use crate::hud::{PLATE, PLATE_H};
 use crate::plate::{hint_quad, hint_row, hint_width, Hint, HINT_GAP, HINT_H, TITLE_H, TITLE_W};
 
-/// The screenshot is the screen. 240x160 scales to 720x480 at exactly 3x, the same integer
-/// scale the game runs at, so the switcher shows the frame that was paused rather than a
-/// resample of it.
+/// The screenshot is the screen. It is drawn through the game pass into the same 640x427
+/// picture the game runs in, so the switcher shows the frame that was paused exactly as it
+/// looked.
 pub const PHOTO_W: u32 = 240;
 pub const PHOTO_H: u32 = 160;
 
@@ -45,7 +45,7 @@ pub struct PhotoFace {
 }
 
 /// The screenshot alone, at its own size. The chrome is a draw list, so nothing is baked
-/// into the picture and the 3x upscale stays exact.
+/// into the picture and the game pass scales it exactly as it scales the game.
 pub fn photo_face(entry: &StateEntry) -> PhotoFace {
     let rgba = art::cover(&entry.thumb, PHOTO_W, PHOTO_H).unwrap_or_else(|| {
         std::iter::repeat_n(
@@ -183,16 +183,16 @@ impl Polaroids {
     }
 
     fn draw_photo(&self, out: &mut Vec<Draw>) {
-        let (w, h) = (OUT_W as f32, OUT_H as f32);
+        let (w, h) = (GAME_W as f32, GAME_H as f32);
         out.push(match self.faces.get(self.index) {
             // Through the game pass, not over it: the shot is a still of the same panel at
-            // the same 3x, so it carries the same mask the live frame does.
+            // the same scale, so it is filtered exactly as the live frame is.
             Some(tex) => Draw::Shot { tex: *tex },
             // Opaque, and the same colour a missing thumbnail decodes to. The paused game is
             // still underneath, and a screenshot it showed through would read as live.
             None => Draw::Rect {
-                x: 0.0,
-                y: 0.0,
+                x: GAME_X as f32,
+                y: GAME_Y as f32,
                 w,
                 h,
                 colour: [

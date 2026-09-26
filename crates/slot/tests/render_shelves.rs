@@ -5,7 +5,7 @@
 //!
 //! `SCRATCH_PNG_DIR=/tmp cargo test -p slot --test render_shelves -- --nocapture`
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod common;
 
@@ -165,9 +165,13 @@ fn gb_rom(cgb: u8) -> Vec<u8> {
 fn on_the_lone_pak(down: u32) -> (usize, usize) {
     (
         (OUT_W / 2) as usize,
-        (rest_y(GB_CART_H as f32) + down as f32) as usize,
+        (rest_y(GB_CART_H as f32) + ROW_LOWER + down as f32) as usize,
     )
 }
+
+/// How far below `rest_y` the shelf stands its row, to leave the top of the screen to a cart's
+/// box art. The app's own `SHELF_ROW_LOWER`, which is private to it.
+const ROW_LOWER: f32 = 100.0;
 
 /// The pak's bare plastic: half way down the shoulder above its label, which is the moulded
 /// lettering plate.
@@ -192,8 +196,8 @@ fn alone_label() -> (usize, usize) {
     on_the_lone_pak(GB_LABEL_Y + GB_LABEL_H / 2)
 }
 
-/// The two side slots of the carousel, in screen pixels: a shrunken cart stands from 26 to 213
-/// on the left and from 506 to 693 on the right, with its foot on the selection's floor, so
+/// The two side slots of the carousel, in screen pixels: a shrunken cart stands from 16 to 184
+/// on the left and from 456 to 624 on the right, with its foot on the selection's floor, so
 /// these read a band across the middle of one. A shelf of two fills both of them with its other
 /// cart; a shelf of one leaves both of them bare, since the lone pak is only 240 px wide and
 /// stands in the middle.
@@ -201,10 +205,10 @@ fn alone_label() -> (usize, usize) {
 /// The same screen row on both, because two side slots are only the same reading if they are
 /// read at the same height up a cart: a side cart is 105 px of face, and 48 px down it is a
 /// different part of the label from 58 px down it.
-const SIDE_LEFT: (usize, usize) = (120, 250);
-const SIDE_RIGHT: (usize, usize) = (600, 250);
-/// The middle slot, on the selection itself, which stands full size from 240 to 480.
-const MIDDLE: (usize, usize) = (360, 250);
+const SIDE_LEFT: (usize, usize) = (100, 355);
+const SIDE_RIGHT: (usize, usize) = (540, 355);
+/// The middle slot, on the selection itself, which stands full size from 200 to 440.
+const MIDDLE: (usize, usize) = (320, 355);
 /// The ground the carts stand on, which is what an empty place on the row leaves behind.
 const GROUND: [u32; 3] = [0x05, 0x05, 0x08];
 
@@ -446,11 +450,11 @@ fn a_cart_going_in_from_a_repeated_row_takes_both_copies_of_its_neighbour_with_i
         "the other cart was not repeated on both sides of the selection: {west:?} and {east:?}"
     );
     assert!(
-        (from - 360.0).abs() < 8.0,
+        (from - 320.0).abs() < 8.0,
         "the row did not stand its selection in the middle: {from}"
     );
     assert!(
-        (home - 360.0).abs() < 8.0,
+        (home - 320.0).abs() < 8.0,
         "the cart did not seat in the middle of the slot: {home}"
     );
     assert!(
@@ -534,7 +538,7 @@ fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
             assert!(
                 (least..=4).contains(&runs.len()),
                 "{carts} carts, frame {f}: {} carts on screen, not the {least} to four a \
-                 720 px row of them holds",
+                 640 px row of them holds",
                 runs.len()
             );
             // Only the carts standing wholly on screen: one hanging off an edge is measured
@@ -542,7 +546,7 @@ fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
             let row: Vec<f32> = runs
                 .iter()
                 .filter(|(a, b)| *a > 0 && *b < OUT_W as usize - 1)
-                .map(|(a, b)| ((a + b) as f32 / 2.0 - OUT_W as f32 / 2.0) / 240.0)
+                .map(|(a, b)| ((a + b) as f32 / 2.0 - OUT_W as f32 / 2.0) / 220.0)
                 .collect();
             assert!(
                 row.len() >= 2,
@@ -575,7 +579,7 @@ fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
                 "{carts} carts, frame {f}: the row turned round, from {stood} to {now}"
             );
             // 23.5 px is the fastest a critically damped spring at this stiffness carries a
-            // one-pitch move in a 60th of a second; a cart jumping a slot is 240.
+            // one-pitch move in a 60th of a second; a cart jumping a slot is 220.
             assert!(
                 stood - now < 0.12,
                 "{carts} carts, frame {f}: the row jumped {} of a pitch, which is a cart \
@@ -598,7 +602,7 @@ fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
 /// 26 px of backdrop the pitch leaves between neighbours.
 fn row_runs(px: &[u8]) -> Vec<(usize, usize)> {
     let lit = |x: usize| {
-        (210..300).any(|y| {
+        (310..400).any(|y| {
             let c = at(px, x, y);
             c.iter().map(|v| *v as u32).sum::<u32>() > 60
         })

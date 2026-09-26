@@ -78,12 +78,20 @@ void main() {
 /// stops landing on pixel edges. That is what a blown-up Game Boy picture looked like, and it
 /// is the honest consequence of the stretch rather than a defect to design around.
 ///
-/// `u_grille` is 1.0 wherever the composite reaches the panel at a whole multiple and 0.0 where
-/// it is downscaled (the RG35XXSP's 640x480). Off, the mask is replaced by its own average,
-/// `u_flat`, so the picture keeps the brightness it had with the grille rather than jumping by
-/// a third.
+/// `u_grille` is 1.0 only where the picture is exactly 3x its source, the one scale the 3x3
+/// mask lines up at. The RG35XXSP's 640x427 is not, so there it is 0.0 and the mask is replaced
+/// by its own average, `u_flat`: the picture keeps the brightness it had with the grille rather
+/// than jumping by a third.
+///
+/// High precision where the GPU has it, which the H700's Mali does: the filter works in texel
+/// coordinates up to 240, and at mediump's 16 bit float those are a quarter texel apart by the
+/// right hand side of the picture — far too coarse to place a one pixel blend.
 pub const GAME_FRAG: &str = r#"
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 uniform sampler2D u_game;
 uniform sampler2D u_mask;
 uniform vec2 u_src;
@@ -91,9 +99,20 @@ uniform vec4 u_uv;
 uniform float u_bright;
 uniform float u_grille;
 uniform vec3 u_flat;
+uniform vec2 u_scale;
 varying vec2 v_uv;
 void main() {
     vec2 uv = u_uv.xy + v_uv * u_uv.zw;
+    // Sharp bilinear: nearest across the body of each source pixel, a one panel pixel blend
+    // at its edges. At a fractional scale nearest alone makes some pixels 2 wide and some 3,
+    // which shimmers as the picture scrolls; bilinear alone is soft all over. `u_scale` is
+    // panel pixels per source pixel on each axis for this draw, so the blend is one panel
+    // pixel wide whatever part of the texture is stretched over the picture.
+    vec2 texel = uv * u_src;
+    vec2 centre = fract(texel) - 0.5;
+    vec2 region = 0.5 - 0.5 / u_scale;
+    vec2 f = (centre - clamp(centre, -region, region)) * u_scale + 0.5;
+    uv = (floor(texel) + f) / u_src;
     vec3 mask = mix(u_flat, texture2D(u_mask, v_uv * u_src).rgb, u_grille);
     vec3 rgb = texture2D(u_game, uv).rgb * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);

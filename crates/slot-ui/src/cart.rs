@@ -9,8 +9,8 @@ use crate::silhouette::{
 };
 use crate::text;
 
-/// The traced outline's own aspect, so `cart.svg` rasterises unstretched. Three across a
-/// 720 wide row exactly, so the shelf can show a neighbour either side of the selection.
+/// The traced outline's own aspect, so `cart.svg` rasterises unstretched. With a neighbour at
+/// 0.70 either side and a 16 px gap between each, the row spans a 640 panel exactly.
 pub const CART_W: u32 = 240;
 pub const CART_H: u32 = 135;
 
