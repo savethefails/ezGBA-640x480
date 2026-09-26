@@ -622,3 +622,53 @@ fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
         assert_eq!(tall, None, "{name}: a blend two pixels tall at y {tall:?}");
     }
 }
+
+/// Sharp-shimmerless blends by area: a panel pixel that a source pixel's edge crosses takes
+/// each side's colour in proportion to how much of it that side covers. At 640 across 240 a
+/// source pixel is 8/3 panel pixels wide, so a lone white column at the left edge lights the
+/// first two panel pixels fully, two thirds of the third, and none of the fourth. And the total
+/// light it leaves across the row is its width whichever texel it is in, which is what stops a
+/// scrolling picture shimmering.
+#[test]
+fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let column = |at: usize| -> Vec<u8> {
+        (0..(SRC_W * SRC_H) as usize)
+            .flat_map(|i| match i % SRC_W as usize == at {
+                true => [255, 255, 255, 0],
+                false => [0, 0, 0, 0],
+            })
+            .collect()
+    };
+    c.set_screen_power(1.0);
+    let row = |c: &mut Compositor, at: usize| {
+        c.begin_frame();
+        c.upload_game(&column(at));
+        c.draw_game();
+        let frame = c.read_frame();
+        let y = (GAME_Y + GAME_H / 2) as usize;
+        (0..OUT_W as usize)
+            .map(|x| px(&frame, x, y)[1] as f32)
+            .collect::<Vec<_>>()
+    };
+    let white = shaded([255; 3])[1] as f32;
+
+    let first = row(&mut c, 0);
+    assert!((first[0] - white).abs() <= 1.0 && (first[1] - white).abs() <= 1.0);
+    assert!(
+        (first[2] - white * 2.0 / 3.0).abs() <= 2.0,
+        "the pixel the edge crosses is {} rather than two thirds of {white}",
+        first[2]
+    );
+    assert_eq!(first[3], 0.0, "the column bled past its edge");
+
+    for at in [1, 2, 3, 100, 239] {
+        let lit: f32 = row(&mut c, at).iter().sum::<f32>() / white;
+        assert!(
+            (lit - 8.0 / 3.0).abs() < 0.05,
+            "column {at} leaves {lit} pixels of light, not 8/3"
+        );
+    }
+}

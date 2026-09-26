@@ -548,7 +548,10 @@ fn sync_switcher(app: &mut App, compositor: &mut Compositor, texes: Faces, state
                     *id
                 }
                 None => {
-                    let id = compositor.create_texture_nearest(f.w, f.h, &f.rgba);
+                    // Linear, as the live game's texture is: the scaler places its blend with the
+                    // linear tap, and a nearest texture would give the still hard, uneven edges
+                    // the game behind it does not have.
+                    let id = compositor.create_texture(f.w, f.h, &f.rgba);
                     texes.pool.push(id);
                     id
                 }

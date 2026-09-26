@@ -83,9 +83,22 @@ void main() {
 /// by its own average, `u_flat`: the picture keeps the brightness it had with the grille rather
 /// than jumping by a third.
 ///
-/// High precision where the GPU has it, which the H700's Mali does: the filter works in texel
-/// coordinates up to 240, and at mediump's 16 bit float those are a quarter texel apart by the
-/// right hand side of the picture — far too coarse to place a one pixel blend.
+/// The scaling is sharp-shimmerless, by zadpos, released into the public domain: libretro's
+/// slang-shaders `pixel-art-scaling/shaders/sharp-shimmerless.slang`, ported to GLSL ES 1.00.
+/// It treats every source pixel as a solid rectangle and gives each panel pixel the colour of
+/// whatever covers it, blended by area where a boundary crosses it. So every source pixel keeps
+/// its full width, only the one panel pixel a boundary lands in is mixed, and nothing shimmers
+/// as the picture scrolls at a non-integer scale. It needs the texture filtered linearly: the
+/// blend is the linear tap, placed so its weights are the two areas.
+///
+/// The port's names are the original's. `pixel` is this fragment in panel pixels from the
+/// picture's corner, `u_out` being the size the picture is drawn at, and everything the
+/// original measured over the whole texture is measured over the `u_uv` part of it instead, so
+/// a stretched Game Boy picture is scaled from its own 160x144.
+///
+/// High precision where the GPU has it, which the H700's Mali does: `pixel` runs to 640, and
+/// at mediump's 16 bit float that is half a pixel apart by the right hand side of the picture —
+/// far too coarse to find the boundary inside one.
 pub const GAME_FRAG: &str = r#"
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -96,23 +109,27 @@ uniform sampler2D u_game;
 uniform sampler2D u_mask;
 uniform vec2 u_src;
 uniform vec4 u_uv;
+uniform vec2 u_out;
 uniform float u_bright;
 uniform float u_grille;
 uniform vec3 u_flat;
-uniform vec2 u_scale;
 varying vec2 v_uv;
+
+#define FIX(c) max(abs(c), 1e-5)
+
+vec2 sharp_shimmerless(vec2 pixel, vec2 source) {
+    vec2 scale = u_out / source;
+    vec2 invscale = 1.0 / scale;
+    vec4 pixel_borders = vec4(floor(pixel), ceil(pixel));
+    vec4 texel_borders = floor(invscale.xyxy * pixel_borders);
+    vec2 same_texel = step(FIX(0.0), abs(texel_borders.xy - texel_borders.zw));
+    return texel_borders.zw + 0.5 - (scale * texel_borders.zw - pixel_borders.xy) * same_texel;
+}
+
 void main() {
-    vec2 uv = u_uv.xy + v_uv * u_uv.zw;
-    // Sharp bilinear: nearest across the body of each source pixel, a one panel pixel blend
-    // at its edges. At a fractional scale nearest alone makes some pixels 2 wide and some 3,
-    // which shimmers as the picture scrolls; bilinear alone is soft all over. `u_scale` is
-    // panel pixels per source pixel on each axis for this draw, so the blend is one panel
-    // pixel wide whatever part of the texture is stretched over the picture.
-    vec2 texel = uv * u_src;
-    vec2 centre = fract(texel) - 0.5;
-    vec2 region = 0.5 - 0.5 / u_scale;
-    vec2 f = (centre - clamp(centre, -region, region)) * u_scale + 0.5;
-    uv = (floor(texel) + f) / u_src;
+    vec2 source = u_src * u_uv.zw;
+    vec2 texel = sharp_shimmerless(v_uv * u_out, source);
+    vec2 uv = u_uv.xy + texel / u_src;
     vec3 mask = mix(u_flat, texture2D(u_mask, v_uv * u_src).rgb, u_grille);
     vec3 rgb = texture2D(u_game, uv).rgb * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);

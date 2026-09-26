@@ -24,7 +24,7 @@ pub struct GamePass {
     u_bright: gl::types::GLint,
     u_uv: gl::types::GLint,
     u_grille: gl::types::GLint,
-    u_scale: gl::types::GLint,
+    u_out: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -39,8 +39,8 @@ pub struct GamePass {
 impl GamePass {
     pub fn new() -> Result<Self, GfxError> {
         let prog = crate::shaders::program(RECT_VERT, GAME_FRAG)?;
-        // Linear, because the sharp bilinear filter blends the one boundary texel pair it
-        // lands between; it snaps every other sample to a texel centre itself.
+        // Linear, because sharp-shimmerless blends the one boundary texel pair a panel pixel
+        // straddles with the linear tap; it snaps every other sample to a texel centre itself.
         let game = crate::gl::texture(SRC_W, SRC_H, gl::LINEAR, gl::CLAMP_TO_EDGE, gl::BGRA, None);
         let mask = crate::gl::texture(
             3,
@@ -50,7 +50,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille, u_scale);
+        let (u_rect, u_bright, u_uv, u_grille, u_out);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -71,7 +71,7 @@ impl GamePass {
             u_bright = crate::gl::uniform_location(prog, "u_bright");
             u_uv = crate::gl::uniform_location(prog, "u_uv");
             u_grille = crate::gl::uniform_location(prog, "u_grille");
-            u_scale = crate::gl::uniform_location(prog, "u_scale");
+            u_out = crate::gl::uniform_location(prog, "u_out");
             let flat = grille_mean();
             gl::Uniform3f(
                 crate::gl::uniform_location(prog, "u_flat"),
@@ -88,7 +88,7 @@ impl GamePass {
             u_bright,
             u_uv,
             u_grille,
-            u_scale,
+            u_out,
             grille: GRILLE_FITS,
             power: 1.0,
             src: WHOLE_TEXTURE,
@@ -174,13 +174,9 @@ impl GamePass {
             gl::Uniform4f(self.u_uv, src[0], src[1], src[2], src[3]);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
             gl::Uniform1f(self.u_grille, if self.grille { 1.0 } else { 0.0 });
-            // Against the settled picture rather than the rect the power curve squeezes it
-            // into: the edges stay the width they will be once it is up.
-            gl::Uniform2f(
-                self.u_scale,
-                GAME_W as f32 / (SRC_W as f32 * src[2]),
-                GAME_H as f32 / (SRC_H as f32 * src[3]),
-            );
+            // The size the picture is drawn at this frame, which the power curve squeezes: the
+            // scaler measures its panel pixels against the rect they are actually in.
+            gl::Uniform2f(self.u_out, w, h);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);

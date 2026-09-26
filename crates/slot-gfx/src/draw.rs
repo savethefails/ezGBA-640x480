@@ -108,8 +108,8 @@ impl Sprites {
     }
 
     /// For a texture drawn at a whole number magnification, where a linear tap lands between
-    /// texels and blurs the pixel grid the source is defined on. The switcher's screenshot is
-    /// the only one: everything else is drawn at its own size or smaller.
+    /// texels and blurs the pixel grid the source is defined on. Nothing in the frontend is
+    /// any more: the switcher's screenshot goes through the game pass, which wants linear.
     pub fn create_texture_nearest(&mut self, w: u32, h: u32, rgba: &[u8]) -> TexId {
         self.push(w, h, rgba, gl::NEAREST)
     }

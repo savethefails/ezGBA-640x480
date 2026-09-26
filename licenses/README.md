@@ -78,6 +78,16 @@ from this repo carries the same notice the release zip does.
   the archive is refetched and the binary rebuilt from it in the same run, so nothing here can
   pair a binary from one build with a source recorded by another.
 
+## Shaders
+
+The game picture is scaled by a GLSL ES port of **sharp-shimmerless** by zadpos, which its
+author released into the public domain. The port lives in `GAME_FRAG` in
+`crates/slot-gfx/src/shaders.rs` and was taken from libretro's slang-shaders,
+`pixel-art-scaling/shaders/sharp-shimmerless.slang`
+(https://github.com/libretro/slang-shaders), itself Hyllian's optimisation of the original at
+https://github.com/Woohyun-Kang/Sharp-Shimmerless-Shader. Public domain asks nothing; this is
+credit, not a condition.
+
 ## Artwork
 
 `slot` draws its own cartridges, its own slot and its own wordmark, and the two fonts it sets
