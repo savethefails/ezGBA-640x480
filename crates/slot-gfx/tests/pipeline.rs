@@ -1,6 +1,6 @@
 use slot_gfx::{
-    blue_light_gain, grille_mean, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X,
-    GAME_Y, OUT_H, OUT_W, SRC_H, SRC_W,
+    blue_light_gain, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H,
+    OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -64,12 +64,10 @@ fn gb_shaped(inside: impl Fn(usize, usize) -> [u8; 3], margin: [u8; 3]) -> Vec<u
     buf
 }
 
-/// A source pixel as the pass draws it with the grille off: shaded by the grille's average,
-/// so a 640 panel is exactly as bright as the 3x picture the grille was drawn for. The
-/// tolerance is the byte the shader rounds to, not slack in the relationship.
+/// A source pixel as the pass draws it with the grille off: the core's own colour, undimmed.
+/// Compared with a byte of tolerance, which is the rounding the shader does, not slack.
 fn shaded(rgb: [u8; 3]) -> [i32; 3] {
-    let gain = grille_mean();
-    [0, 1, 2].map(|ch| (rgb[ch] as f32 * gain[ch]).round() as i32)
+    rgb.map(i32::from)
 }
 
 /// The panel pixel at the middle of a source pixel's cell, for a picture of `w` by `h` source

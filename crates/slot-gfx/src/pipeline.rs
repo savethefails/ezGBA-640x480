@@ -72,13 +72,6 @@ impl GamePass {
             u_uv = crate::gl::uniform_location(prog, "u_uv");
             u_grille = crate::gl::uniform_location(prog, "u_grille");
             u_out = crate::gl::uniform_location(prog, "u_out");
-            let flat = grille_mean();
-            gl::Uniform3f(
-                crate::gl::uniform_location(prog, "u_flat"),
-                flat[0],
-                flat[1],
-                flat[2],
-            );
         }
         Ok(GamePass {
             prog,
@@ -185,19 +178,6 @@ impl GamePass {
         }
         quad.draw();
     }
-}
-
-/// The grille's average per channel, from the same bytes the mask texture is made of, so a
-/// picture without the grille is as bright as one with it.
-pub fn grille_mean() -> [f32; 3] {
-    let tex = mask_texture_rgba8();
-    let mut sum = [0.0f32; 3];
-    for texel in tex.chunks_exact(4) {
-        for (s, v) in sum.iter_mut().zip(texel) {
-            *s += *v as f32 / 255.0;
-        }
-    }
-    sum.map(|s| s / 9.0)
 }
 
 impl Drop for GamePass {

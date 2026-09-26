@@ -79,9 +79,9 @@ void main() {
 /// is the honest consequence of the stretch rather than a defect to design around.
 ///
 /// `u_grille` is 1.0 only where the picture is exactly 3x its source, the one scale the 3x3
-/// mask lines up at. The RG35XXSP's 640x427 is not, so there it is 0.0 and the mask is replaced
-/// by its own average, `u_flat`: the picture keeps the brightness it had with the grille rather
-/// than jumping by a third.
+/// mask lines up at. The RG35XXSP's 640x427 is not, so there it is 0.0 and the picture is drawn
+/// at the core's own colours. It is not dimmed to the grille's average: without the grille's
+/// bright stripes that reads as a grey veil over the whole game, not as the same brightness.
 ///
 /// The scaling is sharp-shimmerless, by zadpos, released into the public domain: libretro's
 /// slang-shaders `pixel-art-scaling/shaders/sharp-shimmerless.slang`, ported to GLSL ES 1.00.
@@ -112,7 +112,6 @@ uniform vec4 u_uv;
 uniform vec2 u_out;
 uniform float u_bright;
 uniform float u_grille;
-uniform vec3 u_flat;
 varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
@@ -130,7 +129,7 @@ void main() {
     vec2 source = u_src * u_uv.zw;
     vec2 texel = sharp_shimmerless(v_uv * u_out, source);
     vec2 uv = u_uv.xy + texel / u_src;
-    vec3 mask = mix(u_flat, texture2D(u_mask, v_uv * u_src).rgb, u_grille);
+    vec3 mask = mix(vec3(1.0), texture2D(u_mask, v_uv * u_src).rgb, u_grille);
     vec3 rgb = texture2D(u_game, uv).rgb * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);
 }

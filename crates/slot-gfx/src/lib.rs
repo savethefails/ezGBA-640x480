@@ -51,7 +51,7 @@ impl Surface for HeadlessSurface {
 #[cfg(feature = "host")]
 pub use host::HostSurface;
 pub use lcd3x::{lcd3x_mask, mask_texture_rgba8};
-pub use pipeline::{grille_mean, SRC_H, SRC_W, WHOLE_TEXTURE};
+pub use pipeline::{SRC_H, SRC_W, WHOLE_TEXTURE};
 pub use power::{screen_brightness, screen_scale, screen_width};
 pub use surface::{
     blit_is_whole, blit_rect, blit_rect_fit, fit_rect, fit_scale, GfxError, Surface, GAME_H,

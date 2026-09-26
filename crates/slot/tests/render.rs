@@ -5,8 +5,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use slot::thumb;
 use slot_gfx::{
-    grille_mean, Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W,
-    SRC_H, SRC_W,
+    Compositor, Draw, HeadlessSurface, GAME_H, GAME_W, GAME_X, GAME_Y, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use slot_retro::{ButtonMask, MockCore, RetroCore};
 use slot_store::{Core, Platform, StateRing};
@@ -35,10 +34,9 @@ fn centre(sx: usize, sy: usize) -> (usize, usize) {
     (x as usize, y as usize)
 }
 
-/// Worst channel error between each listed source pixel, shaded by the grille's average, and
-/// the panel at the middle of its cell.
+/// Worst channel error between each listed source pixel and the panel at the middle of its
+/// cell. The picture is the core's own colours: no grille, and no dimming in its place.
 fn worst_at_centres(frame: &[u8], src: &[u8], at: &[(usize, usize)]) -> i32 {
-    let gain = grille_mean();
     let mut worst = 0;
     for &(sx, sy) in at {
         let o = (sy * SRC_W as usize + sx) * 4;
@@ -46,7 +44,7 @@ fn worst_at_centres(frame: &[u8], src: &[u8], at: &[(usize, usize)]) -> i32 {
         let (x, y) = centre(sx, sy);
         let got = px(frame, x, y);
         for ch in 0..3 {
-            let want = (want_rgb[ch] as f32 * gain[ch]).round() as i32;
+            let want = want_rgb[ch] as i32;
             worst = worst.max((want - got[ch] as i32).abs());
         }
     }
