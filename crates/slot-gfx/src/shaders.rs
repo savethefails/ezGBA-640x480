@@ -96,6 +96,14 @@ void main() {
 /// original measured over the whole texture is measured over the `u_uv` part of it instead, so
 /// a stretched Game Boy picture is scaled from its own 160x144.
 ///
+/// The other scaler is Pixel AA, by fishku, released into the public domain (CC0): libretro's
+/// slang-shaders `pixel-art-scaling/shaders/pixel_aa/pixel_aa_single_pass.slang`, the
+/// `pixel_aa_gamma` path of `shared.inc` without the subpixel variant. It places the same
+/// boundaries sharp-shimmerless does, but eases across each one with `slopestep` — steeper as
+/// `u_sharp` rises past 1.0 — and mixes the four texels around it in linear light rather than
+/// in the stored gamma values, so a blended edge is neither darker nor thinner than either side.
+/// `u_scaler` picks between the two: 0.0 sharp-shimmerless, 1.0 Pixel AA.
+///
 /// High precision where the GPU has it, which the H700's Mali does: `pixel` runs to 640, and
 /// at mediump's 16 bit float that is half a pixel apart by the right hand side of the picture —
 /// far too coarse to find the boundary inside one.
@@ -112,6 +120,8 @@ uniform vec4 u_uv;
 uniform vec2 u_out;
 uniform float u_bright;
 uniform float u_grille;
+uniform float u_scaler;
+uniform float u_sharp;
 varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
@@ -125,12 +135,49 @@ vec2 sharp_shimmerless(vec2 pixel, vec2 source) {
     return texel_borders.zw + 0.5 - (scale * texel_borders.zw - pixel_borders.xy) * same_texel;
 }
 
+// Similar to smoothstep, but has a configurable slope at x = 0.5.
+vec2 slopestep(vec2 edge0, vec2 edge1, vec2 x, float slope) {
+    x = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    vec2 s = sign(x - 0.5);
+    vec2 o = (1.0 + s) * 0.5;
+    return o - 0.5 * s * pow(2.0 * (o - s * x), vec2(slope));
+}
+
+vec3 to_lin(vec3 x) { return pow(x, vec3(2.2)); }
+vec3 to_srgb(vec3 x) { return pow(x, vec3(1.0 / 2.2)); }
+
+// `tx_coord` is in texels of the shown part of the texture; `fetch` turns one back into a
+// sample of the whole of it.
+vec3 fetch(vec2 texel) {
+    return texture2D(u_game, u_uv.xy + texel / u_src).rgb;
+}
+
+vec3 pixel_aa_gamma(vec2 tx_coord, vec2 tx_per_px) {
+    float sharpness_upper = min(1.0, u_sharp);
+    vec2 trans_lb = sharpness_upper * (0.5 - 0.5 * tx_per_px);
+    vec2 trans_ub = 1.0 - sharpness_upper * (1.0 - (0.5 + 0.5 * tx_per_px));
+    float trans_slope = max(1.0, u_sharp);
+
+    vec2 period = floor(tx_coord - 0.5);
+    vec2 phase = tx_coord - 0.5 - period;
+    vec2 offset = slopestep(trans_lb, trans_ub, phase, trans_slope);
+    return to_srgb(
+        mix(mix(to_lin(fetch(period + 0.5)), to_lin(fetch(period + vec2(1.5, 0.5))), offset.x),
+            mix(to_lin(fetch(period + vec2(0.5, 1.5))), to_lin(fetch(period + 1.5)), offset.x),
+            offset.y));
+}
+
 void main() {
     vec2 source = u_src * u_uv.zw;
-    vec2 texel = sharp_shimmerless(v_uv * u_out, source);
-    vec2 uv = u_uv.xy + texel / u_src;
+    vec3 picture;
+    if (u_scaler < 0.5) {
+        vec2 texel = sharp_shimmerless(v_uv * u_out, source);
+        picture = texture2D(u_game, u_uv.xy + texel / u_src).rgb;
+    } else {
+        picture = pixel_aa_gamma(v_uv * source, source / u_out);
+    }
     vec3 mask = mix(vec3(1.0), texture2D(u_mask, v_uv * u_src).rgb, u_grille);
-    vec3 rgb = texture2D(u_game, uv).rgb * mask;
+    vec3 rgb = picture * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);
 }
 "#;

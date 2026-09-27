@@ -1,4 +1,4 @@
-use slot_store::{Aspect, Theme};
+use slot_store::{Aspect, Scaling, Theme};
 
 /// The card is edited on a desktop by hand. Every way that can go wrong has to leave a device
 /// that still boots and a slot that is still visible.
@@ -80,4 +80,19 @@ fn the_picture_is_four_three_unless_the_card_asks_for_three_two() {
         Theme::parse("picture 3:2 please").picture,
         Aspect::FourThree
     );
+}
+
+/// Pixel AA at 1.0 unless the card says otherwise; a sharpness outside 0.0 to 2.0, or one that
+/// is not a number, leaves the default.
+#[test]
+fn the_scaler_is_pixel_aa_at_one_unless_the_card_says_otherwise() {
+    let t = Theme::parse("");
+    assert_eq!((t.scaler, t.sharpness), (Scaling::PixelAa, 1.0));
+    assert_eq!(
+        Theme::parse("scaler shimmerless").scaler,
+        Scaling::Shimmerless
+    );
+    assert_eq!(Theme::parse("sharpness 1.5").sharpness, 1.5);
+    assert_eq!(Theme::parse("sharpness 3").sharpness, 1.0);
+    assert_eq!(Theme::parse("sharpness sharp").sharpness, 1.0);
 }

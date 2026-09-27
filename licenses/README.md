@@ -80,8 +80,14 @@ from this repo carries the same notice the release zip does.
 
 ## Shaders
 
-The game picture is scaled by a GLSL ES port of **sharp-shimmerless** by zadpos, which its
-author released into the public domain. The port lives in `GAME_FRAG` in
+The game picture is scaled by a GLSL ES port of **Pixel AA** by fishku, released into the
+public domain under CC0: the single pass `pixel_aa_gamma` path of libretro's slang-shaders
+`pixel-art-scaling/shaders/pixel_aa/` (https://github.com/libretro/slang-shaders). Its
+`slopestep` and the blending around it live in `GAME_FRAG` in
+`crates/slot-gfx/src/shaders.rs`.
+
+`scaler shimmerless` in `theme.txt` switches to a GLSL ES port of **sharp-shimmerless** by
+zadpos, which its author released into the public domain. The port lives in `GAME_FRAG` in
 `crates/slot-gfx/src/shaders.rs` and was taken from libretro's slang-shaders,
 `pixel-art-scaling/shaders/sharp-shimmerless.slang`
 (https://github.com/libretro/slang-shaders), itself Hyllian's optimisation of the original at

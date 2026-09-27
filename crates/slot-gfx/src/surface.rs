@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::fmt;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// The RG35XXSP's panel, and the size everything is composed at. The UI is laid out for it
 /// directly, so on the device the blit is 1:1.
@@ -33,6 +33,49 @@ pub fn picture() -> Picture {
     match PICTURE.load(Ordering::Relaxed) {
         1 => Picture::ThreeTwo,
         _ => Picture::FourThree,
+    }
+}
+
+/// How the game picture is scaled up to its area. Both are pixel art scalers: every source
+/// pixel stays a solid block and only the panel pixel a boundary crosses is blended.
+///
+/// Pixel AA at 1.0 is the default. Compared against sharp-shimmerless on Skyland and GBAlatro
+/// through the real core, it draws the same boundaries with light text on dark coming out
+/// cleaner, and it is the only one of the two whose light stays constant as a picture scrolls:
+/// a one pixel line slid across the panel carries the same light at every position under Pixel
+/// AA at 1.0, and pulses by 9.6% under sharp-shimmerless, which mixes stored values rather than
+/// light. Sharper settings look crisper in a still and pulse again (6.8% at 1.5, 11.8% at 2.0).
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum Scaler {
+    /// zadpos's sharp-shimmerless: the blend weighted by area, mixed as stored.
+    SharpShimmerless,
+    /// fishku's Pixel AA at a sharpness: 1.0 is the same area weighting, higher narrows the
+    /// blend. Mixed in linear light.
+    PixelAa(f32),
+}
+
+impl Default for Scaler {
+    fn default() -> Self {
+        Scaler::PixelAa(1.0)
+    }
+}
+
+static SCALER: AtomicU8 = AtomicU8::new(1);
+static SHARPNESS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+
+pub fn set_scaler(scaler: Scaler) {
+    let (which, sharp) = match scaler {
+        Scaler::SharpShimmerless => (0, 1.0f32),
+        Scaler::PixelAa(sharp) => (1, sharp),
+    };
+    SHARPNESS.store(sharp.to_bits(), Ordering::Relaxed);
+    SCALER.store(which, Ordering::Relaxed);
+}
+
+pub fn scaler() -> Scaler {
+    match SCALER.load(Ordering::Relaxed) {
+        1 => Scaler::PixelAa(f32::from_bits(SHARPNESS.load(Ordering::Relaxed))),
+        _ => Scaler::SharpShimmerless,
     }
 }
 

@@ -60,6 +60,8 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 | `menu off` | Hide the settings menu, so little hands can't change anything |
 | `scrim #F7E7CE` | Background color behind the shelf |
 | `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
+| `sharpness 1.5` | How hard pixel edges are, from `0` (soft) to `2` (nearly hard). `1` is the default and the only setting with no shimmer at all. |
+| `scaler shimmerless` | Scale games with sharp-shimmerless instead of Pixel AA. |
 
 ## The RG35XXSP's 640×480 screen
 
@@ -71,10 +73,11 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   `picture 3:2` to `System/theme.txt`: the game is then 640×427, with thin black bars above
   and below.
 - **Sharp pixels, no shimmer.** 240 doesn't go into 640 a whole number of times, so each game
-  pixel is 2 or 3 screen pixels wide. The picture is scaled with sharp-shimmerless, the
-  RetroArch shader, which keeps every pixel solid and blends only the one screen pixel where
-  two meet, so scrolling doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game
-  pixel, so nothing is blended at all.
+  pixel is 2 or 3 screen pixels wide. The picture is scaled with Pixel AA, the RetroArch
+  shader, which keeps every pixel solid and blends only the one screen pixel where two meet,
+  mixing them as light rather than as numbers, so edges keep their weight and scrolling
+  doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game pixel, so nothing is
+  blended at all.
 - **No LCD grid lines.** They only line up at exactly 3× the GBA's size in both directions.
 
 ## Setup

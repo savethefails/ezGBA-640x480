@@ -1,6 +1,6 @@
 use slot_gfx::{
-    blue_light_gain, game_rect, set_picture, Compositor, Draw, HeadlessSurface, Picture, OUT_H,
-    OUT_W, SRC_H, SRC_W,
+    blue_light_gain, game_rect, set_picture, set_scaler, Compositor, Draw, HeadlessSurface,
+    Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -660,6 +660,9 @@ fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
             })
             .collect()
     };
+    // Sharp-shimmerless's own arithmetic, which mixes stored values: Pixel AA's linear light
+    // version of the same has a test of its own below.
+    set_scaler(Scaler::SharpShimmerless);
     c.set_screen_power(1.0);
     let row = |c: &mut Compositor, at: usize| {
         c.begin_frame();
@@ -689,6 +692,7 @@ fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
             "column {at} leaves {lit} pixels of light, not 8/3"
         );
     }
+    set_scaler(Scaler::default());
 }
 
 /// 4:3, the default: the picture is the whole panel, and 480 rows over 160 is exactly 3, so a
@@ -728,10 +732,67 @@ fn in_four_three_the_picture_fills_the_panel_and_rows_are_whole() {
     for y in 0..OUT_H as usize {
         let v = px(&frame, 320, y)[0];
         let want = if (y / 3) % 2 == 0 { 255 } else { 0 };
+        // Three levels, not one: at exactly 3x every third row samples on the very edge of
+        // Pixel AA's transition, and the rounding there comes back out of linear light
+        // magnified near black — 2/255, as in the original shader, and not a blended row.
         assert!(
-            v.abs_diff(want) <= 1,
+            v.abs_diff(want) <= 3,
             "row {y} is {v}, not {want}: a row was blended at 3x"
         );
     }
     set_picture(Picture::ThreeTwo);
+}
+
+/// Pixel AA at sharpness 1.0 places the same boundary sharp-shimmerless does, but mixes the two
+/// sides in linear light: a panel pixel two thirds covered by white carries two thirds of the
+/// *light*, which stored as sRGB-ish gamma is (2/3)^(1/2.2) of full, about 212 rather than the
+/// 170 a straight mix of the stored values gives. Sharper settings narrow the blend, so the
+/// crossing pixel is brighter still, and every setting keeps the solid pixels solid.
+#[test]
+fn pixel_aa_blends_the_crossing_pixel_in_linear_light() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+        .flat_map(|i| match i % SRC_W as usize == 0 {
+            true => [255, 255, 255, 0],
+            false => [0, 0, 0, 0],
+        })
+        .collect();
+    c.set_screen_power(1.0);
+    let row = |c: &mut Compositor, scaler: Scaler| {
+        set_scaler(scaler);
+        c.begin_frame();
+        c.upload_game(&src);
+        c.draw_game();
+        let frame = c.read_frame();
+        let y = (game_rect().1 + game_rect().3 / 2) as usize;
+        (0..5).map(|x| px(&frame, x, y)[1]).collect::<Vec<_>>()
+    };
+    let flat = row(&mut c, Scaler::SharpShimmerless);
+    let soft = row(&mut c, Scaler::PixelAa(1.0));
+    let sharp = row(&mut c, Scaler::PixelAa(1.5));
+    set_scaler(Scaler::default());
+
+    let linear = ((2.0f32 / 3.0).powf(1.0 / 2.2) * 255.0).round() as i32;
+    assert!((flat[2] as i32 - 170).abs() <= 2, "shimmerless {flat:?}");
+    assert!(
+        (soft[2] as i32 - linear).abs() <= 3,
+        "pixel aa at 1.0 crossed at {} rather than {linear}: {soft:?}",
+        soft[2]
+    );
+    assert!(
+        sharp[2] > soft[2],
+        "sharper did not narrow the blend: {sharp:?}"
+    );
+    for r in [&flat, &soft, &sharp] {
+        assert!(
+            r[0] >= 254 && r[1] >= 254,
+            "a solid pixel was blended: {r:?}"
+        );
+        assert!(
+            r[3] <= 1 && r[4] <= 1,
+            "the column bled past its edge: {r:?}"
+        );
+    }
 }

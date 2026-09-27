@@ -29,6 +29,19 @@ pub struct Theme {
     pub menu: bool,
     /// `picture 4:3` fills the panel; `picture 3:2` keeps the GBA's own shape with thin bars.
     pub picture: Aspect,
+    /// `scaler shimmerless` scales the game with sharp-shimmerless instead of Pixel AA.
+    pub scaler: Scaling,
+    /// `sharpness 1.5`: how narrow Pixel AA's blend at a pixel edge is, from 0.0 (soft) through
+    /// 1.0 (area weighted, the default) to 2.0 (nearly hard). Pixel AA only.
+    pub sharpness: f32,
+}
+
+/// Which pixel art scaler draws the game picture.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Scaling {
+    #[default]
+    PixelAa,
+    Shimmerless,
 }
 
 /// The shape of the game picture on a 640x480 panel.
@@ -51,6 +64,8 @@ impl Default for Theme {
             scrim: [0x00, 0x00, 0x00],
             menu: true,
             picture: Aspect::FourThree,
+            scaler: Scaling::PixelAa,
+            sharpness: 1.0,
         }
     }
 }
@@ -86,6 +101,13 @@ impl Theme {
                 ("menu", "on") => theme.menu = true,
                 ("picture", "4:3") => theme.picture = Aspect::FourThree,
                 ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
+                ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
+                ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
+                ("sharpness", v) => {
+                    if let Some(s) = v.parse::<f32>().ok().filter(|s| (0.0..=2.0).contains(s)) {
+                        theme.sharpness = s;
+                    }
+                }
                 _ => {}
             }
             let Some(rgb) = hex(value) else {

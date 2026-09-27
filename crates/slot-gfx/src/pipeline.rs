@@ -2,7 +2,7 @@ use crate::lcd3x::mask_texture_rgba8;
 use crate::power::{screen_brightness, screen_rect};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{game_rect, GfxError, OUT_H, OUT_W};
+use crate::surface::{game_rect, scaler, GfxError, Scaler, OUT_H, OUT_W};
 
 /// The GBA's own picture, which every platform's frame is centred inside.
 pub const SRC_W: u32 = 240;
@@ -29,6 +29,8 @@ pub struct GamePass {
     u_uv: gl::types::GLint,
     u_grille: gl::types::GLint,
     u_out: gl::types::GLint,
+    u_scaler: gl::types::GLint,
+    u_sharp: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -54,7 +56,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille, u_out);
+        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -76,6 +78,8 @@ impl GamePass {
             u_uv = crate::gl::uniform_location(prog, "u_uv");
             u_grille = crate::gl::uniform_location(prog, "u_grille");
             u_out = crate::gl::uniform_location(prog, "u_out");
+            u_scaler = crate::gl::uniform_location(prog, "u_scaler");
+            u_sharp = crate::gl::uniform_location(prog, "u_sharp");
         }
         Ok(GamePass {
             prog,
@@ -86,6 +90,8 @@ impl GamePass {
             u_uv,
             u_grille,
             u_out,
+            u_scaler,
+            u_sharp,
             grille: true,
             power: 1.0,
             src: WHOLE_TEXTURE,
@@ -175,6 +181,12 @@ impl GamePass {
             // The size the picture is drawn at this frame, which the power curve squeezes: the
             // scaler measures its panel pixels against the rect they are actually in.
             gl::Uniform2f(self.u_out, w, h);
+            let (which, sharp) = match scaler() {
+                Scaler::SharpShimmerless => (0.0, 1.0),
+                Scaler::PixelAa(sharp) => (1.0, sharp),
+            };
+            gl::Uniform1f(self.u_scaler, which);
+            gl::Uniform1f(self.u_sharp, sharp);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);

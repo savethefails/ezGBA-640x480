@@ -6,7 +6,7 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, Platform,
+    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, Platform, Scaling,
     SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
@@ -766,6 +766,10 @@ impl App {
         slot_gfx::set_picture(match theme.picture {
             Aspect::FourThree => slot_gfx::Picture::FourThree,
             Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
+        });
+        slot_gfx::set_scaler(match theme.scaler {
+            Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),
+            Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
         });
         slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
