@@ -1,4 +1,4 @@
-use slot_store::{Aspect, Scaling, Theme};
+use slot_store::{Aspect, LcdGrid, Scaling, Theme};
 
 /// The card is edited on a desktop by hand. Every way that can go wrong has to leave a device
 /// that still boots and a slot that is still visible.
@@ -95,4 +95,14 @@ fn the_scaler_is_pixel_aa_at_one_unless_the_card_says_otherwise() {
     assert_eq!(Theme::parse("sharpness 1.5").sharpness, 1.5);
     assert_eq!(Theme::parse("sharpness 3").sharpness, 1.0);
     assert_eq!(Theme::parse("sharpness sharp").sharpness, 1.0);
+}
+
+/// No grid unless the card asks for one.
+#[test]
+fn the_grid_is_off_unless_the_card_asks_for_it() {
+    assert_eq!(Theme::parse("").grid, LcdGrid::Off);
+    assert_eq!(Theme::parse("grid on").grid, LcdGrid::On);
+    assert_eq!(Theme::parse("grid strict").grid, LcdGrid::Strict);
+    assert_eq!(Theme::parse("grid on\ngrid off").grid, LcdGrid::Off);
+    assert_eq!(Theme::parse("grid lots").grid, LcdGrid::Off);
 }

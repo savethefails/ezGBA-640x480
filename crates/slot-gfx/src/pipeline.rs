@@ -2,7 +2,7 @@ use crate::lcd3x::mask_texture_rgba8;
 use crate::power::{screen_brightness, screen_rect};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{game_rect, scaler, GfxError, Scaler, OUT_H, OUT_W};
+use crate::surface::{game_rect, grid, scaler, GfxError, Scaler, OUT_H, OUT_W};
 
 /// The GBA's own picture, which every platform's frame is centred inside.
 pub const SRC_W: u32 = 240;
@@ -31,6 +31,8 @@ pub struct GamePass {
     u_out: gl::types::GLint,
     u_scaler: gl::types::GLint,
     u_sharp: gl::types::GLint,
+    u_gap: gl::types::GLint,
+    u_keep: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -56,7 +58,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp);
+        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -80,6 +82,8 @@ impl GamePass {
             u_out = crate::gl::uniform_location(prog, "u_out");
             u_scaler = crate::gl::uniform_location(prog, "u_scaler");
             u_sharp = crate::gl::uniform_location(prog, "u_sharp");
+            u_gap = crate::gl::uniform_location(prog, "u_gap");
+            u_keep = crate::gl::uniform_location(prog, "u_keep");
         }
         Ok(GamePass {
             prog,
@@ -92,6 +96,8 @@ impl GamePass {
             u_out,
             u_scaler,
             u_sharp,
+            u_gap,
+            u_keep,
             grille: true,
             power: 1.0,
             src: WHOLE_TEXTURE,
@@ -187,6 +193,9 @@ impl GamePass {
             };
             gl::Uniform1f(self.u_scaler, which);
             gl::Uniform1f(self.u_sharp, sharp);
+            let grid = grid();
+            gl::Uniform2f(self.u_gap, grid.gap[0], grid.gap[1]);
+            gl::Uniform1f(self.u_keep, grid.keep);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);

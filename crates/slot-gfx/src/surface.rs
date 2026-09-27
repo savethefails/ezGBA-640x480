@@ -79,6 +79,60 @@ pub fn scaler() -> Scaler {
     }
 }
 
+/// ezGBA's LCD grid: a dark gap of `gap` panel pixels (across, down) centred on every game
+/// pixel edge, with each game pixel's light given back so the picture is as bright as without
+/// it. `keep` is how strictly: 1.0 narrows a bright pixel's gaps until its light fits under
+/// white, 0.0 keeps every gap full width and lets the brightest pixels fall short. A gap of 0.0
+/// on both axes is no grid.
+#[derive(Copy, Clone, PartialEq, Debug, Default)]
+pub struct Grid {
+    pub gap: [f32; 2],
+    pub keep: f32,
+}
+
+impl Grid {
+    /// ezGBA's grid for a picture shape, chosen by eye against Skyland and GBAlatro.
+    ///
+    /// Across, two thirds of a panel pixel on either shape: at 640 over 240 an edge lands a
+    /// third or two thirds of the way into a column, and a gap that wide centred there leaves
+    /// that column one colour, so the non-integer scale disappears into the grid. Down, 4:3 is
+    /// exactly 3 rows a pixel and there is nothing to hide, so the gap is three quarters of a
+    /// row, the same share of a pixel as across; 3:2 is 2.67 rows, and gets the same two thirds.
+    ///
+    /// `keep` 0.8 rather than 1.0: strict, a pixel with no headroom (white, or any fully
+    /// saturated channel) loses its grid entirely, which reads as a grid on some colours and
+    /// not others. At 0.8 every colour keeps a grid and white keeps 90% of its light. Strict is
+    /// what `grid strict` asks for.
+    pub fn for_picture(picture: Picture, strict: bool) -> Self {
+        let down = match picture {
+            Picture::FourThree => 0.75,
+            Picture::ThreeTwo => 2.0 / 3.0,
+        };
+        Grid {
+            gap: [2.0 / 3.0, down],
+            keep: if strict { 1.0 } else { 0.8 },
+        }
+    }
+}
+
+static GRID_X: AtomicU32 = AtomicU32::new(0);
+static GRID_Y: AtomicU32 = AtomicU32::new(0);
+static GRID_KEEP: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_grid(grid: Grid) {
+    GRID_X.store(grid.gap[0].max(0.0).to_bits(), Ordering::Relaxed);
+    GRID_Y.store(grid.gap[1].max(0.0).to_bits(), Ordering::Relaxed);
+    GRID_KEEP.store(grid.keep.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+pub fn grid() -> Grid {
+    let f = |a: &AtomicU32| f32::from_bits(a.load(Ordering::Relaxed));
+    Grid {
+        gap: [f(&GRID_X), f(&GRID_Y)],
+        keep: f(&GRID_KEEP),
+    }
+}
+
 /// Where the game picture sits in the frame, as x, y, width and height in panel pixels.
 /// Neither shape is a whole multiple of the source across, so the game pass scales it with
 /// sharp-shimmerless rather than nearest (see `GAME_FRAG`).

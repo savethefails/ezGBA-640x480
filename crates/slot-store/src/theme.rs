@@ -34,6 +34,17 @@ pub struct Theme {
     /// `sharpness 1.5`: how narrow Pixel AA's blend at a pixel edge is, from 0.0 (soft) through
     /// 1.0 (area weighted, the default) to 2.0 (nearly hard). Pixel AA only.
     pub sharpness: f32,
+    /// `grid on` draws ezGBA's LCD grid over the game; `grid strict` does too, but never at the
+    /// cost of any brightness; `grid off` is the default.
+    pub grid: LcdGrid,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum LcdGrid {
+    #[default]
+    Off,
+    On,
+    Strict,
 }
 
 /// Which pixel art scaler draws the game picture.
@@ -66,6 +77,7 @@ impl Default for Theme {
             picture: Aspect::FourThree,
             scaler: Scaling::PixelAa,
             sharpness: 1.0,
+            grid: LcdGrid::Off,
         }
     }
 }
@@ -101,6 +113,9 @@ impl Theme {
                 ("menu", "on") => theme.menu = true,
                 ("picture", "4:3") => theme.picture = Aspect::FourThree,
                 ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
+                ("grid", "on") => theme.grid = LcdGrid::On,
+                ("grid", "strict") => theme.grid = LcdGrid::Strict,
+                ("grid", "off") => theme.grid = LcdGrid::Off,
                 ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
                 ("sharpness", v) => {

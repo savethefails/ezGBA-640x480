@@ -1,6 +1,6 @@
 use slot_gfx::{
-    blue_light_gain, game_rect, set_picture, set_scaler, Compositor, Draw, HeadlessSurface,
-    Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
+    blue_light_gain, game_rect, set_grid, set_picture, set_scaler, Compositor, Draw, Grid,
+    HeadlessSurface, Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -795,4 +795,142 @@ fn pixel_aa_blends_the_crossing_pixel_in_linear_light() {
             "the column bled past its edge: {r:?}"
         );
     }
+}
+
+/// The grid's own geometry at 4:3: two thirds of a panel pixel across, which is exactly what
+/// hides the non-integer columns, and three quarters down, the same share of a taller pixel.
+const GRID_43: Grid = Grid {
+    gap: [2.0 / 3.0, 0.75],
+    keep: 1.0,
+};
+
+fn srgb_to_lin(v: u8) -> f32 {
+    (v as f32 / 255.0).powf(2.2)
+}
+
+/// Draws `src` (BGRX, 240x160) at 4:3 through the grid and hands the frame back.
+fn through_grid(c: &mut Compositor, src: &[u8], grid: Grid) -> Vec<u8> {
+    set_picture(Picture::FourThree);
+    set_grid(grid);
+    c.set_screen_power(1.0);
+    c.begin_frame();
+    c.upload_game(src);
+    c.draw_game();
+    let frame = c.read_frame();
+    set_grid(Grid::default());
+    set_picture(Picture::ThreeTwo);
+    frame
+}
+
+fn flat(v: u8) -> Vec<u8> {
+    vec![v; (SRC_W * SRC_H * 4) as usize]
+}
+
+/// A flat colour carries the same light through the grid as without it: the gaps take light,
+/// and the gain on what is left lit gives exactly that back. Measured as light (linear) over
+/// one whole repeat of the grid, 8 columns by 3 rows.
+#[test]
+fn the_grid_keeps_the_light_of_a_flat_colour() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    for v in [60u8, 128, 180] {
+        let frame = through_grid(&mut c, &flat(v), GRID_43);
+        let mut light = 0.0;
+        for y in 240..243 {
+            for x in 320..328 {
+                light += srgb_to_lin(px(&frame, x, y)[1]);
+            }
+        }
+        let want = srgb_to_lin(v) * 24.0;
+        assert!(
+            (light - want).abs() / want < 0.02,
+            "grey {v}: {light:.3} of light against {want:.3} without the grid"
+        );
+    }
+}
+
+/// The dark lines fall on the edges and nowhere else: on a flat colour, across one repeat of 8
+/// columns, the two columns an edge crosses (2 and 5) are the darkest, the pair either side of
+/// the edge that lands between columns (7 and 0) are half as dark, and the rest are equal and
+/// the brightest. Down, the rows either side of every third row boundary share the gap.
+#[test]
+fn the_grid_lines_fall_on_the_pixel_edges() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let frame = through_grid(&mut c, &flat(128), GRID_43);
+    let col: Vec<u8> = (320..328).map(|x| px(&frame, x, 241)[1]).collect();
+    let (lit, mid, split) = (col[1], col[2], col[7]);
+    assert!(mid < split && split < lit, "columns {col:?}");
+    assert_eq!(col[2], col[5], "the two mid-column edges differ: {col:?}");
+    assert_eq!(col[0], col[7], "the split edge is lopsided: {col:?}");
+    assert!(
+        col[1] == col[3] && col[3] == col[4] && col[4] == col[6],
+        "{col:?}"
+    );
+    let row: Vec<u8> = (240..246).map(|y| px(&frame, 321, y)[1]).collect();
+    // 240 is 80 source rows down: its first row, then the middle, then the last.
+    assert!(row[0] == row[2] && row[1] > row[0], "rows {row:?}");
+    assert_eq!(row[..3], row[3..], "rows do not repeat every 3: {row:?}");
+}
+
+/// The trick. At two thirds of a panel pixel, the gap centred on an edge that lands inside a
+/// column covers exactly the other source pixel's part of it: a column is one colour and gap,
+/// never two colours. So a hard edge between two colours shows no in-between column at all.
+#[test]
+fn at_two_thirds_no_panel_column_mixes_two_colours() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    // Alternate columns of pure red and pure blue, so any mixing shows up as both at once.
+    let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+        .flat_map(|i| match (i % SRC_W as usize) % 2 {
+            0 => [0, 0, 180, 0],
+            _ => [180, 0, 0, 0],
+        })
+        .collect();
+    let frame = through_grid(&mut c, &src, GRID_43);
+    for x in 0..OUT_W as usize {
+        let [r, _, b] = px(&frame, x, 241);
+        assert!(
+            r <= 1 || b <= 1,
+            "column {x} is red {r} and blue {b} at once: the scale shows through the grid"
+        );
+    }
+}
+
+/// A single column slid across the panel gives out the same light at every position: every
+/// source pixel loses the same share of itself to the grid wherever it lands, and gets it back.
+#[test]
+fn a_column_sliding_under_the_grid_does_not_pulse() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let mut lights = vec![];
+    for at in 100..109 {
+        let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+            .flat_map(|i| match i % SRC_W as usize == at {
+                true => [120, 120, 120, 0],
+                false => [0, 0, 0, 0],
+            })
+            .collect();
+        let frame = through_grid(&mut c, &src, GRID_43);
+        let light: f32 = (0..3)
+            .map(|dy| {
+                (0..OUT_W as usize)
+                    .map(|x| srgb_to_lin(px(&frame, x, 240 + dy)[1]))
+                    .sum::<f32>()
+            })
+            .sum();
+        lights.push(light);
+    }
+    let (lo, hi) = lights
+        .iter()
+        .fold((f32::MAX, 0f32), |(a, b), &v| (a.min(v), b.max(v)));
+    assert!(
+        (hi - lo) / hi < 0.02,
+        "the column pulses by {:.1}% as it moves: {lights:?}",
+        (hi - lo) / hi * 100.0
+    );
 }

@@ -6,8 +6,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, Platform, Scaling,
-    SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, LcdGrid, Platform,
+    Scaling, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
+    VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -766,6 +767,12 @@ impl App {
         slot_gfx::set_picture(match theme.picture {
             Aspect::FourThree => slot_gfx::Picture::FourThree,
             Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
+        });
+        let picture = slot_gfx::picture();
+        slot_gfx::set_grid(match theme.grid {
+            LcdGrid::Off => slot_gfx::Grid::default(),
+            LcdGrid::On => slot_gfx::Grid::for_picture(picture, false),
+            LcdGrid::Strict => slot_gfx::Grid::for_picture(picture, true),
         });
         slot_gfx::set_scaler(match theme.scaler {
             Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),

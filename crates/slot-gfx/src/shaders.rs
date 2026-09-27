@@ -104,6 +104,22 @@ void main() {
 /// in the stored gamma values, so a blended edge is neither darker nor thinner than either side.
 /// `u_scaler` picks between the two: 0.0 sharp-shimmerless, 1.0 Pixel AA.
 ///
+/// The LCD grid is ezGBA's own, and replaces both scalers when it is on (`u_gap` above zero).
+/// It models a real LCD's black matrix: a dark gap of `u_gap` panel pixels centred on every
+/// source pixel edge, each axis on its own. Everything is by area, in linear light:
+///
+/// - Each panel pixel takes, from each of the one or two source pixels under it, only the part
+///   of that source pixel outside its gaps. Gaps are centred on the edge, so every source pixel
+///   gives up the same share of itself wherever it lands on the panel, and nothing pulses as a
+///   picture scrolls.
+/// - That share is given back as gain on what is left lit, so a source pixel emits the same
+///   light it would without the grid. The panel cannot go past white, so a bright pixel narrows
+///   its own gaps to what its headroom allows — fully at `u_keep` 1.0, half way at 0.5.
+/// - The trick: at 640 across 240 an edge lands a third or two thirds of the way into a panel
+///   column, which is where a scaler has to blend. A gap two thirds of a panel pixel wide,
+///   centred there, covers exactly the other source pixel's part of that column, so no panel
+///   column holds two colours: the non-integer scale disappears into the grid.
+///
 /// High precision where the GPU has it, which the H700's Mali does: `pixel` runs to 640, and
 /// at mediump's 16 bit float that is half a pixel apart by the right hand side of the picture —
 /// far too coarse to find the boundary inside one.
@@ -122,6 +138,8 @@ uniform float u_bright;
 uniform float u_grille;
 uniform float u_scaler;
 uniform float u_sharp;
+uniform vec2 u_gap;
+uniform float u_keep;
 varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
@@ -167,10 +185,50 @@ vec3 pixel_aa_gamma(vec2 tx_coord, vec2 tx_per_px) {
             offset.y));
 }
 
+// The LCD grid. Along one axis, for panel column `i` at `scale` panel pixels per source pixel:
+// the part of source pixel `j`, with a gap of `half_gap` on each side of it, inside the column.
+float lit(float i, float j, float scale, float half_gap) {
+    float lo = max(i, j * scale + half_gap);
+    float hi = min(i + 1.0, (j + 1.0) * scale - half_gap);
+    // Less than a ten thousandth of a pixel is rounding, not coverage: an edge meant to sit
+    // exactly on a gap's edge would otherwise leave a sliver of the next colour, which linear
+    // light turns into a visible trace against black.
+    return max(hi - lo - 1e-4, 0.0);
+}
+
+// Source pixel `j` (x and y) seen through panel pixel `i`: its light, the grid taken out of it
+// and given back as gain. `t` narrows its gaps to what its brightness leaves room to give back.
+vec3 grid_tap(vec2 i, vec2 j, vec2 scale) {
+    vec3 c = to_lin(fetch(j + 0.5));
+    float cmax = max(c.r, max(c.g, c.b));
+    vec2 share = u_gap / scale;
+    float room = (1.0 - cmax) / max(share.x + share.y, 1e-4);
+    float t = mix(1.0, clamp(room, 0.0, 1.0), u_keep);
+    vec2 half_gap = 0.5 * t * u_gap;
+    float area = lit(i.x, j.x, scale.x, half_gap.x) * lit(i.y, j.y, scale.y, half_gap.y);
+    vec2 kept = 1.0 - t * share;
+    return c * area / (kept.x * kept.y);
+}
+
+vec3 grid(vec2 source) {
+    vec2 scale = u_out / source;
+    vec2 i = floor(v_uv * u_out);
+    // The one or two source pixels under this panel pixel on each axis.
+    vec2 j0 = floor(i / scale + 1e-4);
+    vec2 j1 = floor((i + 1.0) / scale - 1e-4);
+    vec3 light = grid_tap(i, j0, scale);
+    if (j1.x > j0.x) light += grid_tap(i, vec2(j1.x, j0.y), scale);
+    if (j1.y > j0.y) light += grid_tap(i, vec2(j0.x, j1.y), scale);
+    if (j1.x > j0.x && j1.y > j0.y) light += grid_tap(i, j1, scale);
+    return to_srgb(light);
+}
+
 void main() {
     vec2 source = u_src * u_uv.zw;
     vec3 picture;
-    if (u_scaler < 0.5) {
+    if (u_gap.x + u_gap.y > 0.0) {
+        picture = grid(source);
+    } else if (u_scaler < 0.5) {
         vec2 texel = sharp_shimmerless(v_uv * u_out, source);
         picture = texture2D(u_game, u_uv.xy + texel / u_src).rgb;
     } else {
