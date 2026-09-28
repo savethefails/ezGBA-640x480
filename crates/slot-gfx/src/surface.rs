@@ -97,8 +97,8 @@ const LINE_WIDTH: f32 = 2.5;
 /// How dark the middle of a line is, in percent, when the card does not say. First chosen at 20
 /// by eye against Skyland and GBAlatro in screenshots, but at the panel's own 229 ppi and arm's
 /// length that all but vanished: a line 2.67 panel pixels from the next is a detail the eye
-/// barely resolves, so it needs the contrast to survive. 40 was the first depth that read on the
-/// device. The three settings differ only in what a colour with no headroom (white, or any fully
+/// barely resolves, so it needs the contrast to survive. 40 is double that, and still to be judged
+/// on the device. The three settings differ only in what a colour with no headroom (white, or any fully
 /// saturated channel) does, since it cannot be brightened to make up for its lines.
 pub const GRID_DEPTH: f32 = 40.0;
 
