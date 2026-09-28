@@ -797,10 +797,9 @@ fn pixel_aa_blends_the_crossing_pixel_in_linear_light() {
     }
 }
 
-/// The grid's own geometry at 4:3: two thirds of a panel pixel across, which is exactly what
-/// hides the non-integer columns, and three quarters down, the same share of a taller pixel.
+/// A grid at 4:3, strong enough that its lines can be measured.
 const GRID_43: Grid = Grid {
-    gap: [2.0 / 3.0, 0.75],
+    gap: [0.5, 0.5],
     keep: 1.0,
 };
 
@@ -850,56 +849,6 @@ fn the_grid_keeps_the_light_of_a_flat_colour() {
     }
 }
 
-/// The dark lines fall on the edges and nowhere else: on a flat colour, across one repeat of 8
-/// columns, the two columns an edge crosses (2 and 5) are the darkest, the pair either side of
-/// the edge that lands between columns (7 and 0) are half as dark, and the rest are equal and
-/// the brightest. Down, the rows either side of every third row boundary share the gap.
-#[test]
-fn the_grid_lines_fall_on_the_pixel_edges() {
-    let Some((_g, _s, mut c)) = compositor() else {
-        return;
-    };
-    let frame = through_grid(&mut c, &flat(128), GRID_43);
-    let col: Vec<u8> = (320..328).map(|x| px(&frame, x, 241)[1]).collect();
-    let (lit, mid, split) = (col[1], col[2], col[7]);
-    assert!(mid < split && split < lit, "columns {col:?}");
-    assert_eq!(col[2], col[5], "the two mid-column edges differ: {col:?}");
-    assert_eq!(col[0], col[7], "the split edge is lopsided: {col:?}");
-    assert!(
-        col[1] == col[3] && col[3] == col[4] && col[4] == col[6],
-        "{col:?}"
-    );
-    let row: Vec<u8> = (240..246).map(|y| px(&frame, 321, y)[1]).collect();
-    // 240 is 80 source rows down: its first row, then the middle, then the last.
-    assert!(row[0] == row[2] && row[1] > row[0], "rows {row:?}");
-    assert_eq!(row[..3], row[3..], "rows do not repeat every 3: {row:?}");
-}
-
-/// The trick. At two thirds of a panel pixel, the gap centred on an edge that lands inside a
-/// column covers exactly the other source pixel's part of it: a column is one colour and gap,
-/// never two colours. So a hard edge between two colours shows no in-between column at all.
-#[test]
-fn at_two_thirds_no_panel_column_mixes_two_colours() {
-    let Some((_g, _s, mut c)) = compositor() else {
-        return;
-    };
-    // Alternate columns of pure red and pure blue, so any mixing shows up as both at once.
-    let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
-        .flat_map(|i| match (i % SRC_W as usize) % 2 {
-            0 => [0, 0, 180, 0],
-            _ => [180, 0, 0, 0],
-        })
-        .collect();
-    let frame = through_grid(&mut c, &src, GRID_43);
-    for x in 0..OUT_W as usize {
-        let [r, _, b] = px(&frame, x, 241);
-        assert!(
-            r <= 1 || b <= 1,
-            "column {x} is red {r} and blue {b} at once: the scale shows through the grid"
-        );
-    }
-}
-
 /// A single column slid across the panel gives out the same light at every position: every
 /// source pixel loses the same share of itself to the grid wherever it lands, and gets it back.
 #[test]
@@ -933,4 +882,67 @@ fn a_column_sliding_under_the_grid_does_not_pulse() {
         "the column pulses by {:.1}% as it moves: {lights:?}",
         (hi - lo) / hi * 100.0
     );
+}
+
+/// Every line sits on the edge it marks, so the lines are evenly spaced at the true pitch of 8/3
+/// panel pixels rather than snapping to whole pixels in a 3-2-3 rhythm. On a flat colour that
+/// shows as a pattern that repeats exactly every 8 columns (three pixels) across the whole
+/// picture, and within each repeat is its own mirror image both about its ends, where an edge
+/// falls between two columns, and about its middle, which the other two edges straddle at 4/3
+/// either side. Hard lines snapped to columns are neither.
+#[test]
+fn the_grid_lines_are_evenly_spaced_at_the_true_pitch() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let frame = through_grid(&mut c, &flat(128), GRID_43);
+    let col = |x: usize| px(&frame, x, 241)[1];
+    let repeat: Vec<u8> = (0..8).map(col).collect();
+    for x in 0..OUT_W as usize {
+        assert!(
+            col(x).abs_diff(repeat[x % 8]) <= 1,
+            "column {x} is {}, not {} as every 8 columns before it: {repeat:?}",
+            col(x),
+            repeat[x % 8]
+        );
+    }
+    for m in 0..4 {
+        assert!(
+            repeat[3 - m].abs_diff(repeat[4 + m]) <= 1,
+            "not a mirror about its middle: {repeat:?}"
+        );
+        assert!(
+            repeat[m].abs_diff(repeat[7 - m]) <= 1,
+            "not a mirror about its ends: {repeat:?}"
+        );
+    }
+    let lightest = *repeat.iter().max().unwrap();
+    assert!(
+        repeat.iter().any(|&v| v + 8 < lightest),
+        "no lines at all: {repeat:?}"
+    );
+}
+
+/// The pattern is its own mirror image about the middle of the picture: whatever the lines do at
+/// one side they do at the other, so nothing drifts from left to right or top to bottom.
+#[test]
+fn the_grid_is_symmetric_about_the_middle() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let frame = through_grid(&mut c, &flat(128), GRID_43);
+    for x in 0..OUT_W as usize {
+        let (a, b) = (
+            px(&frame, x, 241)[1],
+            px(&frame, OUT_W as usize - 1 - x, 241)[1],
+        );
+        assert!(a.abs_diff(b) <= 1, "column {x} is {a}, its mirror {b}");
+    }
+    for y in 0..OUT_H as usize {
+        let (a, b) = (
+            px(&frame, 320, y)[1],
+            px(&frame, 320, OUT_H as usize - 1 - y)[1],
+        );
+        assert!(a.abs_diff(b) <= 1, "row {y} is {a}, its mirror {b}");
+    }
 }

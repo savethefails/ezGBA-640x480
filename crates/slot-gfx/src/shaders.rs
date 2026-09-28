@@ -104,21 +104,18 @@ void main() {
 /// in the stored gamma values, so a blended edge is neither darker nor thinner than either side.
 /// `u_scaler` picks between the two: 0.0 sharp-shimmerless, 1.0 Pixel AA.
 ///
-/// The LCD grid is ezGBA's own, and replaces both scalers when it is on (`u_gap` above zero).
-/// It models a real LCD's black matrix: a dark gap of `u_gap` panel pixels centred on every
-/// source pixel edge, each axis on its own. Everything is by area, in linear light:
+/// The LCD grid is ezGBA's own, and replaces both scalers when it is on (`u_gap` above zero). Its
+/// lines are soft bands centred exactly on every source pixel edge, so they are evenly spaced at
+/// the true pitch across the whole picture and symmetric about its middle (see `LINE_W`).
+/// Everything is by area, in linear light:
 ///
-/// - Each panel pixel takes, from each of the one or two source pixels under it, only the part
-///   of that source pixel outside its gaps. Gaps are centred on the edge, so every source pixel
-///   gives up the same share of itself wherever it lands on the panel, and nothing pulses as a
-///   picture scrolls.
-/// - That share is given back as gain on what is left lit, so a source pixel emits the same
-///   light it would without the grid. The panel cannot go past white, so a bright pixel narrows
-///   its own gaps to what its headroom allows — fully at `u_keep` 1.0, half way at 0.5.
-/// - The trick: at 640 across 240 an edge lands a third or two thirds of the way into a panel
-///   column, which is where a scaler has to blend. A gap two thirds of a panel pixel wide,
-///   centred there, covers exactly the other source pixel's part of that column, so no panel
-///   column holds two colours: the non-integer scale disappears into the grid.
+/// - Each panel pixel takes, from each of the one or two source pixels under it, the part of it
+///   inside the panel pixel, less `u_gap` times the lines there. A line is centred on an edge, so
+///   half of it falls in each pixel either side, and every source pixel gives up the same share
+///   of itself wherever it lands on the panel: nothing pulses as a picture scrolls.
+/// - That share is given back as gain on the rest, so a source pixel emits the same light it
+///   would without the grid. The panel cannot go past white, so a bright pixel lightens its own
+///   lines to what its headroom allows — fully at `u_keep` 1.0, part way below it.
 ///
 /// High precision where the GPU has it, which the H700's Mali does: `pixel` runs to 640, and
 /// at mediump's 16 bit float that is half a pixel apart by the right hand side of the picture —
@@ -185,27 +182,46 @@ vec3 pixel_aa_gamma(vec2 tx_coord, vec2 tx_per_px) {
             offset.y));
 }
 
-// The LCD grid. Along one axis, for panel column `i` at `scale` panel pixels per source pixel:
-// the part of source pixel `j`, with a gap of `half_gap` on each side of it, inside the column.
-float lit(float i, float j, float scale, float half_gap) {
-    float lo = max(i, j * scale + half_gap);
-    float hi = min(i + 1.0, (j + 1.0) * scale - half_gap);
-    // Less than a ten thousandth of a pixel is rounding, not coverage: an edge meant to sit
-    // exactly on a gap's edge would otherwise leave a sliver of the next colour, which linear
-    // light turns into a visible trace against black.
-    return max(hi - lo - 1e-4, 0.0);
+// The LCD grid. A line is a soft band, a raised cosine 2.5 panel pixels wide centred exactly on
+// a source pixel edge. A hard line has to snap to whole panel pixels, and at 8/3 an edge falls
+// in one of three places, so hard lines land in a 3-2-3 rhythm and read as uneven. A band this
+// wide looks the same wherever it falls: modelled with the eye's blur at arm's length, the three
+// kinds of line differ by about 1% in darkness and sit within 0.02 of a pixel of the true edge,
+// where a band 2.0 wide differs by 7% and one 1.5 wide by 13%. Much wider and neighbouring lines,
+// 2.67 apart, run together. The same width down, so both directions look alike.
+const vec2 LINE_W = vec2(2.5, 2.5);
+const float PI = 3.14159265;
+
+// How much of a line `w` wide centred at 0 lies left of `x`: 0 to 1.
+float line_below(float x, float w) {
+    x = clamp(x, -0.5 * w, 0.5 * w);
+    return (x + w / (2.0 * PI) * sin(2.0 * PI * x / w)) / w + 0.5;
+}
+
+// Along one axis, for panel column `i` at `scale` panel pixels per source pixel: how much of
+// source pixel `j` is inside the column, less `depth` times the lines on its two edges there.
+// A line is narrower than a pixel, so only those two reach it, and half of each is inside it.
+float lit(float i, float j, float scale, float depth, float w) {
+    float lo = max(i, j * scale);
+    float hi = min(i + 1.0, (j + 1.0) * scale);
+    if (hi <= lo) return 0.0;
+    float left = line_below(hi - j * scale, w) - line_below(lo - j * scale, w);
+    float right = line_below(hi - (j + 1.0) * scale, w) - line_below(lo - (j + 1.0) * scale, w);
+    return (hi - lo) - depth * (left + right);
 }
 
 // Source pixel `j` (x and y) seen through panel pixel `i`: its light, the grid taken out of it
-// and given back as gain. `t` narrows its gaps to what its brightness leaves room to give back.
+// and given back as gain. `t` lightens its lines to what its brightness leaves room to give back.
+// `u_gap` is how much light a line takes, in panel pixels: each pixel gives up half of each of
+// its two, so one whole line's worth whatever its phase.
 vec3 grid_tap(vec2 i, vec2 j, vec2 scale) {
     vec3 c = to_lin(fetch(j + 0.5));
     float cmax = max(c.r, max(c.g, c.b));
     vec2 share = u_gap / scale;
     float room = (1.0 - cmax) / max(share.x + share.y, 1e-4);
     float t = mix(1.0, clamp(room, 0.0, 1.0), u_keep);
-    vec2 half_gap = 0.5 * t * u_gap;
-    float area = lit(i.x, j.x, scale.x, half_gap.x) * lit(i.y, j.y, scale.y, half_gap.y);
+    vec2 depth = t * u_gap;
+    float area = lit(i.x, j.x, scale.x, depth.x, LINE_W.x) * lit(i.y, j.y, scale.y, depth.y, LINE_W.y);
     vec2 kept = 1.0 - t * share;
     return c * area / (kept.x * kept.y);
 }
