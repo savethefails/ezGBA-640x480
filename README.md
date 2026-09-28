@@ -87,9 +87,14 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 
 ## Setup
 
-1. Set up your RG SP using [slot.'s install guide](https://slot.kowalski.io).
+1. Flash **BaseOS for the RG35XXSP**: `baseos-rg35xxsp-<version>.img.zip` from
+   [BaseOS's releases](https://github.com/pvaibhav/BaseOS/releases), following its
+   [install guide](https://github.com/pvaibhav/BaseOS/wiki/BaseOS-Install-Guide). BaseOS
+   starts ezGBA by itself. Don't use AGS-102's `ags102.img`: it is built for the 720×480
+   RG SP, and on an RG35XXSP the screen stays dark.
 2. Download the latest ezGBA from [releases](../../releases).
-3. Unzip it and copy it onto the second SD card, just like slot.
+3. Unzip it and copy the **contents** of the folder inside onto the card: onto the second
+   SD card if you use two, or onto the card's `BASEOS` drive if you use one.
 4. **Add box art (optional).** Box art isn't included, since it belongs to the publishers.
    Put a 640×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
    `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
