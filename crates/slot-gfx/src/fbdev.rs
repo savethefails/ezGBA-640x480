@@ -20,22 +20,76 @@ const FB0_DEV: &str = "/dev/fb0";
 /// `FBIOGET_VSCREENINFO`: fills a `struct fb_var_screeninfo`, whose first two fields are the
 /// visible width and height.
 const FBIOGET_VSCREENINFO: std::ffi::c_ulong = 0x4600;
+/// `FBIOBLANK`, with `FB_BLANK_UNBLANK` as its argument: lights a panel the kernel, or
+/// whatever ran before, left blanked. Every fbdev driver takes it and it is a no-op on a
+/// panel that is already lit.
+const FBIOBLANK: std::ffi::c_ulong = 0x4611;
 
 extern "C" {
     fn ioctl(fd: std::ffi::c_int, request: std::ffi::c_ulong, ...) -> std::ffi::c_int;
+}
+
+/// `fb_var_screeninfo` as words. The struct is 160 bytes; the buffer is larger so a kernel
+/// that has grown it can never write past it.
+fn var_info() -> Option<[u32; 64]> {
+    use std::os::fd::AsRawFd;
+    let fb = std::fs::File::open(FB0_DEV).ok()?;
+    let mut info = [0u32; 64];
+    let ok = unsafe { ioctl(fb.as_raw_fd(), FBIOGET_VSCREENINFO, info.as_mut_ptr()) };
+    (ok == 0).then_some(info)
 }
 
 /// The visible resolution as the driver scans it out, straight from the framebuffer device.
 /// The sysfs files are text a driver may leave empty or fill with the double buffered
 /// allocation; this is the one answer every fbdev driver has to give.
 fn panel_ioctl() -> Option<(u32, u32)> {
+    let info = var_info()?;
+    (info[0] > 0 && info[1] > 0).then_some((info[0], info[1]))
+}
+
+/// Everything the driver says about the scanout, on one line. A dark panel with a running
+/// frontend has nothing else to go on, and these are the numbers that tell a blanked panel,
+/// a pan to the wrong buffer and a mode the panel cannot take apart.
+fn report_fb(when: &str) {
+    match var_info() {
+        Some(v) => eprintln!(
+            "slot: fb0 {when}: {}x{} virtual {}x{} offset {},{} bpp {} rgba {}/{} {}/{} {}/{} {}/{} activate {}",
+            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[8], v[9], v[11], v[12], v[14], v[15],
+            v[17], v[18], v[21]
+        ),
+        None => eprintln!("slot: fb0 {when}: {FB0_DEV} did not answer"),
+    }
+    let attr = |name: &str| {
+        std::fs::read_to_string(format!("{FB0}/{name}"))
+            .map(|t| t.trim().replace('\n', " | "))
+            .unwrap_or_else(|e| format!("<{e}>"))
+    };
+    eprintln!(
+        "slot: fb0 {when}: mode [{}] modes [{}] virtual_size [{}] blank [{}]",
+        attr("mode"),
+        attr("modes"),
+        attr("virtual_size"),
+        attr("blank")
+    );
+}
+
+/// Light the panel if it was left blanked, and say whether the driver took it.
+fn unblank() {
     use std::os::fd::AsRawFd;
-    let fb = std::fs::File::open(FB0_DEV).ok()?;
-    // `fb_var_screeninfo` is 160 bytes; the buffer is larger so a kernel that has grown the
-    // struct can never write past it.
-    let mut info = [0u32; 64];
-    let ok = unsafe { ioctl(fb.as_raw_fd(), FBIOGET_VSCREENINFO, info.as_mut_ptr()) };
-    (ok == 0 && info[0] > 0 && info[1] > 0).then_some((info[0], info[1]))
+    let Ok(fb) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(FB0_DEV)
+    else {
+        eprintln!("slot: fb0 unblank: {FB0_DEV} would not open");
+        return;
+    };
+    let ok = unsafe { ioctl(fb.as_raw_fd(), FBIOBLANK, 0 as std::ffi::c_ulong) };
+    let err = std::io::Error::last_os_error();
+    match ok {
+        0 => eprintln!("slot: fb0 unblank: ok"),
+        _ => eprintln!("slot: fb0 unblank: {err}"),
+    }
 }
 
 const EGL_SUCCESS: i32 = 0x3000;
@@ -106,6 +160,8 @@ pub struct FbdevSurface {
     surface: Ptr,
     context: Ptr,
     size: (u32, u32),
+    /// Presented so far, for the few frames that are checked and reported.
+    frames: u32,
     _window: Box<FbdevWindow>,
 }
 
@@ -182,6 +238,8 @@ impl Egl {
 
 impl FbdevSurface {
     pub fn new() -> Result<Self, GfxError> {
+        report_fb("at start");
+        unblank();
         let attr = |name: &str| std::fs::read_to_string(format!("{FB0}/{name}")).ok();
         // The driver's own answer, then the mode in use, then the modes on offer, then what
         // was allocated. `mode` is empty on drivers that never implemented it, and
@@ -244,7 +302,9 @@ impl FbdevSurface {
             // checked on hardware, so both are tried before giving up.
             let mut surface =
                 (egl.create_window_surface)(display, config, native, std::ptr::null());
+            let mut path = "fbdev window";
             if surface.is_null() {
+                path = "null window";
                 surface = (egl.create_window_surface)(
                     display,
                     config,
@@ -273,9 +333,10 @@ impl FbdevSurface {
             (egl.swap_interval)(display, 1);
             let size = query_size(&egl, display, surface).unwrap_or(hint);
             eprintln!(
-                "slot: panel {}x{}, surface {}x{}",
+                "slot: panel {}x{}, surface {}x{} through the {path}",
                 hint.0, hint.1, size.0, size.1
             );
+            report_gl(&gles);
             Ok(FbdevSurface {
                 egl,
                 gles,
@@ -283,9 +344,75 @@ impl FbdevSurface {
                 surface,
                 context,
                 size,
+                frames: 0,
                 _window: window,
             })
         }
+    }
+}
+
+type GetString = unsafe extern "C" fn(u32) -> *const c_char;
+type GetGlError = unsafe extern "C" fn() -> u32;
+type ReadPixels = unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut c_void);
+
+const GL_VENDOR: u32 = 0x1F00;
+const GL_RENDERER: u32 = 0x1F01;
+const GL_VERSION: u32 = 0x1F02;
+const GL_RGBA: u32 = 0x1908;
+const GL_UNSIGNED_BYTE: u32 = 0x1401;
+
+/// Which GPU and driver the context landed on.
+fn report_gl(gles: &Library) {
+    let Ok(get) = (unsafe { sym::<GetString>(gles, "glGetString") }) else {
+        return;
+    };
+    let text = |name| {
+        let p = unsafe { get(name) };
+        match p.is_null() {
+            true => "<null>".to_string(),
+            false => unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .into_owned(),
+        }
+    };
+    eprintln!(
+        "slot: gl {} | {} | {}",
+        text(GL_VENDOR),
+        text(GL_RENDERER),
+        text(GL_VERSION)
+    );
+}
+
+impl FbdevSurface {
+    /// What the frame about to be presented holds, at the centre and near each corner, and
+    /// whether GL has flagged anything. Colour here and a dark panel is a scanout or backlight
+    /// fault, not a drawing one.
+    fn report_frame(&self) {
+        let (w, h) = (self.size.0 as i32, self.size.1 as i32);
+        let read = unsafe { sym::<ReadPixels>(&self.gles, "glReadPixels") };
+        let error = unsafe { sym::<GetGlError>(&self.gles, "glGetError") };
+        let (Ok(read), Ok(error)) = (read, error) else {
+            return;
+        };
+        let mut line = format!("slot: frame {}:", self.frames);
+        for (x, y) in [(w / 2, h / 2), (w / 8, h / 8), (w * 7 / 8, h * 7 / 8)] {
+            let mut px = [0u8; 4];
+            unsafe {
+                read(
+                    x,
+                    y,
+                    1,
+                    1,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    px.as_mut_ptr().cast(),
+                )
+            };
+            line += &format!(" ({x},{y})=#{:02x}{:02x}{:02x}", px[0], px[1], px[2]);
+        }
+        line += &format!(" gl error 0x{:x}", unsafe { error() });
+        eprintln!("{line}");
+        report_fb(&format!("frame {}", self.frames));
     }
 }
 
@@ -317,6 +444,10 @@ impl Surface for FbdevSurface {
     }
 
     fn swap(&mut self) -> Result<(), GfxError> {
+        self.frames += 1;
+        if matches!(self.frames, 1 | 60 | 600) {
+            self.report_frame();
+        }
         match unsafe { (self.egl.swap_buffers)(self.display, self.surface) } {
             0 => Err(self.egl.fail("eglSwapBuffers")),
             _ => Ok(()),
