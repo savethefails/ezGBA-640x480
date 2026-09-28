@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::fmt;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 /// The RG35XXSP's panel, and the size everything is composed at. The UI is laid out for it
 /// directly, so on the device the blit is 1:1.
@@ -84,10 +84,16 @@ pub fn scaler() -> Scaler {
 /// without it. `keep` is how strictly: 1.0 lightens a bright pixel's lines until its light fits
 /// under white, 0.0 keeps every line full strength and lets the brightest pixels fall short. A
 /// gap of 0.0 on both axes is no grid.
+///
+/// `even` gives nothing back: the lines take the same share of every colour's light, as a real
+/// LCD's gaps do, and every colour keeps its place against every other. Given back, a colour
+/// with no room below white cannot follow the ones that can, so the brightest colours all land
+/// on one level and the picture flattens; even, it only dims, and the backlight wins it back.
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
 pub struct Grid {
     pub gap: [f32; 2],
     pub keep: f32,
+    pub even: bool,
 }
 
 /// The width of a grid line in panel pixels. Must match `LINE_W` in `GAME_FRAG`: the depth a
@@ -116,6 +122,7 @@ impl Grid {
         Grid {
             gap: lines(GRID_DEPTH),
             keep: 0.8,
+            even: false,
         }
     }
 
@@ -124,16 +131,20 @@ impl Grid {
         Grid {
             gap: lines(GRID_DEPTH),
             keep: 1.0,
+            even: false,
         }
     }
 
-    /// `grid lcd`: every colour has lines of the same depth, as a backlit LCD's gaps darken
-    /// every colour alike. Such a colour keeps about 70% of its light at the default depth; the rest are brightened
-    /// back to full as always, so a whole picture comes out at around 90%.
+    /// `grid lcd`: a backlit LCD's gaps. Every colour has lines of the same depth and gives up
+    /// the same share of its light to them, about a third at the default depth, and nothing is
+    /// brightened to make up for it: white stays the brightest thing on screen, every colour
+    /// stays where it was against every other, and the whole picture is dimmer, for the
+    /// backlight to win back.
     pub fn lcd() -> Self {
         Grid {
             gap: lines(GRID_DEPTH),
             keep: 0.0,
+            even: true,
         }
     }
 
@@ -153,11 +164,13 @@ impl Grid {
 static GRID_X: AtomicU32 = AtomicU32::new(0);
 static GRID_Y: AtomicU32 = AtomicU32::new(0);
 static GRID_KEEP: AtomicU32 = AtomicU32::new(0);
+static GRID_EVEN: AtomicBool = AtomicBool::new(false);
 
 pub fn set_grid(grid: Grid) {
     GRID_X.store(grid.gap[0].max(0.0).to_bits(), Ordering::Relaxed);
     GRID_Y.store(grid.gap[1].max(0.0).to_bits(), Ordering::Relaxed);
     GRID_KEEP.store(grid.keep.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    GRID_EVEN.store(grid.even, Ordering::Relaxed);
 }
 
 pub fn grid() -> Grid {
@@ -165,6 +178,7 @@ pub fn grid() -> Grid {
     Grid {
         gap: [f(&GRID_X), f(&GRID_Y)],
         keep: f(&GRID_KEEP),
+        even: GRID_EVEN.load(Ordering::Relaxed),
     }
 }
 

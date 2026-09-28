@@ -116,6 +116,8 @@ void main() {
 /// - That share is given back as gain on the rest, so a source pixel emits the same light it
 ///   would without the grid. The panel cannot go past white, so a bright pixel lightens its own
 ///   lines to what its headroom allows — fully at `u_keep` 1.0, part way below it.
+/// - Unless `u_even` is set, which gives nothing back: every colour loses the same share to its
+///   lines and the picture dims evenly, as a backlit LCD's does.
 ///
 /// High precision where the GPU has it, which the H700's Mali does: `pixel` runs to 640, and
 /// at mediump's 16 bit float that is half a pixel apart by the right hand side of the picture —
@@ -137,6 +139,7 @@ uniform float u_scaler;
 uniform float u_sharp;
 uniform vec2 u_gap;
 uniform float u_keep;
+uniform float u_even;
 varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
@@ -227,7 +230,9 @@ vec3 grid_tap(vec2 i, vec2 j, vec2 scale) {
     // the lines back up to white too and erase them, so a bright colour would show no grid at
     // all; capped, its lines keep their depth and it falls short of full light instead.
     float gain = min(1.0 / (kept.x * kept.y), 1.0 / max(cmax, 1e-4));
-    return c * area * gain;
+    // `u_even` gives nothing back, as a real LCD's gaps give nothing back: every colour loses
+    // the same share, so none is lifted past one that could not be and the picture only dims.
+    return c * area * mix(gain, 1.0, u_even);
 }
 
 vec3 grid(vec2 source) {

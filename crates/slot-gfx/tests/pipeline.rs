@@ -801,6 +801,7 @@ fn pixel_aa_blends_the_crossing_pixel_in_linear_light() {
 const GRID_43: Grid = Grid {
     gap: [0.5, 0.5],
     keep: 1.0,
+    even: false,
 };
 
 fn srgb_to_lin(v: u8) -> f32 {
@@ -969,10 +970,12 @@ fn the_grid_keeps_every_colour_s_balance() {
             Grid {
                 gap: [0.25, 0.25],
                 keep: 0.8,
+                even: false,
             },
             Grid {
                 gap: [0.25, 0.25],
                 keep: 1.0,
+                even: false,
             },
         ] {
             let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
@@ -1079,4 +1082,44 @@ fn a_deeper_grid_draws_darker_lines() {
         shallow * 100.0
     );
     assert_eq!(Grid::default().with_depth(60.0), Grid::default());
+}
+
+/// `grid lcd` dims every colour by the same share and lifts none: over one repeat of the grid,
+/// white, a bright colour, a mid grey and a dark one each keep the same fraction of the light
+/// they have with no grid, so no colour is pushed up to meet a brighter one and the picture's
+/// tones keep their order and their spacing. This is what flattened the highlights when the
+/// light the lines took was given back instead.
+#[test]
+fn grid_lcd_dims_every_colour_alike_and_lifts_none() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    // Mean linear light of the green channel over whole repeats: 3 source pixels across is 8
+    // panel pixels, 1 down is 3.
+    let mean = |frame: &[u8]| {
+        let lin: Vec<f32> = (240..246)
+            .flat_map(|y| (320..336).map(move |x| (x, y)))
+            .map(|(x, y)| srgb_to_lin(px(frame, x, y)[1]))
+            .collect();
+        lin.iter().sum::<f32>() / lin.len() as f32
+    };
+    let kept: Vec<f32> = [255u8, 215, 120, 40]
+        .iter()
+        .map(|&v| {
+            let with = mean(&through_grid(&mut c, &flat(v), Grid::lcd()));
+            let without = mean(&through_grid(&mut c, &flat(v), Grid::default()));
+            with / without
+        })
+        .collect();
+    for k in &kept {
+        assert!(
+            (k - kept[0]).abs() < 0.03,
+            "colours keep different shares of their light: {kept:?}"
+        );
+    }
+    assert!(
+        kept[0] < 0.9,
+        "the lines took almost nothing: every colour kept {:.0}%",
+        kept[0] * 100.0
+    );
 }

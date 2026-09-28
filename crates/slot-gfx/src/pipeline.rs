@@ -33,6 +33,7 @@ pub struct GamePass {
     u_sharp: gl::types::GLint,
     u_gap: gl::types::GLint,
     u_keep: gl::types::GLint,
+    u_even: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -58,7 +59,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep);
+        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep, u_even);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -84,6 +85,7 @@ impl GamePass {
             u_sharp = crate::gl::uniform_location(prog, "u_sharp");
             u_gap = crate::gl::uniform_location(prog, "u_gap");
             u_keep = crate::gl::uniform_location(prog, "u_keep");
+            u_even = crate::gl::uniform_location(prog, "u_even");
         }
         Ok(GamePass {
             prog,
@@ -98,6 +100,7 @@ impl GamePass {
             u_sharp,
             u_gap,
             u_keep,
+            u_even,
             grille: true,
             power: 1.0,
             src: WHOLE_TEXTURE,
@@ -196,6 +199,7 @@ impl GamePass {
             let grid = grid();
             gl::Uniform2f(self.u_gap, grid.gap[0], grid.gap[1]);
             gl::Uniform1f(self.u_keep, grid.keep);
+            gl::Uniform1f(self.u_even, if grid.even { 1.0 } else { 0.0 });
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);
