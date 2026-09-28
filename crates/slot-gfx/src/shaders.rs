@@ -236,6 +236,11 @@ vec3 grid(vec2 source) {
     if (j1.x > j0.x) light += grid_tap(i, vec2(j1.x, j0.y), scale);
     if (j1.y > j0.y) light += grid_tap(i, vec2(j0.x, j1.y), scale);
     if (j1.x > j0.x && j1.y > j0.y) light += grid_tap(i, j1, scale);
+    // Past white, scale all three channels down together rather than letting one clip on its
+    // own: a clipped channel shifts the others' balance against it, which is a colour washing
+    // out. Together, the pixel keeps the game's hue and saturation exactly and only dims.
+    float peak = max(light.r, max(light.g, light.b));
+    if (peak > 1.0) light /= peak;
     return to_srgb(light);
 }
 

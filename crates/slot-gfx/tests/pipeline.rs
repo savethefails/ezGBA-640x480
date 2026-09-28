@@ -946,3 +946,65 @@ fn the_grid_is_symmetric_about_the_middle() {
         assert!(a.abs_diff(b) <= 1, "row {y} is {a}, its mirror {b}");
     }
 }
+
+/// The grid never washes a colour out. Its gain is the same on all three channels, so a colour
+/// keeps its balance — hue and saturation — and where a pixel would pass white it is scaled down
+/// whole rather than letting one channel clip while the others keep rising. Checked on flat
+/// colours including a fully saturated orange, the case that clips: every panel pixel keeps the
+/// source's channel ratios, and the light over a repeat of the grid is the source's.
+#[test]
+fn the_grid_keeps_every_colour_s_balance() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let lin = |v: u8| (v as f32 / 255.0).powf(2.2);
+    for rgb in [
+        [255u8, 128, 0],
+        [96, 176, 232],
+        [230, 40, 40],
+        [240, 200, 160],
+        [120, 80, 40],
+    ] {
+        for grid in [
+            Grid {
+                gap: [0.25, 0.25],
+                keep: 0.8,
+            },
+            Grid {
+                gap: [0.25, 0.25],
+                keep: 1.0,
+            },
+        ] {
+            let src: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+                .flat_map(|_| [rgb[2], rgb[1], rgb[0], 0])
+                .collect();
+            let frame = through_grid(&mut c, &src, grid);
+            let want = [lin(rgb[0]), lin(rgb[1]), lin(rgb[2])];
+            let wmax = want.iter().cloned().fold(0.0, f32::max);
+            let mut light = [0.0f32; 3];
+            for y in 240..243 {
+                for x in 320..328 {
+                    let p = px(&frame, x, y).map(lin);
+                    let pmax = p.iter().cloned().fold(0.0, f32::max);
+                    for k in 0..3 {
+                        light[k] += p[k] / 24.0;
+                        let shift = (p[k] / pmax - want[k] / wmax).abs();
+                        assert!(
+                            shift < 0.01,
+                            "{rgb:?} at {x},{y}: channel {k} is off balance by {shift:.3}"
+                        );
+                    }
+                }
+            }
+            for k in 0..3 {
+                assert!(
+                    (light[k] - want[k]).abs() <= 0.01 * wmax,
+                    "{rgb:?} keep {}: channel {k} carries {:.3} against {:.3}",
+                    grid.keep,
+                    light[k],
+                    want[k]
+                );
+            }
+        }
+    }
+}
