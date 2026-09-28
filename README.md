@@ -102,6 +102,16 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
    so the carts don't cover it. Art made for the 720×480 RG SP still works: it is centred
    and loses 40 pixels off each side.
 
+## Updating
+
+On a card that's already set up, only `System/slot` changes between builds. The **slot**
+workflow builds just that file on every push to this repo, in a couple of minutes. Open the
+latest **slot** run under Actions, download the artifact at the bottom, unzip it, and copy
+`slot` into the card's `System` folder, replacing the old one. Your saves, `theme.txt` and
+settings are left alone.
+
+The **release** workflow builds the whole card, with both emulators, for setting up a new card.
+
 ## AI disclosure
 
 Built with Claude's help, on top of slot., which was also built with Claude's help. Every
