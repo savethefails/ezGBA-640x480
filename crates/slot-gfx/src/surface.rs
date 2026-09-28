@@ -90,20 +90,38 @@ pub struct Grid {
     pub keep: f32,
 }
 
+/// ezGBA's lines, chosen by eye against Skyland and GBAlatro: subtle, a quarter of a panel
+/// pixel's worth of light each, the same both ways and on either picture shape. A stronger grid
+/// (0.35) read as a mesh over the game rather than a texture of it; 0.15 was barely there. The
+/// three settings differ only in what a colour with no headroom (white, or any fully saturated
+/// channel) does, since it cannot be brightened to make up for its lines.
+const LINES: [f32; 2] = [0.25, 0.25];
+
 impl Grid {
-    /// ezGBA's grid, chosen by eye against Skyland and GBAlatro: subtle lines, a quarter of a
-    /// panel pixel's worth of light each, the same both ways and on either picture shape. A
-    /// stronger grid (0.35) read as a mesh over the game rather than a texture of it; 0.15 was
-    /// barely there.
-    ///
-    /// `keep` 0.8 rather than 1.0: strict, a pixel with no headroom (white, or any fully
-    /// saturated channel) loses its grid entirely, which reads as a grid on some colours and not
-    /// others. At 0.8 every colour keeps a grid, and white or a fully saturated colour keeps
-    /// about 96% of its light. Strict is what `grid strict` asks for.
-    pub fn for_picture(_picture: Picture, strict: bool) -> Self {
+    /// `grid on`: such a colour keeps a fifth of its lines' depth and about 96% of its light, so
+    /// the grid shows, faintly, on every colour.
+    pub fn on() -> Self {
         Grid {
-            gap: [0.25, 0.25],
-            keep: if strict { 1.0 } else { 0.8 },
+            gap: LINES,
+            keep: 0.8,
+        }
+    }
+
+    /// `grid strict`: such a colour keeps all of its light and none of its lines.
+    pub fn strict() -> Self {
+        Grid {
+            gap: LINES,
+            keep: 1.0,
+        }
+    }
+
+    /// `grid lcd`: every colour has lines of the same depth, as a backlit LCD's gaps darken
+    /// every colour alike. Such a colour keeps about 83% of its light; the rest are brightened
+    /// back to full as always, so a whole picture comes out at around 90%.
+    pub fn lcd() -> Self {
+        Grid {
+            gap: LINES,
+            keep: 0.0,
         }
     }
 }

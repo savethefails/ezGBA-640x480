@@ -768,11 +768,11 @@ impl App {
             Aspect::FourThree => slot_gfx::Picture::FourThree,
             Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
         });
-        let picture = slot_gfx::picture();
         slot_gfx::set_grid(match theme.grid {
             LcdGrid::Off => slot_gfx::Grid::default(),
-            LcdGrid::On => slot_gfx::Grid::for_picture(picture, false),
-            LcdGrid::Strict => slot_gfx::Grid::for_picture(picture, true),
+            LcdGrid::On => slot_gfx::Grid::on(),
+            LcdGrid::Strict => slot_gfx::Grid::strict(),
+            LcdGrid::Lcd => slot_gfx::Grid::lcd(),
         });
         slot_gfx::set_scaler(match theme.scaler {
             Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),

@@ -1012,3 +1012,36 @@ fn the_grid_keeps_every_colour_s_balance() {
         }
     }
 }
+
+/// `grid lcd` darkens every colour alike, as a backlit LCD's gaps do: over one repeat of the
+/// grid, the darkest panel pixel carries the same share of the lightest one's light on white,
+/// which cannot be brightened, as on a mid grey, which can. `grid on` keeps the lines on white
+/// shallower, so there the two differ.
+#[test]
+fn grid_lcd_draws_lines_of_the_same_depth_on_every_colour() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let depth = |frame: &[u8]| {
+        let lin: Vec<f32> = (240..243)
+            .flat_map(|y| (320..328).map(move |x| (x, y)))
+            .map(|(x, y)| srgb_to_lin(px(frame, x, y)[1]))
+            .collect();
+        let hi = lin.iter().cloned().fold(0.0, f32::max);
+        let lo = lin.iter().cloned().fold(f32::MAX, f32::min);
+        lo / hi
+    };
+    let white = depth(&through_grid(&mut c, &flat(255), Grid::lcd()));
+    let grey = depth(&through_grid(&mut c, &flat(120), Grid::lcd()));
+    assert!(
+        (white - grey).abs() < 0.03,
+        "lines take {:.0}% on white but {:.0}% on grey",
+        (1.0 - white) * 100.0,
+        (1.0 - grey) * 100.0
+    );
+    let on_white = depth(&through_grid(&mut c, &flat(255), Grid::on()));
+    assert!(
+        on_white > white + 0.05,
+        "`grid on` should keep lines on white shallower than `grid lcd`: {on_white} vs {white}"
+    );
+}

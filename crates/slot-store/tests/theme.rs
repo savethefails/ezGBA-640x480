@@ -103,6 +103,7 @@ fn the_grid_is_off_unless_the_card_asks_for_it() {
     assert_eq!(Theme::parse("").grid, LcdGrid::Off);
     assert_eq!(Theme::parse("grid on").grid, LcdGrid::On);
     assert_eq!(Theme::parse("grid strict").grid, LcdGrid::Strict);
+    assert_eq!(Theme::parse("grid lcd").grid, LcdGrid::Lcd);
     assert_eq!(Theme::parse("grid on\ngrid off").grid, LcdGrid::Off);
     assert_eq!(Theme::parse("grid lots").grid, LcdGrid::Off);
 }

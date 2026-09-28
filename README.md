@@ -64,6 +64,7 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 | `scaler shimmerless` | Scale games with sharp-shimmerless instead of Pixel AA. |
 | `grid on` | Draw a subtle LCD grid over games: a faint line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. White and fully saturated colours keep about 96% of their brightness, so the grid shows on them too. |
 | `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
+| `grid lcd` | The same grid, as dark on every colour as a real backlit LCD's. White and fully saturated colours keep about 83% of their brightness; everything else keeps all of it. |
 
 ## The RG35XXSP's 640×480 screen
 

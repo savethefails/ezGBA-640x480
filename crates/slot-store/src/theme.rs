@@ -35,7 +35,8 @@ pub struct Theme {
     /// 1.0 (area weighted, the default) to 2.0 (nearly hard). Pixel AA only.
     pub sharpness: f32,
     /// `grid on` draws ezGBA's LCD grid over the game; `grid strict` does too, but never at the
-    /// cost of any brightness; `grid off` is the default.
+    /// cost of any brightness; `grid lcd` darkens every colour alike, as a backlit LCD does;
+    /// `grid off` is the default.
     pub grid: LcdGrid,
 }
 
@@ -45,6 +46,7 @@ pub enum LcdGrid {
     Off,
     On,
     Strict,
+    Lcd,
 }
 
 /// Which pixel art scaler draws the game picture.
@@ -115,6 +117,7 @@ impl Theme {
                 ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
                 ("grid", "on") => theme.grid = LcdGrid::On,
                 ("grid", "strict") => theme.grid = LcdGrid::Strict,
+                ("grid", "lcd") => theme.grid = LcdGrid::Lcd,
                 ("grid", "off") => theme.grid = LcdGrid::Off,
                 ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
