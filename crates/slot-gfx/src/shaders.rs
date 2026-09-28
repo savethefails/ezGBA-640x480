@@ -223,7 +223,11 @@ vec3 grid_tap(vec2 i, vec2 j, vec2 scale) {
     vec2 depth = t * u_gap;
     float area = lit(i.x, j.x, scale.x, depth.x, LINE_W.x) * lit(i.y, j.y, scale.y, depth.y, LINE_W.y);
     vec2 kept = 1.0 - t * share;
-    return c * area / (kept.x * kept.y);
+    // Given back only as far as this colour has room below white. Past that the gain would push
+    // the lines back up to white too and erase them, so a bright colour would show no grid at
+    // all; capped, its lines keep their depth and it falls short of full light instead.
+    float gain = min(1.0 / (kept.x * kept.y), 1.0 / max(cmax, 1e-4));
+    return c * area * gain;
 }
 
 vec3 grid(vec2 source) {

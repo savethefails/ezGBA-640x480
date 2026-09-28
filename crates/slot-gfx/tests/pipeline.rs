@@ -947,11 +947,11 @@ fn the_grid_is_symmetric_about_the_middle() {
     }
 }
 
-/// The grid never washes a colour out. Its gain is the same on all three channels, so a colour
-/// keeps its balance — hue and saturation — and where a pixel would pass white it is scaled down
-/// whole rather than letting one channel clip while the others keep rising. Checked on flat
-/// colours including a fully saturated orange, the case that clips: every panel pixel keeps the
-/// source's channel ratios, and the light over a repeat of the grid is the source's.
+/// The grid never washes a colour out. Its gain is the same on all three channels and never
+/// takes a channel past white, so a colour keeps its balance — hue and saturation — exactly.
+/// Checked on flat colours including a fully saturated orange, the case with no headroom: every
+/// panel pixel keeps the source's channel ratios, and the light over a repeat of the grid is the
+/// source's (strict) or within 5% of it (`grid on`, which keeps some grid on such a colour).
 #[test]
 fn the_grid_keeps_every_colour_s_balance() {
     let Some((_g, _s, mut c)) = compositor() else {
@@ -996,9 +996,13 @@ fn the_grid_keeps_every_colour_s_balance() {
                     }
                 }
             }
+            // Strict gives every colour its full light back. Below strict a colour with no
+            // headroom keeps some of its lines, at the cost of a little of its light: at 0.8,
+            // no more than 5%, and never more than it had.
+            let floor = if grid.keep >= 1.0 { 0.99 } else { 0.95 };
             for k in 0..3 {
                 assert!(
-                    (light[k] - want[k]).abs() <= 0.01 * wmax,
+                    light[k] >= floor * want[k] - 0.005 && light[k] <= want[k] + 0.01 * wmax,
                     "{rgb:?} keep {}: channel {k} carries {:.3} against {:.3}",
                     grid.keep,
                     light[k],

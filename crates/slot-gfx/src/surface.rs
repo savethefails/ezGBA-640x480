@@ -98,8 +98,8 @@ impl Grid {
     ///
     /// `keep` 0.8 rather than 1.0: strict, a pixel with no headroom (white, or any fully
     /// saturated channel) loses its grid entirely, which reads as a grid on some colours and not
-    /// others. At 0.8 every colour keeps a grid and white keeps about 97% of its light. Strict is
-    /// what `grid strict` asks for.
+    /// others. At 0.8 every colour keeps a grid, and white or a fully saturated colour keeps
+    /// about 96% of its light. Strict is what `grid strict` asks for.
     pub fn for_picture(_picture: Picture, strict: bool) -> Self {
         Grid {
             gap: [0.25, 0.25],

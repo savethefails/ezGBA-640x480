@@ -62,7 +62,7 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 | `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
 | `sharpness 1.5` | How hard pixel edges are, from `0` (soft) to `2` (nearly hard). `1` is the default and the only setting with no shimmer at all. |
 | `scaler shimmerless` | Scale games with sharp-shimmerless instead of Pixel AA. |
-| `grid on` | Draw a subtle LCD grid over games: a faint line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. Whites keep about 97% of their brightness. |
+| `grid on` | Draw a subtle LCD grid over games: a faint line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. White and fully saturated colours keep about 96% of their brightness, so the grid shows on them too. |
 | `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
 
 ## The RG35XXSP's 640×480 screen
