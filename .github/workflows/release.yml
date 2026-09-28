@@ -33,6 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Named for the tag, or for the branch on a hand run. A branch name can hold a `/`, which
+      # is not allowed in an artifact's name and would nest the tree a folder deeper, so it is
+      # spelled with a `-` instead.
+      - name: Name the tree
+        run: echo "NAME=slot-$(printf '%s' "$GITHUB_REF_NAME" | tr '/' '-')" >> "$GITHUB_ENV"
+
       # The image already carries curl, file and unzip, which the fetch and the arch check
       # need. zip is missing, and so is cmake, which core:device builds mGBA with. Bullseye is
       # past its security support, so its Release files are no longer re-signed and apt refuses
@@ -55,14 +61,14 @@ jobs:
       # Named for the tag, so what comes out of the archive says which version it is rather
       # than landing seven unlabelled folders wherever it was opened.
       - name: Build the tree
-        run: task dist:device OUT="slot-${GITHUB_REF_NAME}"
+        run: task dist:device OUT="$NAME"
 
       # Before anything is published, not after. A tree built by the wrong toolchain is a
       # download that bootloops a device, and it costs one exec to know.
       - name: Check what is about to ship
         run: |
           set -eu
-          out="slot-${GITHUB_REF_NAME}"
+          out="$NAME"
           file "$out/System/slot" | grep -q aarch64
           file "$out/System/mgba_libretro.so" | grep -q aarch64
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
@@ -87,7 +93,7 @@ jobs:
         id: package
         run: |
           set -eu
-          out="slot-${GITHUB_REF_NAME}"
+          out="$NAME"
           zip="$out-h700.zip"
           zip -qry "$zip" "$out"
           {
