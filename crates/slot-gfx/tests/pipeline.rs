@@ -1045,3 +1045,38 @@ fn grid_lcd_draws_lines_of_the_same_depth_on_every_colour() {
         "`grid on` should keep lines on white shallower than `grid lcd`: {on_white} vs {white}"
     );
 }
+
+/// `grid-depth` is how dark a line gets: a deeper setting darkens the darkest panel pixel of a
+/// repeat further, on a colour that can be brightened back, and leaves no grid alone.
+#[test]
+fn a_deeper_grid_draws_darker_lines() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let depth = |frame: &[u8]| {
+        let lin: Vec<f32> = (240..243)
+            .flat_map(|y| (320..328).map(move |x| (x, y)))
+            .map(|(x, y)| srgb_to_lin(px(frame, x, y)[1]))
+            .collect();
+        let hi = lin.iter().cloned().fold(0.0, f32::max);
+        let lo = lin.iter().cloned().fold(f32::MAX, f32::min);
+        1.0 - lo / hi
+    };
+    let shallow = depth(&through_grid(
+        &mut c,
+        &flat(120),
+        Grid::lcd().with_depth(20.0),
+    ));
+    let deep = depth(&through_grid(
+        &mut c,
+        &flat(120),
+        Grid::lcd().with_depth(60.0),
+    ));
+    assert!(
+        deep > shallow * 2.0,
+        "60% lines took {:.0}%, no more than twice 20% lines' {:.0}%",
+        deep * 100.0,
+        shallow * 100.0
+    );
+    assert_eq!(Grid::default().with_depth(60.0), Grid::default());
+}

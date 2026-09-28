@@ -773,7 +773,8 @@ impl App {
             LcdGrid::On => slot_gfx::Grid::on(),
             LcdGrid::Strict => slot_gfx::Grid::strict(),
             LcdGrid::Lcd => slot_gfx::Grid::lcd(),
-        });
+        }
+        .with_depth(theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH)));
         slot_gfx::set_scaler(match theme.scaler {
             Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),
             Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,

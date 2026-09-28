@@ -107,3 +107,15 @@ fn the_grid_is_off_unless_the_card_asks_for_it() {
     assert_eq!(Theme::parse("grid on\ngrid off").grid, LcdGrid::Off);
     assert_eq!(Theme::parse("grid lots").grid, LcdGrid::Off);
 }
+
+/// The grid's depth is the card's to set, within what still draws a line and no darker than
+/// black; anything else leaves the grid's own default.
+#[test]
+fn grid_depth_is_read_as_a_percentage() {
+    assert_eq!(Theme::parse("").grid_depth, None);
+    assert_eq!(Theme::parse("grid-depth 60").grid_depth, Some(60.0));
+    assert_eq!(Theme::parse("grid-depth 32.5").grid_depth, Some(32.5));
+    assert_eq!(Theme::parse("grid-depth 2").grid_depth, None);
+    assert_eq!(Theme::parse("grid-depth 150").grid_depth, None);
+    assert_eq!(Theme::parse("grid-depth dark").grid_depth, None);
+}

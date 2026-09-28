@@ -90,19 +90,31 @@ pub struct Grid {
     pub keep: f32,
 }
 
-/// ezGBA's lines, chosen by eye against Skyland and GBAlatro: subtle, a quarter of a panel
-/// pixel's worth of light each, the same both ways and on either picture shape. A stronger grid
-/// (0.35) read as a mesh over the game rather than a texture of it; 0.15 was barely there. The
-/// three settings differ only in what a colour with no headroom (white, or any fully saturated
-/// channel) does, since it cannot be brightened to make up for its lines.
-const LINES: [f32; 2] = [0.25, 0.25];
+/// The width of a grid line in panel pixels. Must match `LINE_W` in `GAME_FRAG`: the depth a
+/// card asks for is turned into light taken through it.
+const LINE_WIDTH: f32 = 2.5;
+
+/// How dark the middle of a line is, in percent, when the card does not say. First chosen at 20
+/// by eye against Skyland and GBAlatro in screenshots, but at the panel's own 229 ppi and arm's
+/// length that all but vanished: a line 2.67 panel pixels from the next is a detail the eye
+/// barely resolves, so it needs the contrast to survive. 40 was the first depth that read on the
+/// device. The three settings differ only in what a colour with no headroom (white, or any fully
+/// saturated channel) does, since it cannot be brightened to make up for its lines.
+pub const GRID_DEPTH: f32 = 40.0;
+
+/// Light a line of `depth` percent takes, in panel pixels. A raised cosine `LINE_WIDTH` wide
+/// with `gap` under it peaks at `2 * gap / LINE_WIDTH`, so full depth is half the width.
+fn lines(depth: f32) -> [f32; 2] {
+    let gap = depth.clamp(0.0, 100.0) / 100.0 * LINE_WIDTH / 2.0;
+    [gap, gap]
+}
 
 impl Grid {
-    /// `grid on`: such a colour keeps a fifth of its lines' depth and about 96% of its light, so
+    /// `grid on`: such a colour keeps a fifth of its lines' depth and most of its light, so
     /// the grid shows, faintly, on every colour.
     pub fn on() -> Self {
         Grid {
-            gap: LINES,
+            gap: lines(GRID_DEPTH),
             keep: 0.8,
         }
     }
@@ -110,18 +122,30 @@ impl Grid {
     /// `grid strict`: such a colour keeps all of its light and none of its lines.
     pub fn strict() -> Self {
         Grid {
-            gap: LINES,
+            gap: lines(GRID_DEPTH),
             keep: 1.0,
         }
     }
 
     /// `grid lcd`: every colour has lines of the same depth, as a backlit LCD's gaps darken
-    /// every colour alike. Such a colour keeps about 83% of its light; the rest are brightened
+    /// every colour alike. Such a colour keeps about 70% of its light at the default depth; the rest are brightened
     /// back to full as always, so a whole picture comes out at around 90%.
     pub fn lcd() -> Self {
         Grid {
-            gap: LINES,
+            gap: lines(GRID_DEPTH),
             keep: 0.0,
+        }
+    }
+
+    /// The same grid with lines `depth` percent dark at their middle, from `grid-depth` on the
+    /// card. No grid stays no grid.
+    pub fn with_depth(self, depth: f32) -> Self {
+        if self.gap == [0.0, 0.0] {
+            return self;
+        }
+        Grid {
+            gap: lines(depth),
+            ..self
         }
     }
 }

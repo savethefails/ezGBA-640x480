@@ -62,9 +62,10 @@ For a couple more options, edit `System/theme.txt` on the SD card:
 | `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
 | `sharpness 1.5` | How hard pixel edges are, from `0` (soft) to `2` (nearly hard). `1` is the default and the only setting with no shimmer at all. |
 | `scaler shimmerless` | Scale games with sharp-shimmerless instead of Pixel AA. |
-| `grid on` | Draw a subtle LCD grid over games: a faint line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. White and fully saturated colours keep about 96% of their brightness, so the grid shows on them too. |
+| `grid on` | Draw an LCD grid over games: a line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. On white and fully saturated colours the lines are lighter, so those colours keep most of their brightness. |
 | `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
-| `grid lcd` | The same grid, as dark on every colour as a real backlit LCD's. White and fully saturated colours keep about 83% of their brightness; everything else keeps all of it. |
+| `grid lcd` | The same grid, as dark on every colour as a real backlit LCD's. White and fully saturated colours lose some brightness (about 30% at the default depth); everything else keeps all of it. |
+| `grid-depth 40` | How dark the grid lines are, from `5` (barely there) to `100` (black at their middle). `40` is the default. Try `60` if you can't see the grid at arm's length. |
 
 ## The RG35XXSP's 640×480 screen
 
@@ -81,8 +82,8 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   mixing them as light rather than as numbers, so edges keep their weight and scrolling
   doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game pixel, so nothing is
   blended at all.
-- **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws faint,
-  evenly spaced lines between the pixels, with each pixel brightened to make up for them. It's
+- **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws evenly
+  spaced lines between the pixels, with each pixel brightened to make up for them. It's
   off unless you turn it on.
 
 ## Setup

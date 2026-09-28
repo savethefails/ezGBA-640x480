@@ -38,6 +38,9 @@ pub struct Theme {
     /// cost of any brightness; `grid lcd` darkens every colour alike, as a backlit LCD does;
     /// `grid off` is the default.
     pub grid: LcdGrid,
+    /// `grid-depth 40`: how dark the middle of a grid line is, in percent, from 5 to 100. `None`
+    /// is the grid's own default.
+    pub grid_depth: Option<f32>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -80,6 +83,7 @@ impl Default for Theme {
             scaler: Scaling::PixelAa,
             sharpness: 1.0,
             grid: LcdGrid::Off,
+            grid_depth: None,
         }
     }
 }
@@ -121,6 +125,11 @@ impl Theme {
                 ("grid", "off") => theme.grid = LcdGrid::Off,
                 ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
+                ("grid-depth", v) => {
+                    if let Some(d) = v.parse::<f32>().ok().filter(|d| (5.0..=100.0).contains(d)) {
+                        theme.grid_depth = Some(d);
+                    }
+                }
                 ("sharpness", v) => {
                     if let Some(s) = v.parse::<f32>().ok().filter(|s| (0.0..=2.0).contains(s)) {
                         theme.sharpness = s;
