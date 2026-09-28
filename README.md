@@ -25,7 +25,7 @@ This fork is laid out for the **RG35XXSP** and its 640×480 screen.
 |---|---|
 | **D-pad** | Pick a game |
 | **A** | Play it |
-| **MENU** | In a game: save and go back to your games. On the shelf: settings. |
+| **MENU** | In a game: save and go back to your games. On the shelf: settings. With only one game on the card, it boots straight into it, and MENU still takes you to the shelf and its settings. |
 | **L2 / R2** | Screen darker / brighter |
 | **Close the lid** | Saves and sleeps. Open it within 3 minutes to keep playing. After that it turns itself off to save battery, and the next time you turn it on, your game picks up right where you left off. |
 
@@ -50,14 +50,24 @@ work, unchanged.
 
 ## Settings
 
-Tap **MENU** on the shelf to set the date and time, or see About. It also reminds you that
-L2 / R2 change the brightness.
+Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Right change it:
 
-For a couple more options, edit `System/theme.txt` on the SD card:
+| Row | What it does |
+|---|---|
+| **Date & Time** | Set the clock (A opens it). |
+| **Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
+| **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
+| **About** | Credits (A opens it). |
+
+The picture and grid settings are saved to `System/theme.txt`, so the card remembers them,
+and they're read back from it at startup, so editing the file by hand still works.
+
+`System/theme.txt` holds a few more options that aren't in the menu:
 
 | Line | What it does |
 |---|---|
-| `menu off` | Hide the settings menu, so little hands can't change anything |
+| `menu off` | Hide the settings menu, so little hands can't change anything. With one game on the card, MENU then does nothing in the game: it's a one-game console. |
 | `scrim #F7E7CE` | Background color behind the shelf |
 | `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
 | `sharpness 1.5` | How hard pixel edges are, from `0` (soft) to `2` (nearly hard). `1` is the default and the only setting with no shimmer at all. |

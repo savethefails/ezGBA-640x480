@@ -10,16 +10,23 @@ use crate::text;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum QuickRow {
     DateTime,
+    Picture,
+    Grid,
+    GridDepth,
     About,
     Brightness,
 }
 
 impl QuickRow {
-    /// ezGBA keeps only the two rows that open something. Rumble and colour correction stay at
-    /// their defaults, and fast forward cannot start with R2 as brightness.
+    /// ezGBA keeps the two rows that open something and the three that set how the game looks,
+    /// which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
+    /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 3] = [
+    pub const ALL: [QuickRow; 6] = [
         QuickRow::DateTime,
+        QuickRow::Picture,
+        QuickRow::Grid,
+        QuickRow::GridDepth,
         QuickRow::About,
         QuickRow::Brightness,
     ];
@@ -32,6 +39,9 @@ impl QuickRow {
     pub fn label(self) -> &'static str {
         match self {
             QuickRow::DateTime => "Date & Time",
+            QuickRow::Picture => "Picture",
+            QuickRow::Grid => "LCD Grid",
+            QuickRow::GridDepth => "Grid Depth",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
         }
@@ -68,10 +78,24 @@ pub enum QuickValue {
     On,
     Off,
     L2R2,
+    FourThree,
+    ThreeTwo,
+    Strict,
+    Lcd,
+    Depth10,
+    Depth20,
+    Depth30,
+    Depth40,
+    Depth50,
+    Depth60,
+    Depth70,
+    Depth80,
+    Depth90,
+    Depth100,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 7] = [
+    pub const ALL: [QuickValue; 21] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -79,7 +103,24 @@ impl QuickValue {
         QuickValue::On,
         QuickValue::Off,
         QuickValue::L2R2,
+        QuickValue::FourThree,
+        QuickValue::ThreeTwo,
+        QuickValue::Strict,
+        QuickValue::Lcd,
+        QuickValue::Depth10,
+        QuickValue::Depth20,
+        QuickValue::Depth30,
+        QuickValue::Depth40,
+        QuickValue::Depth50,
+        QuickValue::Depth60,
+        QuickValue::Depth70,
+        QuickValue::Depth80,
+        QuickValue::Depth90,
+        QuickValue::Depth100,
     ];
+
+    /// The Grid Depth row's steps, in percent, in the order the arrows walk them.
+    pub const DEPTHS: [u8; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
     /// Position in `ALL`, which is the order the faces are uploaded in.
     pub fn index(self) -> usize {
@@ -95,7 +136,28 @@ impl QuickValue {
             QuickValue::On => "On",
             QuickValue::Off => "Off",
             QuickValue::L2R2 => "L2 / R2",
+            QuickValue::FourThree => "4:3",
+            QuickValue::ThreeTwo => "3:2",
+            QuickValue::Strict => "Strict",
+            QuickValue::Lcd => "LCD",
+            QuickValue::Depth10 => "10%",
+            QuickValue::Depth20 => "20%",
+            QuickValue::Depth30 => "30%",
+            QuickValue::Depth40 => "40%",
+            QuickValue::Depth50 => "50%",
+            QuickValue::Depth60 => "60%",
+            QuickValue::Depth70 => "70%",
+            QuickValue::Depth80 => "80%",
+            QuickValue::Depth90 => "90%",
+            QuickValue::Depth100 => "100%",
         }
+    }
+
+    /// The Grid Depth row's value for a depth in percent, at the nearest step: a card can hold
+    /// any depth from 5 to 100, and the row shows the step it is closest to.
+    pub fn depth(percent: f32) -> QuickValue {
+        let step = ((percent / 10.0).round() as i32).clamp(1, 10) as usize;
+        QuickValue::ALL[QuickValue::Depth10.index() + step - 1]
     }
 
     /// A fast forward ceiling the menu offers, and `None` for any other. Each number is how many

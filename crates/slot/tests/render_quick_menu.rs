@@ -86,6 +86,7 @@ fn the_quick_menu_renders_full_screen() {
     let mut bar_on = QuickRow::ALL[0];
     for (name, selected) in [
         ("date-time", QuickRow::DateTime),
+        ("grid-depth", QuickRow::GridDepth),
         ("about", QuickRow::About),
     ] {
         for _ in bar_on.index()..selected.index() {
@@ -145,7 +146,9 @@ fn the_quick_menu_renders_full_screen() {
     // Ruling S6: Date & Time opens the clock with B BACK beside its own key. Centred as a pair,
     // B's cap runs from about x 225 to 244. The first boot's lone key is centred on its own and
     // its cap starts near x 279, so only ink left of x 270 on this row can be B BACK.
-    tap(&mut f, &mut input, Btn::Up);
+    for _ in QuickRow::DateTime.index()..bar_on.index() {
+        tap(&mut f, &mut input, Btn::Up);
+    }
     tap(&mut f, &mut input, Btn::A);
     let px = composed(&mut f, &mut c, "clock");
     assert!(

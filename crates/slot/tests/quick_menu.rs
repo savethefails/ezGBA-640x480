@@ -114,7 +114,13 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         Some(QuickRow::DateTime),
         "wrapped off the top"
     );
-    for want in [QuickRow::About, QuickRow::About] {
+    for want in [
+        QuickRow::Picture,
+        QuickRow::Grid,
+        QuickRow::GridDepth,
+        QuickRow::About,
+        QuickRow::About,
+    ] {
         press(&mut a, Btn::Down);
         assert_eq!(a.quick_menu(), Some(want));
     }
@@ -286,6 +292,15 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
     );
 }
 
+/// Every row the bar can land on, top to bottom.
+const SELECTABLE: [QuickRow; 5] = [
+    QuickRow::DateTime,
+    QuickRow::Picture,
+    QuickRow::Grid,
+    QuickRow::GridDepth,
+    QuickRow::About,
+];
+
 /// Stand-ins for everything the frontend uploads for the menu, so the draw can be read back
 /// without a compositor. Every id distinct.
 fn fake_faces(a: &mut App) {
@@ -337,7 +352,7 @@ fn the_legend_says_change_on_a_value_row_and_open_on_a_row_that_opens() {
     let (_d, mut a, _) = on_carousel();
     fake_faces(&mut a);
     a.apply(Action::QuickMenu);
-    for row in [QuickRow::DateTime, QuickRow::About] {
+    for row in SELECTABLE {
         assert_eq!(a.quick_menu(), Some(row));
         let out = frame(&a);
         assert!(drawn(&out, 400), "no B BACK on {row:?}");
@@ -351,29 +366,24 @@ fn the_legend_says_change_on_a_value_row_and_open_on_a_row_that_opens() {
 fn the_arrows_stand_only_around_the_selected_rows_value() {
     let (_d, mut a, _) = on_carousel();
     fake_faces(&mut a);
-    a.apply(Action::QuickMenu);
+    open_at(&mut a, QuickRow::Picture);
     let out = frame(&a);
+    assert!(drawn(&out, 300) && drawn(&out, 301), "no arrows on Picture");
     assert!(
-        drawn(&out, 300) && drawn(&out, 301),
-        "no arrows on Fast Forward"
-    );
-    assert!(
-        drawn(&out, value(QuickValue::Speed6, true)),
-        "6× is not lit"
+        drawn(&out, value(QuickValue::FourThree, true)),
+        "4:3 is not lit"
     );
     assert!(
         drawn(&out, value(QuickValue::Off, false)),
-        "sound's OFF is not grey"
+        "the grid's OFF is not grey"
     );
     assert!(
-        drawn(&out, value(QuickValue::On, false)),
-        "rumble's ON is not grey"
+        drawn(&out, value(QuickValue::Depth40, false)),
+        "40% is not grey"
     );
     assert!(drawn(&out, 500), "the date and time is not grey");
 
-    for _ in 0..QuickRow::DateTime.index() {
-        press(&mut a, Btn::Down);
-    }
+    press(&mut a, Btn::Up);
     let out = frame(&a);
     assert!(
         !drawn(&out, 300) && !drawn(&out, 301),
@@ -381,9 +391,98 @@ fn the_arrows_stand_only_around_the_selected_rows_value() {
     );
     assert!(drawn(&out, 501), "the date and time in hand is not lit");
     assert!(
-        drawn(&out, value(QuickValue::Speed6, false)),
-        "6× stayed lit after the bar left it"
+        drawn(&out, value(QuickValue::FourThree, false)),
+        "4:3 stayed lit after the bar left it"
     );
+}
+
+/// A card with a look set in `System/theme.txt`, on the carousel.
+fn on_carousel_with_theme(theme: &str) -> (TempDir, App) {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..SlotState::default()
+        },
+    )
+    .expect("write slot.state");
+    std::fs::write(d.path().join("System/theme.txt"), theme).expect("write theme.txt");
+    let (a, _) = app_booting_at(d.path(), CLOCK_IS_SET);
+    (d, a)
+}
+
+/// The menu opens on what the card says, a depth between steps showing the nearest one.
+#[test]
+fn the_look_rows_show_what_theme_txt_says() {
+    let (_d, a) = on_carousel_with_theme("picture 3:2\ngrid strict\ngrid-depth 67\n");
+    assert_eq!(a.quick_value(QuickRow::Picture), Some(QuickValue::ThreeTwo));
+    assert_eq!(a.quick_value(QuickRow::Grid), Some(QuickValue::Strict));
+    assert_eq!(
+        a.quick_value(QuickRow::GridDepth),
+        Some(QuickValue::Depth70)
+    );
+    let (_d, a) = on_carousel_with_theme("");
+    assert_eq!(
+        a.quick_value(QuickRow::Picture),
+        Some(QuickValue::FourThree)
+    );
+    assert_eq!(a.quick_value(QuickRow::Grid), Some(QuickValue::Off));
+    assert_eq!(
+        a.quick_value(QuickRow::GridDepth),
+        Some(QuickValue::Depth40)
+    );
+}
+
+/// Left and Right walk each look row one step, stop at its ends, and write the line to
+/// `System/theme.txt`, leaving every other line on it alone.
+#[test]
+fn the_arrows_change_the_look_and_write_it_to_theme_txt() {
+    let (d, mut a) = on_carousel_with_theme("# my card\nscrim #112233\ngrid on\n");
+    let theme = || std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+
+    open_at(&mut a, QuickRow::Picture);
+    press(&mut a, Btn::Right);
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::Picture), Some(QuickValue::ThreeTwo));
+    assert_eq!(
+        a.quick_menu(),
+        Some(QuickRow::Picture),
+        "an arrow moved the bar"
+    );
+
+    press(&mut a, Btn::Down);
+    for want in [QuickValue::Strict, QuickValue::Lcd, QuickValue::Lcd] {
+        press(&mut a, Btn::Right);
+        assert_eq!(a.quick_value(QuickRow::Grid), Some(want));
+    }
+
+    press(&mut a, Btn::Down);
+    press(&mut a, Btn::Right);
+    press(&mut a, Btn::Right);
+    assert_eq!(
+        a.quick_value(QuickRow::GridDepth),
+        Some(QuickValue::Depth60)
+    );
+    assert_eq!(
+        theme(),
+        "# my card\nscrim #112233\ngrid lcd\npicture 3:2\ngrid-depth 60\n"
+    );
+    for _ in 0..12 {
+        press(&mut a, Btn::Left);
+    }
+    assert_eq!(
+        a.quick_value(QuickRow::GridDepth),
+        Some(QuickValue::Depth10)
+    );
+    assert!(theme().contains("grid-depth 10\n"), "{}", theme());
+
+    // What was written is what the next boot reads.
+    let again = slot_store::Theme::read(d.path());
+    assert_eq!(again.picture, slot_store::Aspect::ThreeTwo);
+    assert_eq!(again.grid, slot_store::LcdGrid::Lcd);
+    assert_eq!(again.grid_depth, Some(10.0));
+    assert_eq!(again.scrim, [0x11, 0x22, 0x33]);
 }
 
 #[test]
@@ -391,7 +490,7 @@ fn the_bar_runs_edge_to_edge_behind_the_selected_row() {
     let (_d, mut a, _) = on_carousel();
     fake_faces(&mut a);
     a.apply(Action::QuickMenu);
-    for row in [QuickRow::DateTime, QuickRow::About] {
+    for row in SELECTABLE {
         let bars: Vec<_> = frame(&a)
             .into_iter()
             .filter_map(|d| match d {

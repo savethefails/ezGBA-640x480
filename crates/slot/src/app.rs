@@ -6,9 +6,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Aspect, Cart, Core, LcdGrid, Platform,
-    Scaling, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
-    VOLUME_MAX,
+    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart, Core,
+    LcdGrid, Platform, Scaling, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX,
+    BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -474,6 +474,12 @@ pub struct App {
     /// what holds the seated cart, and a menu that left it would have to rebuild the session
     /// to come back from cancelling.
     game_menu: Option<GameMenu>,
+    /// How the game is drawn: the picture's shape, the grid and its depth. Read from
+    /// `System/theme.txt` at boot, changed from the settings menu, and written back there.
+    look: Look,
+    /// `menu off` is not on the card: MENU reaches the settings, and one cart ejects to them.
+    /// Kept from boot rather than asked of the theme each time, as `look` is.
+    menu: bool,
     link_sprites: Option<LinkSprites>,
     /// The hardware the link screen shows and a link it starts runs over. Read once when the
     /// screen opens (see `link_mode`) rather than every frame `draw_game_menu` runs, and
@@ -696,6 +702,8 @@ impl App {
             core_chip_shadow_face: None,
             core_legend_faces: Vec::new(),
             game_menu: None,
+            look: Look::default(),
+            menu: true,
             link_sprites: None,
             link_hardware: LinkKind::Cable,
             last_role: LinkRow::Host,
@@ -764,23 +772,20 @@ impl App {
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
         let theme = Theme::read(root);
-        slot_gfx::set_picture(match theme.picture {
-            Aspect::FourThree => slot_gfx::Picture::FourThree,
-            Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
-        });
-        slot_gfx::set_grid(match theme.grid {
-            LcdGrid::Off => slot_gfx::Grid::default(),
-            LcdGrid::On => slot_gfx::Grid::on(),
-            LcdGrid::Strict => slot_gfx::Grid::strict(),
-            LcdGrid::Lcd => slot_gfx::Grid::lcd(),
-        }
-        .with_depth(theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH)));
+        let look = Look {
+            picture: theme.picture,
+            grid: theme.grid,
+            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
+        };
+        look.apply();
         slot_gfx::set_scaler(match theme.scaler {
             Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),
             Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
         });
         slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
+        app.look = look;
+        app.menu = theme.menu;
         app.root = Some(root.to_path_buf());
         app.state = read_slot_state(root);
         app.greeting_frames = greeting_frame_count(root);
@@ -984,6 +989,17 @@ impl App {
     pub fn quick_value(&self, row: QuickRow) -> Option<QuickValue> {
         match row {
             QuickRow::Brightness => Some(QuickValue::L2R2),
+            QuickRow::Picture => Some(match self.look.picture {
+                Aspect::FourThree => QuickValue::FourThree,
+                Aspect::ThreeTwo => QuickValue::ThreeTwo,
+            }),
+            QuickRow::Grid => Some(match self.look.grid {
+                LcdGrid::Off => QuickValue::Off,
+                LcdGrid::On => QuickValue::On,
+                LcdGrid::Strict => QuickValue::Strict,
+                LcdGrid::Lcd => QuickValue::Lcd,
+            }),
+            QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -1108,8 +1124,8 @@ impl App {
         self.shelf().carts.iter().find(|c| c.stem == *stem)
     }
 
-    /// Exactly one cart on the card, counting every shelf. The shelf is unreachable and eject is
-    /// refused.
+    /// Exactly one cart on the card, counting every shelf. It boots straight into the game, and
+    /// with `menu off` the shelf is unreachable and eject is refused.
     pub fn single_cart(&self) -> bool {
         self.carts().count() == 1
     }
@@ -1792,7 +1808,7 @@ impl App {
 
     /// MENU on the carousel. On the top row every time, however the menu was last left.
     fn open_quick_menu(&mut self) {
-        if !slot_ui::theme().menu {
+        if !self.menu {
             return;
         }
         self.about_a_down = None;
@@ -1807,6 +1823,8 @@ impl App {
         let row = match action {
             Action::GbaDown(Btn::Up) => row.up(),
             Action::GbaDown(Btn::Down) => row.down(),
+            Action::GbaDown(Btn::Left) | Action::ShelfLeft => return self.change_look(row, -1),
+            Action::GbaDown(Btn::Right) | Action::ShelfRight => return self.change_look(row, 1),
             Action::GbaDown(Btn::A) if row == QuickRow::About => {
                 self.about_a_down = Some(self.now());
                 return;
@@ -1827,6 +1845,43 @@ impl App {
         self.phase = Phase::QuickMenu { row };
     }
 
+    /// Left or Right on one of the rows that set how the game looks: one step along, stopping at
+    /// the ends as the bar does. Drawn that way from the next frame, and written to
+    /// `System/theme.txt` so the card keeps it and a hand edit there still wins at the next boot.
+    fn change_look(&mut self, row: QuickRow, by: i32) {
+        const PICTURES: [Aspect; 2] = [Aspect::FourThree, Aspect::ThreeTwo];
+        const GRIDS: [LcdGrid; 4] = [LcdGrid::Off, LcdGrid::On, LcdGrid::Strict, LcdGrid::Lcd];
+        let step = |at: usize, len: usize| (at as i32 + by).clamp(0, len as i32 - 1) as usize;
+        let (name, value) = match row {
+            QuickRow::Picture => {
+                let at = PICTURES
+                    .iter()
+                    .position(|p| *p == self.look.picture)
+                    .unwrap_or(0);
+                self.look.picture = PICTURES[step(at, PICTURES.len())];
+                ("picture", aspect_word(self.look.picture).to_string())
+            }
+            QuickRow::Grid => {
+                let at = GRIDS.iter().position(|g| *g == self.look.grid).unwrap_or(0);
+                self.look.grid = GRIDS[step(at, GRIDS.len())];
+                ("grid", grid_word(self.look.grid).to_string())
+            }
+            QuickRow::GridDepth => {
+                let depths = QuickValue::DEPTHS;
+                let now = QuickValue::depth(self.look.depth).index() - QuickValue::Depth10.index();
+                self.look.depth = f32::from(depths[step(now, depths.len())]);
+                ("grid-depth", format!("{}", self.look.depth as u8))
+            }
+            QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
+        };
+        self.look.apply();
+        if let Some(root) = &self.root {
+            if let Err(e) = write_theme_setting(root, name, &value) {
+                eprintln!("slot: theme.txt: {e}");
+            }
+        }
+    }
+
     /// A on a row.
     fn open_quick_row(&mut self, row: QuickRow) {
         match row {
@@ -1836,7 +1891,7 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
-            QuickRow::Brightness => {}
+            QuickRow::Picture | QuickRow::Grid | QuickRow::GridDepth | QuickRow::Brightness => {}
         }
     }
 
@@ -2516,8 +2571,14 @@ impl App {
                         // Dimmed by as much of the open as has happened, so the dark arrives
                         // with the lid coming off and leaves with it going back on.
                         let dim = 1.0 + (CORE_PICKER_DIM - 1.0) * open;
-                        self.shelf()
-                            .draw_row(Some(stem), 0.0, CORE_PICKER_RECEDE * open, dim, SHELF_ROW_LOWER, out);
+                        self.shelf().draw_row(
+                            Some(stem),
+                            0.0,
+                            CORE_PICKER_RECEDE * open,
+                            dim,
+                            SHELF_ROW_LOWER,
+                            out,
+                        );
                         draw_empty_slot(out);
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
@@ -3150,9 +3211,12 @@ impl App {
     }
 
     fn eject(&mut self) {
-        // Nowhere to eject to. Refused rather than ignored, so the held MENU says no
-        // instead of reading as a device that stopped listening.
-        if self.single_cart() {
+        // One cart boots straight into its game, but the shelf is still where the settings
+        // are, so MENU ejects to it as it does with more. `menu off` is the card that wants
+        // no settings reached, and there one cart is a sealed console: nowhere to eject to.
+        // Refused rather than ignored, so the held MENU says no instead of reading as a
+        // device that stopped listening.
+        if self.single_cart() && !self.menu {
             return self.refuse();
         }
         // Inserting as well as Playing, so a slot with no core behind it can still be
@@ -4427,7 +4491,9 @@ pub fn greeting_dir(root: &Path) -> PathBuf {
 }
 
 pub fn greeting_frame_path(root: &Path, i: usize) -> PathBuf {
-    greeting_dir(root).join("frames").join(format!("{:04}.png", i + 1))
+    greeting_dir(root)
+        .join("frames")
+        .join(format!("{:04}.png", i + 1))
 }
 
 /// Counted from 0001 up to the first gap, so a half-copied folder plays what is there.
@@ -4435,4 +4501,59 @@ fn greeting_frame_count(root: &Path) -> usize {
     (0..)
         .take_while(|&i| greeting_frame_path(root, i).is_file())
         .count()
+}
+
+/// How the game is drawn, as the settings menu and `System/theme.txt` both hold it.
+#[derive(Copy, Clone, PartialEq, Debug)]
+struct Look {
+    picture: Aspect,
+    grid: LcdGrid,
+    /// The grid's depth in percent. The menu steps it by ten; a card can hold anything from 5.
+    depth: f32,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look {
+            picture: Aspect::FourThree,
+            grid: LcdGrid::Off,
+            depth: slot_gfx::GRID_DEPTH,
+        }
+    }
+}
+
+impl Look {
+    /// Into the renderer, which reads both every frame.
+    fn apply(&self) {
+        slot_gfx::set_picture(match self.picture {
+            Aspect::FourThree => slot_gfx::Picture::FourThree,
+            Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
+        });
+        slot_gfx::set_grid(
+            match self.grid {
+                LcdGrid::Off => slot_gfx::Grid::default(),
+                LcdGrid::On => slot_gfx::Grid::on(),
+                LcdGrid::Strict => slot_gfx::Grid::strict(),
+                LcdGrid::Lcd => slot_gfx::Grid::lcd(),
+            }
+            .with_depth(self.depth),
+        );
+    }
+}
+
+/// The words `System/theme.txt` spells these with, which `Theme::parse` reads back.
+fn aspect_word(picture: Aspect) -> &'static str {
+    match picture {
+        Aspect::FourThree => "4:3",
+        Aspect::ThreeTwo => "3:2",
+    }
+}
+
+fn grid_word(grid: LcdGrid) -> &'static str {
+    match grid {
+        LcdGrid::Off => "off",
+        LcdGrid::On => "on",
+        LcdGrid::Strict => "strict",
+        LcdGrid::Lcd => "lcd",
+    }
 }

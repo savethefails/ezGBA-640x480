@@ -610,8 +610,8 @@ fn a_band_with_no_gauge_still_draws_its_clock() {
 fn a_refusal_moves_the_carts_and_leaves_the_device_where_it_is() {
     let s = shelf_with(3);
     let (mut still, mut shaken) = (Vec::new(), Vec::new());
-    s.draw(0.0, &mut still);
-    s.draw(9.0, &mut shaken);
+    s.draw(0.0, 0.0, &mut still);
+    s.draw(9.0, 0.0, &mut shaken);
     assert_eq!(still.len(), shaken.len(), "the shake changed the row");
     // The row draws first, so its quads are the leading ones. Sizes cannot tell the two
     // apart: the carts either side of the selection are drawn scaled down.
@@ -651,7 +651,7 @@ fn carts_past_the_edges_of_the_row_are_not_drawn() {
 fn all_three_carts_fit_on_screen() {
     let s = shelf_with(5);
     let mut out = Vec::new();
-    s.draw(0.0, &mut out);
+    s.draw(0.0, 0.0, &mut out);
     let spans = cart_spans(&out);
     assert_eq!(
         spans.len(),
@@ -674,7 +674,7 @@ fn all_three_carts_fit_on_screen() {
 fn the_row_is_evenly_spaced() {
     let s = shelf_with(5);
     let mut out = Vec::new();
-    s.draw(0.0, &mut out);
+    s.draw(0.0, 0.0, &mut out);
     let mut spans = cart_spans(&out);
     spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     let margin = spans[0].0;

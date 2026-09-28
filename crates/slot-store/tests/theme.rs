@@ -119,3 +119,36 @@ fn grid_depth_is_read_as_a_percentage() {
     assert_eq!(Theme::parse("grid-depth 150").grid_depth, None);
     assert_eq!(Theme::parse("grid-depth dark").grid_depth, None);
 }
+
+/// The settings menu writes one line and leaves the rest of the file as the user wrote it: a
+/// line already setting it is rewritten in place, later repeats of it go, comments that mention
+/// it stay, and a card with no file gets one.
+#[test]
+fn write_theme_setting_changes_one_line_and_keeps_the_rest() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("System/theme.txt");
+    let read = || std::fs::read_to_string(&path).unwrap();
+
+    slot_store::write_theme_setting(d.path(), "grid", "lcd").unwrap();
+    assert_eq!(read(), "grid lcd\n");
+
+    std::fs::write(
+        &path,
+        "# grid on looks nice\nscrim #F7E7CE\nGRID on\npicture 3:2\ngrid strict\n",
+    )
+    .unwrap();
+    slot_store::write_theme_setting(d.path(), "grid", "off").unwrap();
+    assert_eq!(
+        read(),
+        "# grid on looks nice\nscrim #F7E7CE\ngrid off\npicture 3:2\n"
+    );
+    slot_store::write_theme_setting(d.path(), "grid-depth", "70").unwrap();
+    assert_eq!(
+        read(),
+        "# grid on looks nice\nscrim #F7E7CE\ngrid off\npicture 3:2\ngrid-depth 70\n"
+    );
+    let theme = Theme::read(d.path());
+    assert_eq!(theme.grid, LcdGrid::Off);
+    assert_eq!(theme.grid_depth, Some(70.0));
+    assert_eq!(theme.scrim, [0xF7, 0xE7, 0xCE]);
+}

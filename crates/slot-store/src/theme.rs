@@ -153,6 +153,40 @@ impl Theme {
     }
 }
 
+/// Sets one line of `System/theme.txt`, as the settings menu does, and leaves every other line
+/// as it was: colours, comments and anything misspelt all survive. The first line setting
+/// `name` is rewritten in place and any later ones are dropped, since the last of them was the
+/// one being read; a file with none gets the line added at the end, and a card with no file
+/// gets one with just that line. Written whole and renamed into place, so a card pulled
+/// mid-write keeps the old file rather than half of the new one.
+pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Result<()> {
+    let dir = root.join("System");
+    let path = dir.join(THEME_FILE);
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let line = format!("{name} {value}");
+    let mut out: Vec<String> = Vec::new();
+    let mut written = false;
+    for l in old.lines() {
+        let t = l.trim();
+        let key = t.split_whitespace().next().unwrap_or("");
+        if !t.starts_with('#') && key.eq_ignore_ascii_case(name) {
+            if !written {
+                out.push(line.clone());
+                written = true;
+            }
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    if !written {
+        out.push(line);
+    }
+    let mut text = out.join("\n");
+    text.push('\n');
+    std::fs::create_dir_all(&dir)?;
+    crate::atomic::atomic_write(&path, text.as_bytes())
+}
+
 /// `rrggbb`, with or without the leading hash. Both are written in the wild and neither is
 /// worth refusing a card over.
 fn hex(value: &str) -> Option<[u8; 3]> {
