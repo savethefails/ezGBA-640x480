@@ -76,8 +76,8 @@ pub struct StickerFields<'a> {
 ///
 /// This is what README.md credits, in the space a label has for it.
 pub const CREDITS: [&str; 10] = [
-    "EMULATION POWERED BY MGBA",
-    "AND GPSP. AGS-102 IS A FORK OF",
+    "EMULATION POWERED BY MGBA,",
+    "GPSP AND SNES9X. RUNS ON",
     "BASEOS BY PVAIBHAV. TYPE IS",
     "OPEN SANS AND NERD FONTS",
     "SYMBOLS BY RYAN L MCINTYRE.",
