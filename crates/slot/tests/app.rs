@@ -7,7 +7,7 @@ use slot::app::{App, Phase, EJECT_S, INSERT_S, SEATED_AT};
 use slot::audio::Sfx;
 use slot::session::Session;
 use slot::video_mode::{video_mode_for, VideoMode, VIDEO_MODE_FILE};
-use slot_gfx::WHOLE_TEXTURE;
+use slot_gfx::Fit;
 use slot_input::{Action, Btn, RawEvent};
 use slot_retro::ButtonMask;
 use slot_store::{write_slot_state, Cart, Core, Platform, SlotState};
@@ -2038,9 +2038,9 @@ fn session_playing(root: &Path) -> Session {
     s
 }
 
-/// What `video_refresh` leaves a Game Boy picture occupying inside the 240x160 buffer, as the
-/// game pass takes it: x 40..200 and y 8..152, in texture coordinates.
-const GB_WINDOW: [f32; 4] = [40.0 / 240.0, 8.0 / 160.0, 160.0 / 240.0, 144.0 / 160.0];
+/// A Game Boy picture stretched over the whole panel, and at its own size: 3x, centred.
+const GB_WINDOW: Fit = Fit::Fill;
+const GB_ACTUAL: Fit = Fit::Whole;
 
 /// What the pad is holding right now, as the core would be polled for it. `Session` hands the
 /// mask to the emulator thread at the end of every `feed`, so this is the far side of the one
@@ -2059,14 +2059,14 @@ fn l_and_r_change_the_mode_on_a_game_boy_cart_and_not_on_a_gba_one() {
     let d = common::tmp_root_with_gb_carts(&["Tetris", "Zzz"]);
     let mut s = session_playing(d.path());
     assert_eq!(
-        s.app().source_rect(),
-        WHOLE_TEXTURE,
+        s.app().fit(),
+        GB_ACTUAL,
         "it did not open actual size"
     );
 
     s.feed([RawEvent::Down(Btn::L1)], 100);
     assert_eq!(
-        s.app().source_rect(),
+        s.app().fit(),
         GB_WINDOW,
         "L did not stretch the picture"
     );
@@ -2075,8 +2075,8 @@ fn l_and_r_change_the_mode_on_a_game_boy_cart_and_not_on_a_gba_one() {
 
     s.feed([RawEvent::Down(Btn::R1)], 200);
     assert_eq!(
-        s.app().source_rect(),
-        WHOLE_TEXTURE,
+        s.app().fit(),
+        GB_ACTUAL,
         "R did not give it back"
     );
     assert_eq!(pad(&s) & ButtonMask::R, 0, "R reached the game as well");
@@ -2091,8 +2091,8 @@ fn l_and_r_change_the_mode_on_a_game_boy_cart_and_not_on_a_gba_one() {
     s.feed([RawEvent::Down(Btn::R1)], 120);
     assert_ne!(pad(&s) & ButtonMask::R, 0, "the GBA lost its own R");
     assert_eq!(
-        s.app().source_rect(),
-        WHOLE_TEXTURE,
+        s.app().fit(),
+        Fit::Gba,
         "a GBA picture moved when its shoulders were pressed"
     );
 }
@@ -2214,13 +2214,13 @@ fn the_picture_mode_is_remembered_per_cart() {
 
     let mut s = session_playing(d.path());
     assert_eq!(
-        s.app().source_rect(),
+        s.app().fit(),
         GB_WINDOW,
         "the cart did not come back stretched"
     );
     s.feed([RawEvent::Down(Btn::R1)], 100);
     assert_eq!(video_mode_for(d.path(), "Tetris"), VideoMode::Actual);
-    assert_eq!(s.app().source_rect(), WHOLE_TEXTURE);
+    assert_eq!(s.app().fit(), GB_ACTUAL);
 }
 
 /// A cart nobody has chosen for gets the integer-scaled, mask-aligned look — exactly as
@@ -2236,8 +2236,8 @@ fn a_cart_with_no_line_reads_as_actual_size() {
 
     let s = session_playing(d.path());
     assert_eq!(
-        s.app().source_rect(),
-        WHOLE_TEXTURE,
+        s.app().fit(),
+        GB_ACTUAL,
         "a cart with no line did not open at actual size"
     );
 }

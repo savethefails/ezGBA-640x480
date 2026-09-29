@@ -626,7 +626,7 @@ impl Session {
         // Read for every cart rather than only for the Game Boy ones. It is a cosmetic
         // preference with no core or directory hanging off it, and reading it unconditionally
         // is what stops a GBA cart inheriting whatever the last Game Boy cart was left in —
-        // `App::source_rect` is the one place that decides a GBA picture never moves.
+        // `App::fit` is the one place that decides how the picture is placed.
         self.app
             .set_video_mode(crate::video_mode::video_mode_for(&self.root, stem));
         // gpSP reads its link mode only while a game loads, so what this hands the core is what

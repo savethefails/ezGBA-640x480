@@ -1,19 +1,22 @@
-//! Whether a picture is drawn at its own size or stretched over the whole panel, and which of
-//! the two each cart was last left in.
+//! How each console's picture is placed on the panel, and for a Game Boy cart which of its two
+//! sizes it was last left in.
+//!
+//! A GBA picture follows the card's `picture` setting, 4:3 or 3:2. A SNES picture is always
+//! 4:3, the shape of the television its games were drawn for. A Game Boy picture is its own
+//! 10:9 at a whole multiple: 160x144 at 3x is 480x432, every pixel three panel pixels square.
 //!
 //! The Game Boy and the Game Boy Color had no shoulder buttons, so on one of their carts slot
-//! takes L and R: L stretches the picture to fill the 3:2 game area, R gives back its own
-//! size, centred. On a GBA cart the two are the GBA's own and this file has nothing to say — a
-//! GBA picture already fills the 640x427 game area, and there is no second size for it to have.
+//! takes L and R: L stretches the picture to fill the panel, R gives back its own size,
+//! centred. On a GBA or SNES cart the two are the console's own and this file has nothing to
+//! say.
 //!
-//! The stretch distorts, deliberately. 160x144 is 10:9 against the 3:2 game area, so a
-//! fullscreen Game Boy picture comes out about 35% wider than it is tall. That is what a Game
-//! Boy picture blown up to fill a television looked like, and it is the mode the user asked for
-//! by name.
+//! The stretch distorts, deliberately. 160x144 is 10:9 against the 4:3 panel, so a fullscreen
+//! Game Boy picture comes out about 20% wider than it is tall. That is what a Game Boy picture
+//! blown up to fill a television looked like, and it is the mode the user asked for by name.
 
 use std::path::Path;
 
-use slot_gfx::{SRC_H, SRC_W, WHOLE_TEXTURE};
+use slot_gfx::Fit;
 use slot_store::{ini, Platform};
 
 /// A sibling of `selected_core.ini`, in the same `<stem> = <value>` shape and read by the same
@@ -25,9 +28,8 @@ pub const VIDEO_MODE_FILE: &str = "System/video_mode.ini";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum VideoMode {
-    /// The picture at the same scale a GBA one is drawn at, centred where `video_refresh` put
-    /// it in the 240x160 buffer: a Game Boy's 160x144 comes out 427x384 in the middle of the
-    /// game area, square pixels and the right shape.
+    /// The picture at the largest whole multiple of itself the panel holds, centred: a Game
+    /// Boy's 160x144 comes out 480x432, square pixels and the right shape.
     #[default]
     Actual,
     /// The picture over the whole panel, aspect and all.
@@ -67,26 +69,14 @@ pub fn write_video_mode(root: &Path, stem: &str, mode: VideoMode) -> std::io::Re
     ini::write(root, VIDEO_MODE_FILE, stem, mode.as_str())
 }
 
-/// The part of the frame buffer the panel shows, as origin then size in texture coordinates.
-///
-/// The whole texture unless a Game Boy cart has been stretched, and that default is what keeps
-/// every GBA pixel where it has always been: it is the arithmetic the game pass did before
-/// there was a sub-rect to ask for.
-///
-/// The window comes from `Platform::picture` and the same centring `video_refresh` applies, so
-/// the two cannot drift: whatever size a platform says its picture is, this is where that
-/// picture was put.
-pub fn source_rect(platform: Platform, mode: VideoMode) -> [f32; 4] {
-    let (w, h) = platform.picture();
-    if mode == VideoMode::Actual || (w, h) == (SRC_W, SRC_H) {
-        return WHOLE_TEXTURE;
+/// How a platform's picture is placed. `mode` only moves a Game Boy's: the GBA follows the
+/// card's `picture` setting and a SNES is always the 4:3 its games were drawn for.
+pub fn fit_for(platform: Platform, mode: VideoMode) -> Fit {
+    match platform {
+        Platform::Gba => Fit::Gba,
+        Platform::Gb | Platform::Gbc => match mode {
+            VideoMode::Actual => Fit::Whole,
+            VideoMode::Stretch => Fit::Fill,
+        },
     }
-    let x = SRC_W.saturating_sub(w) / 2;
-    let y = SRC_H.saturating_sub(h) / 2;
-    [
-        x as f32 / SRC_W as f32,
-        y as f32 / SRC_H as f32,
-        w as f32 / SRC_W as f32,
-        h as f32 / SRC_H as f32,
-    ]
 }

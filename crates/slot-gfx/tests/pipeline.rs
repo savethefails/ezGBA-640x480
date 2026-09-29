@@ -1,6 +1,6 @@
 use slot_gfx::{
-    blue_light_gain, game_rect, set_grid, set_picture, set_scaler, Compositor, Draw, Grid,
-    HeadlessSurface, Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
+    blue_light_gain, game_rect, set_fit, set_grid, set_picture, set_scaler, Compositor, Draw, Fit,
+    Grid, HeadlessSurface, Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -15,6 +15,7 @@ static GL: Mutex<()> = Mutex::new(());
 fn compositor() -> Option<(MutexGuard<'static, ()>, HeadlessSurface, Compositor)> {
     let guard = GL.lock().unwrap_or_else(PoisonError::into_inner);
     set_picture(Picture::ThreeTwo);
+    set_fit(Fit::Gba);
     let surface = HeadlessSurface::new().ok()?;
     let compositor = Compositor::new(&surface).ok()?;
     Some((guard, surface, compositor))
@@ -32,36 +33,18 @@ fn flat_shot(rgb: [u8; 3]) -> Vec<u8> {
         .collect()
 }
 
-/// Where `video_refresh` centres a Game Boy's 160x144 picture inside the 240x160 buffer this
-/// whole path is built on. Spelled out here rather than imported, because the point of these
-/// tests is that the compositor is told a sub-rect and honours it, whoever worked it out.
-const GB_X: usize = 40;
-const GB_Y: usize = 8;
+/// A Game Boy's picture, which a core now hands over at its own size.
 const GB_W: usize = 160;
 const GB_H: usize = 144;
+const GB: (u32, u32) = (GB_W as u32, GB_H as u32);
+const GBA: (u32, u32) = (SRC_W, SRC_H);
 
-/// That window as the game pass takes it: origin and size in texture coordinates.
-const GB_RECT: [f32; 4] = [
-    GB_X as f32 / SRC_W as f32,
-    GB_Y as f32 / SRC_H as f32,
-    GB_W as f32 / SRC_W as f32,
-    GB_H as f32 / SRC_H as f32,
-];
-
-/// The whole texture, which is what the pass draws when nobody has asked for anything else.
-const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
-
-/// A core's frame: XRGB8888, which is B, G, R, unused in memory. `inside` paints the Game Boy
-/// window and `margin` fills the border `video_refresh` leaves around it.
-fn gb_shaped(inside: impl Fn(usize, usize) -> [u8; 3], margin: [u8; 3]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity((SRC_W * SRC_H * 4) as usize);
-    for y in 0..SRC_H as usize {
-        for x in 0..SRC_W as usize {
-            let in_window = (GB_X..GB_X + GB_W).contains(&x) && (GB_Y..GB_Y + GB_H).contains(&y);
-            let rgb = match in_window {
-                true => inside(x - GB_X, y - GB_Y),
-                false => margin,
-            };
+/// A Game Boy frame: XRGB8888, which is B, G, R, unused in memory.
+fn gb_frame(inside: impl Fn(usize, usize) -> [u8; 3]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(GB_W * GB_H * 4);
+    for y in 0..GB_H {
+        for x in 0..GB_W {
+            let rgb = inside(x, y);
             buf.extend_from_slice(&[rgb[2], rgb[1], rgb[0], 0]);
         }
     }
@@ -97,7 +80,7 @@ fn a_flat_frame_fills_the_game_area_flat_and_nothing_else() {
     };
     let grey = vec![0x80u8; (SRC_W * SRC_H * 4) as usize];
     c.begin_frame();
-    c.upload_game(&grey);
+    c.upload_game(&grey, GBA);
     c.draw_game();
     let frame = c.read_frame();
 
@@ -127,7 +110,7 @@ fn the_game_frame_keeps_its_orientation_from_upload_to_readback() {
     let mut src = vec![0u8; (SRC_W * SRC_H * 4) as usize];
     src[0..3].copy_from_slice(&[255, 255, 255]);
     c.begin_frame();
-    c.upload_game(&src);
+    c.upload_game(&src, GBA);
     c.draw_game();
     let frame = c.read_frame();
 
@@ -165,7 +148,7 @@ fn the_picture_strikes_as_a_band_at_the_centre_before_it_fills_the_frame() {
     let peak = |c: &mut Compositor, t: f32| {
         c.set_screen_power(t);
         c.begin_frame();
-        c.upload_game(&grey);
+        c.upload_game(&grey, GBA);
         c.draw_game();
         let frame = c.read_frame();
         let brightest = frame.chunks_exact(4).map(|p| p[0]).max().unwrap_or(0);
@@ -223,7 +206,7 @@ fn the_game_marker_draws_the_picture_where_it_sits_in_the_list() {
     c.set_screen_power(1.0);
 
     c.begin_frame();
-    c.upload_game(&white);
+    c.upload_game(&white, GBA);
     c.draw_list(&[full([1.0, 0.0, 0.0, 1.0]), Draw::Game]);
     let under = c.read_frame();
     let blue = under.chunks_exact(4).map(|p| p[2]).max().unwrap_or(0);
@@ -283,33 +266,30 @@ fn a_saved_shot_is_drawn_through_the_game_pass() {
     );
 }
 
-/// A still is a photograph, taken at some earlier moment, and `thumb::png` encodes the whole
-/// 240x160 buffer — so a Game Boy polaroid is the centred picture with black at its sides
-/// whatever the panel is set to now. It must not take the picture mode: the same stored image
-/// rendering differently because of a preference set after it was taken would mean a state
-/// saved before the player ever pressed L comes back stretched.
+/// A still is a photograph, taken at some earlier moment: a stretched Game Boy's polaroids
+/// stay the shape the game is. The same stored image rendering differently because of a
+/// preference set after it was taken would mean a state saved before the player ever pressed L
+/// comes back stretched.
 ///
 /// The live game beside it is the control: without one, a build that had simply stopped
-/// honouring the sub-rect at all would pass this.
+/// honouring the fit at all would pass this.
 #[test]
-fn a_still_is_not_cropped_by_the_picture_mode() {
+fn a_still_is_not_stretched_by_the_picture_mode() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
-    // A shot with its corners marked, so a crop moves something a comparison can see.
-    let mut shot = flat_shot([120, 120, 120]);
-    for (x, y) in [(0, 0), (SRC_W as usize - 1, SRC_H as usize - 1)] {
-        let o = (y * SRC_W as usize + x) * 4;
-        shot[o..o + 3].copy_from_slice(&[255, 0, 0]);
-    }
-    let tex = c.create_texture_nearest(SRC_W, SRC_H, &shot);
-    let src = gb_shaped(|x, y| [(x * 3) as u8, (y * 5) as u8, 200], [0, 0, 0]);
+    let mut shot: Vec<u8> = (0..GB_W * GB_H)
+        .flat_map(|i| [(i % 200) as u8, 120, 120, 255])
+        .collect();
+    shot[..4].copy_from_slice(&[255, 0, 0, 255]);
+    let tex = c.create_texture_nearest(GB.0, GB.1, &shot);
+    let src = gb_frame(|x, y| [(x * 3) as u8, (y * 5) as u8, 200]);
     c.set_screen_power(1.0);
 
-    let framed = |c: &mut Compositor, rect: [f32; 4]| {
-        c.set_game_source_rect(rect);
+    let framed = |c: &mut Compositor, fit: Fit| {
+        set_fit(fit);
         c.begin_frame();
-        c.upload_game(&src);
+        c.upload_game(&src, GB);
         c.draw_list(&[Draw::Shot { tex }]);
         let still = c.read_frame();
         c.begin_frame();
@@ -317,8 +297,9 @@ fn a_still_is_not_cropped_by_the_picture_mode() {
         (still, c.read_frame())
     };
 
-    let (still_actual, game_actual) = framed(&mut c, WHOLE);
-    let (still_full, game_full) = framed(&mut c, GB_RECT);
+    let (still_actual, game_actual) = framed(&mut c, Fit::Whole);
+    let (still_full, game_full) = framed(&mut c, Fit::Fill);
+    set_fit(Fit::Gba);
 
     assert!(
         still_actual == still_full,
@@ -495,7 +476,7 @@ fn the_default_source_rect_draws_exactly_as_before() {
     c.set_screen_power(1.0);
 
     c.begin_frame();
-    c.upload_game(&src);
+    c.upload_game(&src, GBA);
     c.draw_game();
     let default = c.read_frame();
 
@@ -509,28 +490,16 @@ fn the_default_source_rect_draws_exactly_as_before() {
             "source {sx},{sy}: {got:?} against {want:?}"
         );
     }
-
-    c.set_game_source_rect(WHOLE);
-    c.begin_frame();
-    c.upload_game(&src);
-    c.draw_game();
-    assert!(
-        c.read_frame() == default,
-        "the whole texture asked for is not the whole texture by default"
-    );
 }
 
-/// Fullscreen draws only the Game Boy's own picture, over the whole game area. The picture's
-/// corner texels land in that area's corners, and the margin `video_refresh` leaves around it
-/// is nowhere on screen at all — which is the difference between a stretch and a crop that
-/// merely moved.
+/// A Game Boy picture at actual size is 3x, square pixels, centred: 480x432 with 80 px either
+/// side and 24 above and below, the panel around it left dark. Stretched, the same picture's
+/// corner pixels land in the panel's own corners.
 #[test]
-fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
+fn a_game_boy_picture_is_whole_at_actual_size_and_fills_the_panel_stretched() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
-    // Four corners that cannot be confused with each other or with the margin, and a body
-    // that is none of the five.
     let corner = |x: usize, y: usize| match (x, y) {
         (0, 0) => Some([255, 0, 0]),
         (x, 0) if x == GB_W - 1 => Some([0, 255, 0]),
@@ -538,51 +507,84 @@ fn fullscreen_puts_the_pictures_corners_in_the_panels_corners() {
         (x, y) if x == GB_W - 1 && y == GB_H - 1 => Some([255, 255, 0]),
         _ => None,
     };
-    const MARGIN: [u8; 3] = [0, 255, 255];
-    let src = gb_shaped(|x, y| corner(x, y).unwrap_or([90, 90, 90]), MARGIN);
+    let src = gb_frame(|x, y| corner(x, y).unwrap_or([90, 90, 90]));
     c.set_screen_power(1.0);
 
-    // The control: at actual size the panel's own corner is the margin, not the picture.
-    c.set_game_source_rect(WHOLE);
-    c.begin_frame();
-    c.upload_game(&src);
-    c.draw_game();
-    let actual = c.read_frame();
-    let got = px(&actual, game_rect().0 as usize, game_rect().1 as usize);
-    assert!(
-        close(got, shaded(MARGIN)),
-        "at actual size the picture's corner is not the margin: {got:?}"
-    );
-
-    c.set_game_source_rect(GB_RECT);
-    c.begin_frame();
-    c.upload_game(&src);
-    c.draw_game();
-    let full = c.read_frame();
-
-    let (first_x, first_y) = (game_rect().0 as usize, game_rect().1 as usize);
-    let last_x = (game_rect().0 + game_rect().2) as usize - 1;
-    let last_y = (game_rect().1 + game_rect().3) as usize - 1;
-    for (name, (x, y), rgb) in [
-        ("top left", (first_x, first_y), [255, 0, 0]),
-        ("top right", (last_x, first_y), [0, 255, 0]),
-        ("bottom left", (first_x, last_y), [0, 0, 255]),
-        ("bottom right", (last_x, last_y), [255, 255, 0]),
+    for (name, fit, (x0, y0, w, h)) in [
+        (
+            "actual size",
+            Fit::Whole,
+            (80usize, 24usize, 480usize, 432usize),
+        ),
+        (
+            "stretched",
+            Fit::Fill,
+            (0, 0, OUT_W as usize, OUT_H as usize),
+        ),
     ] {
-        let want = shaded(rgb);
-        let got = px(&full, x, y);
-        assert!(close(got, want), "{name}: {got:?} against {want:?}");
+        set_fit(fit);
+        c.begin_frame();
+        c.upload_game(&src, GB);
+        c.draw_game();
+        let frame = c.read_frame();
+        assert_eq!(
+            game_rect(),
+            (x0 as u32, y0 as u32, w as u32, h as u32),
+            "{name}"
+        );
+        let (x1, y1) = (x0 + w - 1, y0 + h - 1);
+        for (corner, (x, y), rgb) in [
+            ("top left", (x0, y0), [255, 0, 0]),
+            ("top right", (x1, y0), [0, 255, 0]),
+            ("bottom left", (x0, y1), [0, 0, 255]),
+            ("bottom right", (x1, y1), [255, 255, 0]),
+        ] {
+            let got = px(&frame, x, y);
+            assert!(close(got, shaded(rgb)), "{name}, {corner}: {got:?}");
+        }
+        if x0 > 0 {
+            assert_eq!(
+                px(&frame, x0 - 1, y0),
+                [0, 0, 0],
+                "{name}: lit left of the picture"
+            );
+            assert_eq!(px(&frame, x1 + 1, y1), [0, 0, 0], "{name}: lit right of it");
+            assert_eq!(px(&frame, x0, y0 - 1), [0, 0, 0], "{name}: lit above it");
+        }
     }
+    set_fit(Fit::Gba);
+}
 
-    // Cyan is the margin and nothing in the picture is cyan, so one cyan-dominant pixel
-    // anywhere means the border came along with the stretch.
-    let strayed = (0..OUT_H as usize).any(|y| {
-        (0..OUT_W as usize).any(|x| {
-            let p = px(&full, x, y);
-            p[1] > 60 && p[2] > 60 && p[0] < 20
-        })
+/// At 3x each Game Boy pixel is exactly three panel pixels square, so nothing is blended: a
+/// checkerboard comes out as pure black and white blocks three pixels on a side.
+#[test]
+fn a_game_boy_picture_at_actual_size_is_blended_nowhere() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let src = gb_frame(|x, y| match (x + y) % 2 {
+        0 => [255, 255, 255],
+        _ => [0, 0, 0],
     });
-    assert!(!strayed, "the margin is still on screen in fullscreen");
+    c.set_screen_power(1.0);
+    set_fit(Fit::Whole);
+    c.begin_frame();
+    c.upload_game(&src, GB);
+    c.draw_game();
+    let frame = c.read_frame();
+    set_fit(Fit::Gba);
+    for y in (24..456).step_by(7) {
+        for x in 80..560 {
+            let want = match ((x - 80) / 3 + (y - 24) / 3) % 2 {
+                0 => 255,
+                _ => 0,
+            };
+            let got = px(&frame, x, y)[0] as i32;
+            // A few levels of the shader's float rounding, against the 128 or so a real blend
+            // between the two would be.
+            assert!((got - want).abs() <= 4, "({x}, {y}) is {got}, not {want}");
+        }
+    }
 }
 
 /// A source pixel's edge is one panel pixel of blend and no more, in both modes and on both
@@ -595,21 +597,18 @@ fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
         return;
     };
     // Columns and rows alternating black and white, so every cell boundary is an edge.
-    let src = gb_shaped(
-        |x, y| match (x + y) % 2 {
-            0 => [255, 255, 255],
-            _ => [0, 0, 0],
-        },
-        [0, 0, 0],
-    );
+    let src = gb_frame(|x, y| match (x + y) % 2 {
+        0 => [255, 255, 255],
+        _ => [0, 0, 0],
+    });
     c.set_screen_power(1.0);
-    for (name, rect, w, h) in [
-        ("actual size", WHOLE, SRC_W as usize, SRC_H as usize),
-        ("fullscreen", GB_RECT, GB_W, GB_H),
+    for (name, fit, w, h) in [
+        ("actual size", Fit::Whole, GB_W, GB_H),
+        ("fullscreen", Fit::Fill, GB_W, GB_H),
     ] {
-        c.set_game_source_rect(rect);
+        set_fit(fit);
         c.begin_frame();
-        c.upload_game(&src);
+        c.upload_game(&src, GB);
         c.draw_game();
         let frame = c.read_frame();
         // Along one row through the middle of the picture: every pixel is either one of the
@@ -639,6 +638,7 @@ fn a_hard_edge_softens_by_one_panel_pixel_in_both_modes() {
         let tall = (y0..y1).find(|&y| grey(y) && grey(y + 1));
         assert_eq!(tall, None, "{name}: a blend two pixels tall at y {tall:?}");
     }
+    set_fit(Fit::Gba);
 }
 
 /// Sharp-shimmerless blends by area: a panel pixel that a source pixel's edge crosses takes
@@ -666,7 +666,7 @@ fn a_panel_pixel_is_blended_by_the_area_each_source_pixel_covers() {
     c.set_screen_power(1.0);
     let row = |c: &mut Compositor, at: usize| {
         c.begin_frame();
-        c.upload_game(&column(at));
+        c.upload_game(&column(at), GBA);
         c.draw_game();
         let frame = c.read_frame();
         let y = (game_rect().1 + game_rect().3 / 2) as usize;
@@ -708,7 +708,7 @@ fn in_four_three_the_picture_fills_the_panel_and_rows_are_whole() {
 
     let grey = vec![0x80u8; (SRC_W * SRC_H * 4) as usize];
     c.begin_frame();
-    c.upload_game(&grey);
+    c.upload_game(&grey, GBA);
     c.draw_game();
     let frame = c.read_frame();
     for (x, y) in [(0, 0), (639, 0), (0, 479), (639, 479), (320, 240)] {
@@ -726,7 +726,7 @@ fn in_four_three_the_picture_fills_the_panel_and_rows_are_whole() {
         })
         .collect();
     c.begin_frame();
-    c.upload_game(&rows);
+    c.upload_game(&rows, GBA);
     c.draw_game();
     let frame = c.read_frame();
     for y in 0..OUT_H as usize {
@@ -763,7 +763,7 @@ fn pixel_aa_blends_the_crossing_pixel_in_linear_light() {
     let row = |c: &mut Compositor, scaler: Scaler| {
         set_scaler(scaler);
         c.begin_frame();
-        c.upload_game(&src);
+        c.upload_game(&src, GBA);
         c.draw_game();
         let frame = c.read_frame();
         let y = (game_rect().1 + game_rect().3 / 2) as usize;
@@ -814,7 +814,7 @@ fn through_grid(c: &mut Compositor, src: &[u8], grid: Grid) -> Vec<u8> {
     set_grid(grid);
     c.set_screen_power(1.0);
     c.begin_frame();
-    c.upload_game(src);
+    c.upload_game(src, GBA);
     c.draw_game();
     let frame = c.read_frame();
     set_grid(Grid::default());

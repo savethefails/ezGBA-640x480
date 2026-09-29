@@ -564,7 +564,7 @@ pub struct App {
     named_core: bool,
     /// How the seated cart's picture is drawn, off the card and stored the same way `core` and
     /// `platform` are. Only a Game Boy cart can move it — see `video_mode` — so on a GBA cart
-    /// this is read but never acted on, and `source_rect` is the one place that decides.
+    /// this is read but never acted on, and `fit` is the one place that decides.
     video_mode: VideoMode,
     /// `Some` for as long as a netpacket session is live. `App` never touches the transport
     /// or the core itself — those live on the emulator thread, wherever `EmuHandle::begin_link`
@@ -1198,11 +1198,10 @@ impl App {
         self.video_mode = mode;
     }
 
-    /// The part of the frame buffer the panel shows. `slot_gfx::WHOLE_TEXTURE` for every GBA
-    /// cart and for every Game Boy cart at actual size, which is every cart until somebody
-    /// presses L.
-    pub fn source_rect(&self) -> [f32; 4] {
-        video_mode::source_rect(self.platform, self.video_mode)
+    /// How the seated cart's picture is placed on the panel: the console's own rule, and for a
+    /// Game Boy cart whichever of its two sizes L and R last chose.
+    pub fn fit(&self) -> slot_gfx::Fit {
+        video_mode::fit_for(self.platform, self.video_mode)
     }
 
     /// Whether L and R belong to slot rather than to the game. The Game Boy and the Game Boy

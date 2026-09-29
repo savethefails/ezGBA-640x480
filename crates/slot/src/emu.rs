@@ -602,7 +602,7 @@ impl Worker {
                         let _ = reply.send(core.save_ram());
                     }
                     Cmd::Thumb(reply) => {
-                        let _ = reply.send(crate::thumb::png(core.video_xrgb8888()));
+                        let _ = reply.send(crate::thumb::png(core.video_xrgb8888(), core.video_size()));
                     }
                     Cmd::BeginLink(client_id, t) => {
                         self.shared.link_lost.store(false, Ordering::Relaxed);
@@ -736,7 +736,7 @@ impl Worker {
                     // this branch rather than an inheritance from whatever ran before it.
                     core.set_frame_skip(false);
                     core.run_frame(ButtonMask(0));
-                    self.publish(core.video_xrgb8888());
+                    self.publish(core.video_xrgb8888(), core.video_size());
                 }
                 self.shared
                     .rewind_fill
@@ -791,7 +791,7 @@ impl Worker {
                 // and on both devices. A GBA that asked a question and heard nothing for four
                 // frames reports a communication error, which is what it should do.
                 flush_outbound(&mut transport, &link);
-                self.publish(core.video_xrgb8888());
+                self.publish(core.video_xrgb8888(), core.video_size());
 
                 // Counted per present rather than per frame, so a fast forward pays the
                 // same snapshot cost per present as normal play and simply records a
@@ -872,11 +872,11 @@ impl Worker {
         }
     }
 
-    fn publish(&self, video: &[u8]) {
+    fn publish(&self, video: &[u8], size: (u32, u32)) {
         let mut buf = self.frames.take_write();
         buf.clear();
         buf.extend_from_slice(video);
-        self.frames.publish(buf);
+        self.frames.publish(buf, size);
         self.shared.published.fetch_add(1, Ordering::Relaxed);
     }
 

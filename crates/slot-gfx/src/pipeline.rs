@@ -1,10 +1,11 @@
 use crate::lcd3x::mask_texture_rgba8;
-use crate::power::{screen_brightness, screen_rect};
+use crate::power::{screen_brightness, screen_rect, screen_rect_in};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{game_rect, grid, scaler, GfxError, Scaler, OUT_H, OUT_W};
+use crate::surface::{fit, game_rect, grid, scaler, set_source_size, GfxError, Scaler, OUT_H, OUT_W};
 
-/// The GBA's own picture, which every platform's frame is centred inside.
+/// The GBA's own picture: the size the live texture starts at, and the only one the LCD3x
+/// grille was ever built for.
 pub const SRC_W: u32 = 240;
 pub const SRC_H: u32 = 160;
 
@@ -13,7 +14,7 @@ pub const SRC_H: u32 = 160;
 /// off whichever shape the picture is.
 fn grille_fits() -> bool {
     let (_, _, w, h) = game_rect();
-    w == SRC_W * 3 && h == SRC_H * 3
+    crate::surface::source_size() == (SRC_W, SRC_H) && w == SRC_W * 3 && h == SRC_H * 3
 }
 
 /// Origin then size, in texture coordinates: everything there is. The default, what a GBA
@@ -25,6 +26,7 @@ pub struct GamePass {
     game: gl::types::GLuint,
     mask: gl::types::GLuint,
     u_rect: gl::types::GLint,
+    u_src: gl::types::GLint,
     u_bright: gl::types::GLint,
     u_uv: gl::types::GLint,
     u_grille: gl::types::GLint,
@@ -38,11 +40,9 @@ pub struct GamePass {
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
     power: f32,
-    /// The part of the live game's texture the panel shows: origin then size, in texture
-    /// coordinates. The whole texture until somebody says otherwise, which is every GBA
-    /// picture and every Game Boy one at actual size. A still never reads it — see
-    /// `draw_still`.
-    src: [f32; 4],
+    /// The live game texture's width and height, which is the last frame's: a console's own
+    /// size, reallocated when a frame of another size arrives.
+    size: (u32, u32),
 }
 
 impl GamePass {
@@ -59,7 +59,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep, u_even);
+        let (u_rect, u_src, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep, u_even);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -67,16 +67,12 @@ impl GamePass {
             gl::Uniform1i(crate::gl::uniform_location(prog, "u_game"), 0);
             gl::Uniform1i(crate::gl::uniform_location(prog, "u_mask"), 1);
             gl::Uniform2f(
-                crate::gl::uniform_location(prog, "u_src"),
-                SRC_W as f32,
-                SRC_H as f32,
-            );
-            gl::Uniform2f(
                 crate::gl::uniform_location(prog, "u_target"),
                 OUT_W as f32,
                 OUT_H as f32,
             );
             u_rect = crate::gl::uniform_location(prog, "u_rect");
+            u_src = crate::gl::uniform_location(prog, "u_src");
             u_bright = crate::gl::uniform_location(prog, "u_bright");
             u_uv = crate::gl::uniform_location(prog, "u_uv");
             u_grille = crate::gl::uniform_location(prog, "u_grille");
@@ -92,6 +88,7 @@ impl GamePass {
             game,
             mask,
             u_rect,
+            u_src,
             u_bright,
             u_uv,
             u_grille,
@@ -103,7 +100,7 @@ impl GamePass {
             u_even,
             grille: true,
             power: 1.0,
-            src: WHOLE_TEXTURE,
+            size: (SRC_W, SRC_H),
         })
     }
 
@@ -118,72 +115,74 @@ impl GamePass {
         self.power = t.clamp(0.0, 1.0);
     }
 
-    /// Which part of the *live game's* texture fills the panel, as origin then size in texture
-    /// coordinates. `WHOLE_TEXTURE` is the default and draws exactly what this pass drew before
-    /// there was a sub-rect at all; a Game Boy's own 160x144 window inside the 240x160 buffer is
-    /// what the fullscreen mode asks for. The grille is unaffected either way — see `GAME_FRAG`.
-    ///
-    /// A still does not take it. See `draw_still`.
-    pub fn set_source_rect(&mut self, rect: [f32; 4]) {
-        self.src = rect;
-    }
-
-    pub fn upload(&mut self, xrgb8888: &[u8]) {
-        if xrgb8888.len() < (SRC_W * SRC_H * 4) as usize {
+    /// A frame at its own size. A size the texture does not have yet reallocates it, which
+    /// happens when a cart of another console goes in and when a SNES goes in or out of hi-res,
+    /// never frame to frame.
+    pub fn upload(&mut self, xrgb8888: &[u8], (w, h): (u32, u32)) {
+        if w == 0 || h == 0 || xrgb8888.len() < (w * h * 4) as usize {
             return;
         }
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.game);
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::TexSubImage2D(
-                gl::TEXTURE_2D,
-                0,
-                0,
-                0,
-                SRC_W as i32,
-                SRC_H as i32,
-                gl::BGRA,
-                gl::UNSIGNED_BYTE,
-                xrgb8888.as_ptr() as *const std::ffi::c_void,
-            );
+            if (w, h) != self.size {
+                gl::TexImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    crate::gl::internal_format(gl::BGRA),
+                    w as i32,
+                    h as i32,
+                    0,
+                    gl::BGRA,
+                    gl::UNSIGNED_BYTE,
+                    xrgb8888.as_ptr() as *const std::ffi::c_void,
+                );
+                self.size = (w, h);
+            } else {
+                gl::TexSubImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    w as i32,
+                    h as i32,
+                    gl::BGRA,
+                    gl::UNSIGNED_BYTE,
+                    xrgb8888.as_ptr() as *const std::ffi::c_void,
+                );
+            }
         }
+        set_source_size(self.size);
     }
 
     pub fn draw(&self, quad: &Quad) {
-        self.draw_source(self.game, quad, self.src);
+        self.draw_source(self.game, quad, self.size, screen_rect(self.power));
     }
 
-    /// The same pass over a still. A saved shot is a picture of this panel at exactly the
-    /// scale the mask is built for, so it is filtered at draw time rather than blitted flat
-    /// beside a game that is filtered.
-    ///
-    /// `WHOLE_TEXTURE` explicitly, and never `self.src`: a still is a *photograph*, taken at
-    /// some earlier moment, and `thumb::png` encodes the whole 240x160 buffer — so a Game Boy
-    /// polaroid is the centred picture with black at its sides whatever the panel is set to
-    /// now. Cropping it to the current mode would render the same stored image differently
-    /// depending on a setting that has nothing to do with when it was taken: a state saved
-    /// before the player ever pressed L would come back stretched because of a preference set
-    /// afterwards.
-    ///
-    /// This does mean a polaroid does not match a stretched game showing behind the switcher.
-    /// That is the honest inconsistency, and it is deliberate: a polaroid is a picture of the
-    /// game, not of the display setting it was viewed at, and looking different is how it says
-    /// so. A photograph on a shelf does not change shape when you rearrange the room. Do not
-    /// "fix" this for consistency.
-    pub fn draw_still(&self, tex: gl::types::GLuint, quad: &Quad) {
-        self.draw_source(tex, quad, WHOLE_TEXTURE);
+    /// The same pass over a still: a saved shot, filtered at draw time as the game is rather
+    /// than blitted flat beside a game that is. Placed from its own size by the fit in force,
+    /// as the live game is — except that a stretched picture's stills are not stretched (see
+    /// `Fit::still`): a polaroid is a picture of the game, not of the display setting it is
+    /// being viewed at.
+    pub fn draw_still(&self, tex: gl::types::GLuint, size: (u32, u32), quad: &Quad) {
+        let rect = screen_rect_in(fit().still().rect(size), self.power);
+        self.draw_source(tex, quad, size, rect);
     }
 
-    fn draw_source(&self, tex: gl::types::GLuint, quad: &Quad, src: [f32; 4]) {
-        let (x, y, w, h) = screen_rect(self.power);
+    fn draw_source(
+        &self,
+        tex: gl::types::GLuint,
+        quad: &Quad,
+        size: (u32, u32),
+        (x, y, w, h): (f32, f32, f32, f32),
+    ) {
         unsafe {
             gl::UseProgram(self.prog);
             gl::Uniform4f(self.u_rect, x, y, w, h);
-            // Here rather than in `set_source_rect`, so the value is whatever this draw asked
-            // for on whichever program the caller left bound — the same discipline `u_rect` and
-            // `u_bright` already follow. Taken as an argument rather than read off the field,
-            // because the game and a still deliberately want different answers.
-            gl::Uniform4f(self.u_uv, src[0], src[1], src[2], src[3]);
+            // Per draw, because the live game and a still can be different sizes.
+            gl::Uniform2f(self.u_src, size.0 as f32, size.1 as f32);
+            let [u0, v0, uw, vh] = WHOLE_TEXTURE;
+            gl::Uniform4f(self.u_uv, u0, v0, uw, vh);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
             let grille = self.grille && grille_fits();
             gl::Uniform1f(self.u_grille, if grille { 1.0 } else { 0.0 });
