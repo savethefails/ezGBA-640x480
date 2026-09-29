@@ -10,6 +10,7 @@ pub enum Core {
     #[default]
     Mgba,
     Gpsp,
+    Snes9x,
 }
 
 impl Core {
@@ -17,12 +18,17 @@ impl Core {
     /// `migrate_states` walks this rather than spelling the variant list out a second time,
     /// so a third core added here does not also have to be remembered at every call site
     /// that needs to tell a core's own directory apart from a cart's.
-    pub const ALL: [Core; 2] = [Core::Mgba, Core::Gpsp];
+    pub const ALL: [Core; 3] = [Core::Mgba, Core::Gpsp, Core::Snes9x];
+
+    /// The two a GBA cart can choose between, which are the picker's rows and chips. Every
+    /// other console has exactly one core that runs it, and so nothing to pick.
+    pub const GBA: [Core; 2] = [Core::Mgba, Core::Gpsp];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Core::Mgba => "mgba",
             Core::Gpsp => "gpsp",
+            Core::Snes9x => "snes9x",
         }
     }
 
@@ -38,6 +44,7 @@ impl Core {
         match self {
             Core::Mgba => "mGBA",
             Core::Gpsp => "gpSP",
+            Core::Snes9x => "Snes9x",
         }
     }
 
@@ -45,6 +52,7 @@ impl Core {
         match s.trim().to_ascii_lowercase().as_str() {
             "mgba" => Some(Core::Mgba),
             "gpsp" => Some(Core::Gpsp),
+            "snes9x" => Some(Core::Snes9x),
             _ => None,
         }
     }

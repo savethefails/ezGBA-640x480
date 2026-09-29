@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 172">
+  <!-- The SNES Game Pak seen square on, label to the front: ezGBA's own drawing, simplified
+       from the North American cartridge's proportions (about 120 x 86 mm, drawn at the GBA
+       cart's scale of two pixels a millimetre across). The top corners are cut back where the
+       real shell's grip curves away, and the bottom corners are rounded off. -->
+  <path d="M18 0 H222 L240 18 V160 Q240 172 228 172 H12 Q0 172 0 160 V18 Z" fill="#fff"/>
+</svg>

@@ -1,5 +1,5 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
-use slot_store::Cart;
+use slot_store::{Cart, Platform};
 
 use crate::cart::{cart_box, gb_shell_of, label_colour, label_text, CART_W};
 use crate::hud::Millis;
@@ -69,6 +69,7 @@ pub struct Shelf {
     shadow: Option<TexId>,
     gb_shadow: Option<TexId>,
     gbc_shadow: Option<TexId>,
+    snes_shadow: Option<TexId>,
     /// Which mould each cart in `carts` came out of, `None` for a GBA cart. Worked out once
     /// here because the answer is in the rom's header: asking it while drawing would open a
     /// file on every cart of every frame.
@@ -95,6 +96,7 @@ impl Shelf {
             shadow: None,
             gb_shadow: None,
             gbc_shadow: None,
+            snes_shadow: None,
             ride: 0.0,
             vel: 0.0,
             held: None,
@@ -121,6 +123,11 @@ impl Shelf {
     /// The Game Boy pak's outline in black, one per shell mould. A row whose carts are paks and
     /// whose only uploaded shadow is the GBA one draws no black at all rather than a tapered
     /// shape stretched under a straight sided cart.
+    /// The SNES Game Pak's outline in black: a shape of its own, not the GBA cart's grown.
+    pub fn set_snes_shadow(&mut self, face: TexId) {
+        self.snes_shadow = Some(face);
+    }
+
     pub fn set_gb_shadow(&mut self, shell: GbShell, face: TexId) {
         match shell {
             GbShell::Notched => self.gb_shadow = Some(face),
@@ -392,6 +399,7 @@ impl Shelf {
                 // whose mould was never recorded gets the straight sided backing, which is the
                 // same degrading a cart whose face was never uploaded already gets.
                 let backing = match self.shells.get(i).copied().flatten() {
+                    None if cart.platform == Platform::Snes => self.snes_shadow,
                     None => self.shadow,
                     Some(GbShell::Notched) => self.gb_shadow,
                     Some(GbShell::Rounded) => self.gbc_shadow,

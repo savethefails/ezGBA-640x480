@@ -240,7 +240,7 @@ impl Session {
             self.pad.apply(Action::GbaUp(*btn));
         }
         if let Some(emu) = &self.emu {
-            emu.set_input(self.pad.mask());
+            emu.set_input(self.app.console_buttons(self.pad.mask()));
         }
     }
 
@@ -617,6 +617,7 @@ impl Session {
         let core = match platform {
             Platform::Gba => slot_store::core_for(&self.root, stem),
             Platform::Gb | Platform::Gbc => Core::Mgba,
+            Platform::Snes => Core::Snes9x,
         };
         self.app.set_core(core);
         // `platform` comes straight off the `Cart` the shelf scanned, not re-derived from the

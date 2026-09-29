@@ -78,5 +78,7 @@ pub fn fit_for(platform: Platform, mode: VideoMode) -> Fit {
             VideoMode::Actual => Fit::Whole,
             VideoMode::Stretch => Fit::Fill,
         },
+        // 256x224 and 512x448 alike were drawn for a 4:3 television, and a 4:3 panel is one.
+        Platform::Snes => Fit::Aspect(4.0 / 3.0),
     }
 }

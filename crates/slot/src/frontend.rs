@@ -14,9 +14,9 @@ use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face,
     date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face, menu_face, photo_face,
     quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face,
-    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, GbShell, Icon,
-    LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields, Toast, UndoFace,
-    ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    snes_cart_shadow, socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face,
+    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
+    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -237,16 +237,16 @@ impl Frontend {
             legend,
         });
         // The open cart's parts that never change: each socket, the chip seated in each, the
-        // blank chip in flight and its shadow, in `Core::ALL` order. At boot like the power
+        // blank chip in flight and its shadow, in `Core::GBA` order: only a GBA cart opens. At boot like the power
         // menu's rows, so the first frame of a lid coming off is not spent in a rasteriser.
-        let sockets = slot_store::Core::ALL
+        let sockets = slot_store::Core::GBA
             .iter()
             .map(|c| {
                 let f = socket_face(*c);
                 compositor.create_texture(f.w, f.h, &f.rgba)
             })
             .collect();
-        let chips = slot_store::Core::ALL
+        let chips = slot_store::Core::GBA
             .iter()
             .map(|c| {
                 let f = chip_face(Some(*c));
@@ -323,6 +323,9 @@ impl Frontend {
         let rounded = gb_cart_shadow(GbShell::Rounded);
         let rounded = compositor.create_texture(rounded.w, rounded.h, &rounded.rgba);
         self.session.app_mut().set_gb_cart_shadows(notched, rounded);
+        let snes = snes_cart_shadow();
+        let snes = compositor.create_texture(snes.w, snes.h, &snes.rgba);
+        self.session.app_mut().set_snes_cart_shadow(snes);
         // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
         // reserved slot rather than over the fill. The housing tint was only ever needed to
         // hide the bolt inside the fill it sat on; out here it sits where every other HUD

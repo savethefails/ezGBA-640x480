@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::cart::{CART_H, CART_W, GB_CART_H, GB_CART_W};
+use crate::cart::{CART_H, CART_W, GB_CART_H, GB_CART_W, SNES_CART_H, SNES_CART_W};
 
 const CART_SVG: &str = include_str!("../assets/cart.svg");
 const DETAIL_SVG: &str = include_str!("../assets/cart_detail.svg");
@@ -8,6 +8,8 @@ const GB_CART_SVG: &str = include_str!("../assets/gb_cart.svg");
 const GBC_CART_SVG: &str = include_str!("../assets/gbc_cart.svg");
 const GB_DETAIL_SVG: &str = include_str!("../assets/gb_cart_detail.svg");
 const GBC_DETAIL_SVG: &str = include_str!("../assets/gbc_cart_detail.svg");
+const SNES_CART_SVG: &str = include_str!("../assets/snes_cart.svg");
+const SNES_DETAIL_SVG: &str = include_str!("../assets/snes_cart_detail.svg");
 
 /// Which of the two Game Pak shell moulds a cart came out of. Nintendo's typology names three
 /// classes and slot draws three plastics, but there are only two shells: a grey 0x00 pak and a
@@ -162,6 +164,28 @@ pub(crate) fn gb_detail_mask(shell: GbShell) -> &'static Detail {
     lock.get_or_init(|| {
         rasterise_detail(svg, GB_CART_W, GB_CART_H)
             .unwrap_or_else(|| Detail::blank(GB_CART_W, GB_CART_H))
+    })
+}
+
+/// The SNES Game Pak's outline, depth and moulding: one shell, so one of each.
+pub(crate) fn snes_cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_svg(SNES_CART_SVG, SNES_CART_W, SNES_CART_H)
+            .unwrap_or_else(|| vec![255; (SNES_CART_W * SNES_CART_H) as usize])
+    })
+}
+
+pub(crate) fn snes_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(snes_cart_mask(), SNES_CART_W as usize, SNES_CART_H as usize))
+}
+
+pub(crate) fn snes_detail_mask() -> &'static Detail {
+    static MASK: OnceLock<Detail> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail(SNES_DETAIL_SVG, SNES_CART_W, SNES_CART_H)
+            .unwrap_or_else(|| Detail::blank(SNES_CART_W, SNES_CART_H))
     })
 }
 

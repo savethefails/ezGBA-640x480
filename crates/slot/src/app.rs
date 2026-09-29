@@ -458,7 +458,7 @@ pub struct App {
     core_lid_face: Option<TexId>,
     /// The cart the uploaded board and lid were built for.
     core_faces_stem: Option<String>,
-    /// In `Core::ALL` order: each socket empty, and the chip seated and named in each. Uploaded
+    /// In `Core::GBA` order: each socket empty, and the chip seated and named in each. Uploaded
     /// at boot, since none of them ever changes.
     core_socket_faces: Vec<TexId>,
     core_chip_faces: Vec<TexId>,
@@ -1046,6 +1046,13 @@ impl App {
         }
     }
 
+    /// The SNES Game Pak's outline in black, handed to every shelf as the other two are.
+    pub fn set_snes_cart_shadow(&mut self, face: TexId) {
+        for (_, shelf) in &mut self.shelves {
+            shelf.set_snes_shadow(face);
+        }
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
     }
@@ -1212,7 +1219,8 @@ impl App {
     /// Only while a game is playing. On the shelf the shoulders already ring the carousel
     /// between platforms, and under a menu the menu has them.
     fn slot_owns_the_shoulders(&self) -> bool {
-        matches!(self.phase, Phase::Playing { .. }) && self.platform != Platform::Gba
+        matches!(self.phase, Phase::Playing { .. })
+            && matches!(self.platform, Platform::Gb | Platform::Gbc)
     }
 
     /// The buttons slot has taken for itself *right now*, which the core must not be handed and
@@ -1229,6 +1237,18 @@ impl App {
             &[Btn::L1, Btn::R1]
         } else {
             &[]
+        }
+    }
+
+    /// The pad as the seated cart's console has it. X and Y are a SNES's and nobody else's: a
+    /// GBA or a Game Boy never had them, and a core for one is not handed buttons its console
+    /// does not have, whatever it might make of them.
+    pub fn console_buttons(&self, mask: slot_retro::ButtonMask) -> slot_retro::ButtonMask {
+        match self.platform {
+            Platform::Snes => mask,
+            _ => slot_retro::ButtonMask(
+                mask.0 & !(slot_retro::ButtonMask::X | slot_retro::ButtonMask::Y),
+            ),
         }
     }
 
@@ -2812,7 +2832,7 @@ impl App {
         self.core_faces_stem = self.selected_stem().map(str::to_string);
     }
 
-    /// `sockets` and `chips` in `Core::ALL` order.
+    /// `sockets` and `chips` in `Core::GBA` order.
     pub fn set_core_part_faces(
         &mut self,
         sockets: Vec<TexId>,

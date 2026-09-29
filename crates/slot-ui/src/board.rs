@@ -198,7 +198,7 @@ pub fn lift_of(progress: f32) -> f32 {
     ease(((progress - SLIDE_SHARE) / (1.0 - SLIDE_SHARE)).clamp(0.0, 1.0))
 }
 
-/// Each socket's face, in `Core::ALL` order: board units of its top left, and its size.
+/// Each socket's face, in `Core::GBA` order: board units of its top left, and its size.
 pub const SOCKET_U: [f32; 2] = [99.5, 171.5];
 pub const SOCKET_V: f32 = 59.1;
 pub const SOCKET_W: u32 = 64;

@@ -1123,3 +1123,35 @@ fn grid_lcd_dims_every_colour_alike_and_lifts_none() {
         kept[0] * 100.0
     );
 }
+
+/// A SNES frame fills the 4:3 panel whichever of its sizes it is, and draws no LCD grid: the
+/// console was played on a television, and at 512 across a line per pixel would be one every
+/// 1.25 panel pixels.
+#[test]
+fn a_snes_frame_fills_the_panel_and_takes_no_grid() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    c.set_screen_power(1.0);
+    set_grid(Grid::lcd());
+    set_fit(Fit::Aspect(4.0 / 3.0));
+    for size in [(256u32, 224u32), (512, 448)] {
+        let flat: Vec<u8> = std::iter::repeat_n([200u8, 200, 200, 0], (size.0 * size.1) as usize)
+            .flatten()
+            .collect();
+        c.begin_frame();
+        c.upload_game(&flat, size);
+        c.draw_game();
+        let frame = c.read_frame();
+        assert_eq!(game_rect(), (0, 0, OUT_W, OUT_H), "{size:?}");
+        for (x, y) in [(0, 0), (320, 240), (639, 479), (1, 3), (2, 2)] {
+            assert!(
+                close(px(&frame, x, y), shaded([200, 200, 200])),
+                "{size:?} at ({x}, {y}): {:?}, a grid line or an edge",
+                px(&frame, x, y)
+            );
+        }
+    }
+    set_grid(Grid::default());
+    set_fit(Fit::Gba);
+}

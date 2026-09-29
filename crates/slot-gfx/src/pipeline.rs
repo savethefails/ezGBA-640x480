@@ -3,7 +3,7 @@ use crate::power::{screen_brightness, screen_rect, screen_rect_in};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
 use crate::surface::{
-    fit, game_rect, grid, scaler, set_source_size, GfxError, Scaler, OUT_H, OUT_W,
+    fit, game_rect, grid, scaler, set_source_size, Fit, GfxError, Scaler, OUT_H, OUT_W,
 };
 
 /// The GBA's own picture: the size the live texture starts at, and the only one the LCD3x
@@ -209,7 +209,13 @@ impl GamePass {
             };
             gl::Uniform1f(self.u_scaler, which);
             gl::Uniform1f(self.u_sharp, sharp);
-            let grid = grid();
+            // The grid is an LCD's, and a console placed at a television's shape was played on a
+            // television, which has none. A SNES's hi-res frames would put a line every 1.25
+            // panel pixels besides, which is no grid at all, only a dimming.
+            let grid = match fit() {
+                Fit::Aspect(_) => crate::surface::Grid::default(),
+                _ => grid(),
+            };
             gl::Uniform2f(self.u_gap, grid.gap[0], grid.gap[1]);
             gl::Uniform1f(self.u_keep, grid.keep);
             gl::Uniform1f(self.u_even, if grid.even { 1.0 } else { 0.0 });

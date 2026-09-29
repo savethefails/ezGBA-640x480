@@ -83,7 +83,11 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 // A Game Boy cart has no GBA-style four-character game code, and the fields
                 // `gba.rs` reads sit below the Game Boy header entirely — 0xA0 and 0xAC are in
                 // the cartridge's RST vectors, so they would read arbitrary opcode bytes.
-                _ => (crate::gb::title(&rom).unwrap_or_default(), String::new()),
+                Platform::Gb | Platform::Gbc => {
+                    (crate::gb::title(&rom).unwrap_or_default(), String::new())
+                }
+                // Nothing on the shelf reads a SNES header yet: the label is the file's name.
+                Platform::Snes => (String::new(), String::new()),
             };
             carts.push(Cart {
                 platform,
