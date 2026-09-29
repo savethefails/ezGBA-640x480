@@ -602,7 +602,8 @@ impl Worker {
                         let _ = reply.send(core.save_ram());
                     }
                     Cmd::Thumb(reply) => {
-                        let _ = reply.send(crate::thumb::png(core.video_xrgb8888(), core.video_size()));
+                        let _ =
+                            reply.send(crate::thumb::png(core.video_xrgb8888(), core.video_size()));
                     }
                     Cmd::BeginLink(client_id, t) => {
                         self.shared.link_lost.store(false, Ordering::Relaxed);

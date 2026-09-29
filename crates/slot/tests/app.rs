@@ -2058,27 +2058,15 @@ fn pad(s: &Session) -> u16 {
 fn l_and_r_change_the_mode_on_a_game_boy_cart_and_not_on_a_gba_one() {
     let d = common::tmp_root_with_gb_carts(&["Tetris", "Zzz"]);
     let mut s = session_playing(d.path());
-    assert_eq!(
-        s.app().fit(),
-        GB_ACTUAL,
-        "it did not open actual size"
-    );
+    assert_eq!(s.app().fit(), GB_ACTUAL, "it did not open actual size");
 
     s.feed([RawEvent::Down(Btn::L1)], 100);
-    assert_eq!(
-        s.app().fit(),
-        GB_WINDOW,
-        "L did not stretch the picture"
-    );
+    assert_eq!(s.app().fit(), GB_WINDOW, "L did not stretch the picture");
     assert_eq!(pad(&s) & ButtonMask::L, 0, "L reached the game as well");
     s.feed([RawEvent::Up(Btn::L1)], 120);
 
     s.feed([RawEvent::Down(Btn::R1)], 200);
-    assert_eq!(
-        s.app().fit(),
-        GB_ACTUAL,
-        "R did not give it back"
-    );
+    assert_eq!(s.app().fit(), GB_ACTUAL, "R did not give it back");
     assert_eq!(pad(&s) & ButtonMask::R, 0, "R reached the game as well");
     s.feed([RawEvent::Up(Btn::R1)], 220);
 

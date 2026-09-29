@@ -2,7 +2,9 @@ use crate::lcd3x::mask_texture_rgba8;
 use crate::power::{screen_brightness, screen_rect, screen_rect_in};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
-use crate::surface::{fit, game_rect, grid, scaler, set_source_size, GfxError, Scaler, OUT_H, OUT_W};
+use crate::surface::{
+    fit, game_rect, grid, scaler, set_source_size, GfxError, Scaler, OUT_H, OUT_W,
+};
 
 /// The GBA's own picture: the size the live texture starts at, and the only one the LCD3x
 /// grille was ever built for.
@@ -59,7 +61,19 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_src, u_bright, u_uv, u_grille, u_out, u_scaler, u_sharp, u_gap, u_keep, u_even);
+        let (
+            u_rect,
+            u_src,
+            u_bright,
+            u_uv,
+            u_grille,
+            u_out,
+            u_scaler,
+            u_sharp,
+            u_gap,
+            u_keep,
+            u_even,
+        );
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.

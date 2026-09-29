@@ -149,7 +149,6 @@ impl Compositor {
         self.game.set_power(t);
     }
 
-
     /// Pixels, in offscreen space, applied to the whole presented image. On the blit rather
     /// than on the draw list, so game, chrome and HUD move together as one picture. Applied
     /// inside the offscreen target it would shake the chrome against a game that stayed
