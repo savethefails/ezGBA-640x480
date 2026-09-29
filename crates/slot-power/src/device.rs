@@ -405,7 +405,6 @@ impl Platform for DevicePlatform {
         };
         let step = u32::from(step).min(TOP_STEP);
         let value = self.max_brightness * step / TOP_STEP;
-        eprintln!("slot: backlight step {step} of {TOP_STEP}, {value}");
         // A node that was found and will not take a write is a different fault from one that
         // was never there, and from outside they are the same dark panel.
         let write = |file: PathBuf, body: String| {
