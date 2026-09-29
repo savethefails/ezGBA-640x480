@@ -95,6 +95,21 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 - **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws evenly
   spaced lines between the pixels, with each pixel brightened to make up for them. It's
   off unless you turn it on.
+- **Game Boy and Game Boy Color games are exactly 3×**: 480×432, every pixel three screen
+  pixels square, with a border round them. L stretches one to fill the screen; R puts it back.
+- **SNES games fill the screen at 4:3**, the shape of the TV they were made for, whether the
+  game draws at 256×224 or switches to 512×448. They take no LCD grid, since a TV has none.
+
+## SNES games
+
+Put `.sfc` or `.smc` files in `Games/SNES/`. They stand on a shelf of their own; L1 and R1 on
+the shelf move between the GBA, Game Boy, Game Boy Color and SNES shelves. Every button is the
+SNES's own, X and Y included, and L2/R2 are still brightness. Box art and labels work as they
+do for the GBA, from `Backdrops/SNES/` and `Labels/SNES/`.
+
+SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence allows it to be
+shared only for free and non-commercially, with its licence beside it (it ships as
+`System/licenses/snes9x-LICENSE.txt`). ezGBA is free; just don't sell anything with it inside.
 
 ## Setup
 
@@ -120,7 +135,9 @@ latest **slot** run under Actions, download the artifact at the bottom, unzip it
 `slot` into the card's `System` folder, replacing the old one. Your saves, `theme.txt` and
 settings are left alone.
 
-The **release** workflow builds the whole card, with both emulators, for setting up a new card.
+The **release** workflow builds the whole card, with all three emulators, for setting up a new
+card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as
+well as the new `System/slot`.
 
 ## AI disclosure
 

@@ -1,12 +1,13 @@
 # Third-party licenses
 
-`slot` itself is MIT (see the repo's top-level `LICENSE`). The release also distributes two
+`slot` itself is MIT (see the repo's top-level `LICENSE`). The release also distributes three
 compiled libretro cores it did not write:
 
 | Core            | Source                                   | License  | Text here                |
 |-----------------|------------------------------------------|----------|---------------------------|
 | `gpsp_libretro`  | https://github.com/libretro/gpsp        | GPL-2.0  | `gpsp-GPL-2.0.txt`        |
 | `mgba_libretro`  | https://github.com/libretro/mgba        | MPL-2.0  | `mgba-MPL-2.0.txt`        |
+| `snes9x_libretro`| https://github.com/libretro/snes9x      | Snes9x (non-commercial) | `snes9x-LICENSE.txt` |
 
 gpSP was originally written by Gilead "Exophase" Kutnick; the libretro core above is the
 actively maintained fork slot's fetch script pulls from. mGBA is by Jeffrey "endrift" Pfau.
@@ -78,6 +79,23 @@ from this repo carries the same notice the release zip does.
   the archive is refetched and the binary rebuilt from it in the same run, so nothing here can
   pair a binary from one build with a source recorded by another.
 
+## snes9x
+
+snes9x runs the SNES shelf. It is by Gary Henderson, Jerremy Koot and the many authors its
+licence names; libretro/snes9x is libretro's fork of https://github.com/snes9xgit/snes9x.
+`cores/snes9x/build.sh`, run by `taskfile.yml`'s `core:snes9x`, builds it unpatched from
+libretro/snes9x at the pinned `SNES9X_COMMIT`, and keeps that checkout's own `LICENSE`.
+`dist:device` ships the licence as `snes9x-LICENSE.txt` and the build record, naming the commit,
+as `snes9x-<commit>.meta`.
+
+**snes9x is not open source in the way the other two cores are.** Its licence allows the binary
+and its source to be copied and passed on **for non-commercial purposes only**, free of charge,
+and only with the licence and its copyright notice beside every copy — which is what
+`snes9x-LICENSE.txt` is for. A release of ezGBA is free, so it may carry snes9x; but nothing
+built from ezGBA may be sold, bundled into something sold, or used to promote something sold
+with snes9x inside it without the snes9x authors' permission. Its source is public at the
+commit the `.meta` names.
+
 ## Shaders
 
 The game picture is scaled by a GLSL ES port of **Pixel AA** by fishku, released into the
@@ -98,7 +116,9 @@ credit, not a condition.
 
 `slot` draws its own cartridges, its own slot and its own wordmark, and the two fonts it sets
 type and glyphs in each ship with their licence beside them in `crates/slot-ui/assets/`. Three
-drawings in that directory are somebody else's, and this is where they are credited.
+drawings in that directory are somebody else's, and this is where they are credited. The SNES
+shelf's cartridge (`snes_cart.svg`, `snes_cart_detail.svg`) and its mark (`platform_snes.svg`)
+are ezGBA's own.
 
 | File                                    | Drawing               | Creator              | Licence |
 |-----------------------------------------|-----------------------|----------------------|---------|
