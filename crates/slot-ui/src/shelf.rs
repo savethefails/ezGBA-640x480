@@ -149,8 +149,16 @@ impl Shelf {
     }
 
     /// In `hints` order.
+    ///
+    /// The selected cart first. One shelf holds every console's carts, so two can share a name
+    /// — `Tetris.gb` and `Tetris.gba` — and the cart in the slot is always the selected one: the
+    /// shelf cannot move while a cart is in it. Only a name that is not the selection's falls back
+    /// to the first cart that has it.
     pub fn find(&self, stem: &str) -> Option<(&Cart, Option<TexId>)> {
-        let i = self.carts.iter().position(|c| c.stem == stem)?;
+        let i = match self.carts.get(self.index) {
+            Some(c) if c.stem == stem => self.index,
+            _ => self.carts.iter().position(|c| c.stem == stem)?,
+        };
         Some((&self.carts[i], self.faces.get(i).copied()))
     }
 
@@ -291,7 +299,12 @@ impl Shelf {
         }
         let r = off.rem_euclid(n);
         let nearest = if r * 2 > n { r - n } else { r };
-        (nearest == off).then(|| at(off))
+        // On an even row the cart half way round stands at both ends: it is as near one way as
+        // the other. Left at only one, the cart leaving on the left of a slide vanished the
+        // moment the press landed, before it had moved, since the slot it was sliding out of
+        // stopped being its own. It is past the screen's edge at rest on any row of four or more.
+        let halfway = n % 2 == 0 && off.abs() * 2 == n;
+        (nearest == off || halfway).then(|| at(off))
     }
 
     /// Where the selected cart stands once the row has settled, in offscreen pixels: dead

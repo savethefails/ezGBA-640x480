@@ -288,19 +288,20 @@ fn a_named_shelf_that_no_longer_has_the_cart_is_an_empty_slot() {
     );
 }
 
-/// The other half of the round trip: what a session actually writes down. Ringing to the Game
-/// Boy shelf and seating the cart standing on it has to record that shelf, or the next boot
-/// resolves the same ambiguous stem all over again and lands on the GBA cart.
+/// The other half of the round trip: what a session actually writes down. Seating the Game Boy
+/// Tetris, which stands beside the GBA one on the shelf, has to record its platform, or the next
+/// boot resolves the same ambiguous stem all over again and lands on the GBA cart.
 #[test]
-fn seating_a_cart_records_the_shelf_it_came_off() {
+fn seating_a_cart_records_the_platform_it_is_for() {
     let d = two_tetrises();
     let mut a = boot(d.path());
-    a.apply(Action::GbaDown(Btn::R1));
-    assert_eq!(
-        a.selected_stem(),
-        Some("Tetris"),
-        "the shoulder did not ring to the Game Boy shelf"
-    );
+    // Emerald, then the two Tetrises: the GBA one first, as carts of one name stand in
+    // platform order.
+    a.apply(Action::GbaDown(Btn::Right));
+    a.apply(Action::GbaUp(Btn::Right));
+    a.apply(Action::GbaDown(Btn::Right));
+    a.apply(Action::GbaUp(Btn::Right));
+    assert_eq!(a.selected_stem(), Some("Tetris"));
     a.apply(Action::Insert);
     a.on_core_ready();
     for _ in 0..120 {

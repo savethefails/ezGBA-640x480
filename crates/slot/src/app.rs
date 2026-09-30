@@ -655,20 +655,23 @@ pub struct App {
     radio: Box<dyn RadioJobs>,
 }
 
-/// The card's library split into shelves, one per platform, in the order the shoulders ring
-/// through them. Every platform `Platform::ALL` names gets a shelf even with nothing on it, so
-/// the ring is a fixed list that the library's contents only decide the stops on.
-fn shelves_of(carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
-    let mut rows: Vec<(Platform, Vec<Cart>)> =
-        Platform::ALL.iter().map(|p| (*p, Vec::new())).collect();
-    for cart in carts {
-        if let Some((_, row)) = rows.iter_mut().find(|(p, _)| *p == cart.platform) {
-            row.push(cart);
-        }
-    }
-    rows.into_iter()
-        .map(|(platform, carts)| (platform, Shelf::new(carts)))
-        .collect()
+/// The card's whole library on one shelf, every console's carts together in the order of their
+/// names, so a game is found by what it is called rather than by which machine it was for. Each
+/// cart still knows its own platform, which is what its face, its core and its picture follow.
+///
+/// Still a list of shelves, of one: the ring the shoulders used to turn through has a single
+/// stop, so they rest inert on the shelf and the corner draws no machine, both of which are what
+/// a card holding one console's games has always done. The platform beside it names nothing
+/// but the list's shape.
+fn shelves_of(mut carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
+    carts.sort_by(|a, b| {
+        a.stem
+            .to_lowercase()
+            .cmp(&b.stem.to_lowercase())
+            .then(a.stem.cmp(&b.stem))
+            .then((a.platform as u8).cmp(&(b.platform as u8)))
+    });
+    vec![(Platform::Gba, Shelf::new(carts))]
 }
 
 impl App {
@@ -886,28 +889,23 @@ impl App {
 
     /// Where the cart named `stem` stands: which shelf, and where along it. A stem can collide
     /// across platforms — `Tetris.gb` and `Tetris.gba` are two carts under one name — so
-    /// `platform` is what the card said about which of them was in the slot.
+    /// `platform` is what the card said about which of them was in the slot, and only a cart of
+    /// that platform answers. The cart of the same name for another console is a different game:
+    /// seating it would resume a session that belongs to something the player never put in.
     ///
-    /// Given one, that shelf is the only shelf asked. A cart that is no longer on it is gone
-    /// even if another shelf has a cart of the same name, because the cart of the same name on
-    /// another shelf is a different game: seating it would resume a session that belongs to
-    /// something the player never put in.
-    ///
-    /// `None` is a card that never said, and it resolves the way slot has always resolved a
-    /// stem: the shelves are asked in ring order and the first answer wins, which puts Game Boy
-    /// Advance ahead of both Game Boy shelves. That is the right way round for a card written
-    /// before there was more than one shelf, where every stem meant a GBA cart — which is every
-    /// card that can be holding a `cart` line with no `cart_platform` beside it.
+    /// `None` is a card that never said, and the first cart of that name answers. Carts of one
+    /// name stand in platform order, so that is the GBA one: the right way round for a card
+    /// written before there was more than one console, where every stem meant a GBA cart — which
+    /// is every card that can be holding a `cart` line with no `cart_platform` beside it.
     fn seat_of(&self, stem: &str, platform: Option<Platform>) -> Option<(usize, usize)> {
         self.shelves
             .iter()
             .enumerate()
-            .filter(|(_, (p, _))| platform.is_none_or(|want| *p == want))
             .find_map(|(at, (_, shelf))| {
                 shelf
                     .carts
                     .iter()
-                    .position(|c| c.stem == stem)
+                    .position(|c| c.stem == stem && platform.is_none_or(|p| c.platform == p))
                     .map(|i| (at, i))
             })
     }
@@ -1128,7 +1126,7 @@ impl App {
             Phase::Doze { cart: Some(cart) } => cart,
             _ => return None,
         };
-        self.shelf().carts.iter().find(|c| c.stem == *stem)
+        self.shelf().find(stem).map(|(cart, _)| cart)
     }
 
     /// Exactly one cart on the card, counting every shelf. It boots straight into the game, and
@@ -3174,7 +3172,7 @@ impl App {
     /// screen opening, a core loading, a link being picked — and never once a frame. `None`
     /// for a cart the shelf cannot name.
     fn auto_link(&self, stem: &str) -> Option<(&Cart, LinkKind)> {
-        let cart = self.shelf().carts.iter().find(|c| c.stem == stem)?;
+        let (cart, _) = self.shelf().find(stem)?;
         let auto = link_kind(&cart.code, &cart.title, slot_store::header_clean(&cart.rom));
         Some((cart, auto))
     }

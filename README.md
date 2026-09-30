@@ -102,8 +102,8 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 
 ## SNES games
 
-Put `.sfc` or `.smc` files in `Games/SNES/`. They stand on a shelf of their own; L1 and R1 on
-the shelf move between the GBA, Game Boy, Game Boy Color and SNES shelves. Every button is the
+Put `.sfc` or `.smc` files in `Games/SNES/`. Every game, whatever it's for, stands on the one
+shelf in order of its name, each in its own console's cartridge. Every button is the
 SNES's own, X and Y included, and L2/R2 are still brightness. Box art and labels work as they
 do for the GBA, from `Backdrops/SNES/` and `Labels/SNES/`.
 
