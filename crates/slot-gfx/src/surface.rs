@@ -198,6 +198,13 @@ pub enum Fit {
     Aspect(f32),
     /// The whole panel, shape and all: a Game Boy picture stretched to fill it.
     Fill,
+    /// The panel's full width, and its height at the largest whole multiple of the frame's rows:
+    /// a SNES's 224 at 2x is 448, with a 16 px bar above and below, and its 448 hi-res rows at
+    /// 1x are the same 448. Every source row is exactly the same number of panel rows, so a one
+    /// pixel line across a letter can never be thinned into its neighbour by the scale, as it is
+    /// at 224 to 480 (2.14 rows each, two or three). About 7% shorter than 4:3, which is the
+    /// price of rows that are all the same height.
+    Rows,
 }
 
 impl Fit {
@@ -228,6 +235,7 @@ impl Fit {
                 Picture::ThreeTwo => centred(OUT_W, 427),
             },
             Fit::Fill => (0, 0, OUT_W, OUT_H),
+            Fit::Rows if h > 0 && h <= OUT_H => centred(OUT_W, (OUT_H / h) * h),
             Fit::Aspect(a) if a > 0.0 => aspect(a),
             _ if w == 0 || h == 0 => (0, 0, OUT_W, OUT_H),
             Fit::Whole => match (OUT_W / w).min(OUT_H / h) {
@@ -235,7 +243,7 @@ impl Fit {
                 0 => aspect(w as f32 / h as f32),
                 s => centred(w * s, h * s),
             },
-            Fit::Aspect(_) => aspect(w as f32 / h as f32),
+            Fit::Aspect(_) | Fit::Rows => aspect(w as f32 / h as f32),
         }
     }
 }
@@ -252,6 +260,7 @@ pub fn set_fit(fit: Fit) {
         Fit::Whole => (1, 0.0),
         Fit::Aspect(a) => (2, a),
         Fit::Fill => (3, 0.0),
+        Fit::Rows => (4, 0.0),
     };
     FIT_ASPECT.store(f32::to_bits(aspect), Ordering::Relaxed);
     FIT.store(which, Ordering::Relaxed);
@@ -262,6 +271,7 @@ pub fn fit() -> Fit {
         1 => Fit::Whole,
         2 => Fit::Aspect(f32::from_bits(FIT_ASPECT.load(Ordering::Relaxed))),
         3 => Fit::Fill,
+        4 => Fit::Rows,
         _ => Fit::Gba,
     }
 }

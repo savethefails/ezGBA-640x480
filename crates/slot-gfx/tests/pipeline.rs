@@ -1124,32 +1124,49 @@ fn grid_lcd_dims_every_colour_alike_and_lifts_none() {
     );
 }
 
-/// A SNES frame fills the 4:3 panel whichever of its sizes it is, and draws no LCD grid: the
-/// console was played on a television, and at 512 across a line per pixel would be one every
-/// 1.25 panel pixels.
+/// A SNES frame fills the panel's width with its rows at exactly 2x, or 1x in hi-res: 640x448
+/// either way, with a 16 px bar above and below, and no LCD grid, since the console was played
+/// on a television. Every source row is the same two (or one) panel rows, so a one pixel line
+/// across the picture is solid on every row it covers, where at 224 to 480 some rows of it
+/// blended into their neighbours.
 #[test]
-fn a_snes_frame_fills_the_panel_and_takes_no_grid() {
+fn a_snes_frame_takes_whole_rows_and_no_grid() {
     let Some((_g, _s, mut c)) = compositor() else {
         return;
     };
     c.set_screen_power(1.0);
     set_grid(Grid::lcd());
-    set_fit(Fit::Aspect(4.0 / 3.0));
-    for size in [(256u32, 224u32), (512, 448)] {
-        let flat: Vec<u8> = std::iter::repeat_n([200u8, 200, 200, 0], (size.0 * size.1) as usize)
+    set_fit(Fit::Rows);
+    for (size, per_row) in [((256u32, 224u32), 2usize), ((512, 448), 1)] {
+        // Grey, with every seventh row black: a one pixel line.
+        let src: Vec<u8> = (0..size.1)
+            .flat_map(|y| {
+                let v = if y % 7 == 3 { 0u8 } else { 200 };
+                std::iter::repeat_n([v, v, v, 0], size.0 as usize)
+            })
             .flatten()
             .collect();
         c.begin_frame();
-        c.upload_game(&flat, size);
+        c.upload_game(&src, size);
         c.draw_game();
         let frame = c.read_frame();
-        assert_eq!(game_rect(), (0, 0, OUT_W, OUT_H), "{size:?}");
-        for (x, y) in [(0, 0), (320, 240), (639, 479), (1, 3), (2, 2)] {
-            assert!(
-                close(px(&frame, x, y), shaded([200, 200, 200])),
-                "{size:?} at ({x}, {y}): {:?}, a grid line or an edge",
-                px(&frame, x, y)
-            );
+        assert_eq!(game_rect(), (0, 16, OUT_W, 448), "{size:?}");
+        assert_eq!(
+            px(&frame, 320, 15),
+            [0, 0, 0],
+            "{size:?}: lit above the picture"
+        );
+        assert_eq!(px(&frame, 320, 464), [0, 0, 0], "{size:?}: lit below it");
+        for y in 0..size.1 as usize {
+            let want = if y % 7 == 3 { 0 } else { 200 };
+            for k in 0..per_row {
+                let row = 16 + y * per_row + k;
+                let got = px(&frame, 320, row);
+                assert!(
+                    close(got, shaded([want as u8; 3])),
+                    "{size:?}: source row {y} is {got:?} at panel row {row}, not {want}"
+                );
+            }
         }
     }
     set_grid(Grid::default());

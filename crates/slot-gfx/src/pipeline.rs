@@ -213,7 +213,7 @@ impl GamePass {
             // television, which has none. A SNES's hi-res frames would put a line every 1.25
             // panel pixels besides, which is no grid at all, only a dimming.
             let grid = match fit() {
-                Fit::Aspect(_) => crate::surface::Grid::default(),
+                Fit::Aspect(_) | Fit::Rows => crate::surface::Grid::default(),
                 _ => grid(),
             };
             gl::Uniform2f(self.u_gap, grid.gap[0], grid.gap[1]);

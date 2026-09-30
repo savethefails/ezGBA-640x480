@@ -100,8 +100,11 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   off unless you turn it on.
 - **Game Boy and Game Boy Color games are exactly 3×**: 480×432, every pixel three screen
   pixels square, with a border round them. L stretches one to fill the screen; R puts it back.
-- **SNES games fill the screen at 4:3**, the shape of the TV they were made for, whether the
-  game draws at 256×224 or switches to 512×448. They take no LCD grid, since a TV has none.
+- **SNES games fill the screen's width, with every row exactly 2 screen rows** (1 in the
+  512×448 hi-res mode): 640×448, with a thin bar above and below. Stretched to the full 480,
+  rows would come out 2 or 3 screen rows tall, and a one-pixel outline on a letter could thin
+  out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. SNES
+  games take no LCD grid, since a TV has none.
 
 ## Responsive controls
 

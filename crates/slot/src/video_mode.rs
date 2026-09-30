@@ -1,8 +1,9 @@
 //! How each console's picture is placed on the panel, and for a Game Boy cart which of its two
 //! sizes it was last left in.
 //!
-//! A GBA picture follows the card's `picture` setting, 4:3 or 3:2. A SNES picture is always
-//! 4:3, the shape of the television its games were drawn for. A Game Boy picture is its own
+//! A GBA picture follows the card's `picture` setting, 4:3 or 3:2. A SNES picture fills the
+//! panel's width with its rows at exactly 2x (1x in hi-res), 640x448: within 7% of the 4:3
+//! television its games were drawn for, and with every row the same height. A Game Boy picture is its own
 //! 10:9 at a whole multiple: 160x144 at 3x is 480x432, every pixel three panel pixels square.
 //!
 //! The Game Boy and the Game Boy Color had no shoulder buttons, so on one of their carts slot
@@ -78,7 +79,9 @@ pub fn fit_for(platform: Platform, mode: VideoMode) -> Fit {
             VideoMode::Actual => Fit::Whole,
             VideoMode::Stretch => Fit::Fill,
         },
-        // 256x224 and 512x448 alike were drawn for a 4:3 television, and a 4:3 panel is one.
-        Platform::Snes => Fit::Aspect(4.0 / 3.0),
+        // Full width, rows at a whole multiple: 224 at 2x and 448 hi-res at 1x are both 448,
+        // every source row the same height, so no one-pixel outline is thinned into its
+        // neighbour, as at 224 to 480. A 4:3 television's shape to within 7%.
+        Platform::Snes => Fit::Rows,
     }
 }
