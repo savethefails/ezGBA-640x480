@@ -13,20 +13,22 @@ pub enum QuickRow {
     Picture,
     Grid,
     GridDepth,
+    RunAhead,
     About,
     Brightness,
 }
 
 impl QuickRow {
-    /// ezGBA keeps the two rows that open something and the three that set how the game looks,
-    /// which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
+    /// ezGBA keeps the two rows that open something, the three that set how the game looks and
+    /// the one that sets how soon it answers, which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 6] = [
+    pub const ALL: [QuickRow; 7] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::Grid,
         QuickRow::GridDepth,
+        QuickRow::RunAhead,
         QuickRow::About,
         QuickRow::Brightness,
     ];
@@ -42,6 +44,7 @@ impl QuickRow {
             QuickRow::Picture => "Picture",
             QuickRow::Grid => "LCD Grid",
             QuickRow::GridDepth => "Grid Depth",
+            QuickRow::RunAhead => "Run-Ahead",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
         }
@@ -92,10 +95,12 @@ pub enum QuickValue {
     Depth80,
     Depth90,
     Depth100,
+    Ahead1,
+    Ahead2,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 21] = [
+    pub const ALL: [QuickValue; 23] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -117,6 +122,8 @@ impl QuickValue {
         QuickValue::Depth80,
         QuickValue::Depth90,
         QuickValue::Depth100,
+        QuickValue::Ahead1,
+        QuickValue::Ahead2,
     ];
 
     /// The Grid Depth row's steps, in percent, in the order the arrows walk them.
@@ -150,6 +157,8 @@ impl QuickValue {
             QuickValue::Depth80 => "80%",
             QuickValue::Depth90 => "90%",
             QuickValue::Depth100 => "100%",
+            QuickValue::Ahead1 => "1 Frame",
+            QuickValue::Ahead2 => "2 Frames",
         }
     }
 

@@ -97,6 +97,7 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Picture",
             "LCD Grid",
             "Grid Depth",
+            "Run-Ahead",
             "About",
             "Brightness"
         ]
@@ -111,7 +112,7 @@ fn the_values_read_as_the_menu_prints_them() {
         QuickValue::ALL.map(QuickValue::text),
         [
             "2×", "3×", "4×", "6×", "On", "Off", "L2 / R2", "4:3", "3:2", "Strict", "LCD", "10%",
-            "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+            "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%", "1 Frame", "2 Frames"
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);

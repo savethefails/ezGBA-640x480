@@ -490,6 +490,14 @@ impl Session {
 
     /// The switcher pauses the game rather than dimming a live one. Paused publishes no
     /// frames, so the compositor keeps showing the last one behind the cards.
+    /// The frontend has shown a frame and fed the buttons for the next one: the core runs its
+    /// next present now. See `EmuHandle::kick`.
+    pub fn kick(&self) {
+        if let Some(emu) = &self.emu {
+            emu.kick();
+        }
+    }
+
     fn sync_speed(&self) {
         if let Some(emu) = &self.emu {
             // Ahead of the speed, so the first fast present already runs at the chosen one. The
@@ -499,6 +507,7 @@ impl Session {
             // can afford, up to this.
             emu.set_fast_steps(u32::from(self.app.ff_speed()));
             emu.set_ff_sound(self.app.ff_sound());
+            emu.set_runahead(self.app.runahead());
             // Loading a core and running one are separate things. The insert animation
             // hides the load, but a core left running behind the cart burns through the
             // GBA bios intro, so the reveal catches only its tail. Paused until the cart is

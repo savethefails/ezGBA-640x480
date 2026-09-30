@@ -41,6 +41,9 @@ pub struct Theme {
     /// `grid-depth 40`: how dark the middle of a grid line is, in percent, from 5 to 100. `None`
     /// is the grid's own default.
     pub grid_depth: Option<f32>,
+    /// `runahead 1`: frames to run ahead of the game, 0 to 2, to take its own lag off a press.
+    /// `None` is the default, one.
+    pub runahead: Option<u8>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -84,6 +87,7 @@ impl Default for Theme {
             sharpness: 1.0,
             grid: LcdGrid::Off,
             grid_depth: None,
+            runahead: None,
         }
     }
 }
@@ -125,6 +129,12 @@ impl Theme {
                 ("grid", "off") => theme.grid = LcdGrid::Off,
                 ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
+                ("runahead", "off") => theme.runahead = Some(0),
+                ("runahead", v) => {
+                    if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {
+                        theme.runahead = Some(n);
+                    }
+                }
                 ("grid-depth", v) => {
                     if let Some(d) = v.parse::<f32>().ok().filter(|d| (5.0..=100.0).contains(d)) {
                         theme.grid_depth = Some(d);

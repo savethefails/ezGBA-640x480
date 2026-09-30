@@ -476,6 +476,12 @@ impl Frontend {
         self.start.elapsed().as_millis() as Millis
     }
 
+    /// Called once a frame by the device loop, after the swap and the input it fed: the core's
+    /// next frame starts now, on the freshest buttons, in step with the display.
+    pub fn frame_shown(&self) {
+        self.session.kick();
+    }
+
     pub fn powering_off(&self) -> bool {
         self.session.app().ready_to_power_off()
     }

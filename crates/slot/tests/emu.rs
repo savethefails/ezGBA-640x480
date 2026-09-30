@@ -1049,3 +1049,70 @@ fn a_transport_whose_peer_ended_is_reported_as_ended_not_merely_lost() {
         "the flag outlived the session it belonged to"
     );
 }
+
+/// A kick lets a present start up to 2 ms early, to fall into step with the display, and no
+/// earlier: kicked every 2 ms, far faster than any display, the game still runs at 60 frames a
+/// second rather than at the kicks' rate. Measured over a second so scheduling noise washes out.
+#[test]
+fn kicks_cannot_run_the_game_fast() {
+    let emu = spawn();
+    std::thread::sleep(Duration::from_millis(100));
+    let before = emu.published_count();
+    let began = Instant::now();
+    while began.elapsed() < Duration::from_secs(1) {
+        emu.kick();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let ran = emu.published_count() - before;
+    // 60 on the worker's own clock, and at most 1000 / 14.67 = 68 with every present pulled
+    // the whole 2 ms early.
+    assert!(
+        (50..=70).contains(&ran),
+        "{ran} frames in a second of kicks every 2 ms"
+    );
+}
+
+/// Run-ahead on: the game runs at the same speed, one real frame a present.
+#[test]
+fn run_ahead_keeps_the_game_at_its_own_speed() {
+    let emu = spawn();
+    emu.set_runahead(2);
+    std::thread::sleep(Duration::from_millis(100));
+    let before = emu.published_count();
+    std::thread::sleep(Duration::from_secs(1));
+    let ran = emu.published_count() - before;
+    assert!((50..=70).contains(&ran), "{ran} presents in a second");
+}
+
+/// Kicked once a frame, as the device loop does after each swap, the worker falls into step
+/// with the kicks within a few dozen frames and then runs each present right after its kick:
+/// the core reads the buttons the frontend has just handed over rather than up to a frame later.
+#[test]
+fn a_kick_a_frame_brings_the_present_right_after_it() {
+    let emu = spawn();
+    let period = Duration::from_nanos(16_666_667);
+    let mut next = Instant::now();
+    let mut prompt = 0;
+    let mut kicks = 0;
+    for i in 0..120 {
+        next += period;
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+        let before = emu.published_count();
+        emu.kick();
+        let kicked = Instant::now();
+        while emu.published_count() == before && kicked.elapsed() < Duration::from_millis(12) {
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        // After a second to settle, every present should follow its kick within 4 ms.
+        if i >= 60 {
+            kicks += 1;
+            if emu.published_count() > before && kicked.elapsed() < Duration::from_millis(4) {
+                prompt += 1;
+            }
+        }
+    }
+    assert!(
+        prompt * 10 >= kicks * 8,
+        "only {prompt} of {kicks} presents followed their kick"
+    );
+}

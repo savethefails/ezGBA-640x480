@@ -118,6 +118,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::Picture,
         QuickRow::Grid,
         QuickRow::GridDepth,
+        QuickRow::RunAhead,
         QuickRow::About,
         QuickRow::About,
     ] {
@@ -293,11 +294,12 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 5] = [
+const SELECTABLE: [QuickRow; 6] = [
     QuickRow::DateTime,
     QuickRow::Picture,
     QuickRow::Grid,
     QuickRow::GridDepth,
+    QuickRow::RunAhead,
     QuickRow::About,
 ];
 
@@ -551,4 +553,24 @@ fn only_the_clock_from_the_menu_offers_b_back() {
         !drawn(&out, 400),
         "the first boot clock offers a way back it does not have"
     );
+}
+
+/// Run-Ahead opens at one frame, steps between off, one and two, and is written to theme.txt,
+/// where the next boot reads it back.
+#[test]
+fn the_run_ahead_row_steps_and_is_kept_on_the_card() {
+    let (d, mut a) = on_carousel_with_theme("");
+    assert_eq!(a.quick_value(QuickRow::RunAhead), Some(QuickValue::Ahead1));
+    assert_eq!(a.runahead(), 1);
+    open_at(&mut a, QuickRow::RunAhead);
+    press(&mut a, Btn::Left);
+    assert_eq!(a.quick_value(QuickRow::RunAhead), Some(QuickValue::Off));
+    assert_eq!(a.runahead(), 0);
+    for _ in 0..3 {
+        press(&mut a, Btn::Right);
+    }
+    assert_eq!(a.quick_value(QuickRow::RunAhead), Some(QuickValue::Ahead2));
+    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    assert_eq!(theme, "runahead 2\n");
+    assert_eq!(slot_store::Theme::read(d.path()).runahead, Some(2));
 }

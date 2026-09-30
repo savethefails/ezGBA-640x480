@@ -779,6 +779,7 @@ impl App {
             picture: theme.picture,
             grid: theme.grid,
             depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
+            runahead: theme.runahead.unwrap_or(RUNAHEAD),
         };
         look.apply();
         slot_gfx::set_scaler(match theme.scaler {
@@ -998,6 +999,11 @@ impl App {
                 LcdGrid::Lcd => QuickValue::Lcd,
             }),
             QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
+            QuickRow::RunAhead => Some(match self.look.runahead {
+                0 => QuickValue::Off,
+                1 => QuickValue::Ahead1,
+                _ => QuickValue::Ahead2,
+            }),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -1201,6 +1207,11 @@ impl App {
     /// for a second opinion.
     pub fn set_video_mode(&mut self, mode: VideoMode) {
         self.video_mode = mode;
+    }
+
+    /// Frames the core runs ahead of the game. See `emu::run_ahead`.
+    pub fn runahead(&self) -> u8 {
+        self.look.runahead
     }
 
     /// How the seated cart's picture is placed on the panel: the console's own rule, and for a
@@ -1889,6 +1900,10 @@ impl App {
                 self.look.depth = f32::from(depths[step(now, depths.len())]);
                 ("grid-depth", format!("{}", self.look.depth as u8))
             }
+            QuickRow::RunAhead => {
+                self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
+                ("runahead", self.look.runahead.to_string())
+            }
             QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
         };
         self.look.apply();
@@ -1908,7 +1923,11 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
-            QuickRow::Picture | QuickRow::Grid | QuickRow::GridDepth | QuickRow::Brightness => {}
+            QuickRow::Picture
+            | QuickRow::Grid
+            | QuickRow::GridDepth
+            | QuickRow::RunAhead
+            | QuickRow::Brightness => {}
         }
     }
 
@@ -4527,6 +4546,9 @@ struct Look {
     grid: LcdGrid,
     /// The grid's depth in percent. The menu steps it by ten; a card can hold anything from 5.
     depth: f32,
+    /// Frames the core runs ahead of the game, 0 to 2. Not how the game is drawn but how soon it
+    /// answers, kept here beside the rest because it lives in `theme.txt` and the menu with them.
+    runahead: u8,
 }
 
 impl Default for Look {
@@ -4535,9 +4557,15 @@ impl Default for Look {
             picture: Aspect::FourThree,
             grid: LcdGrid::Off,
             depth: slot_gfx::GRID_DEPTH,
+            runahead: RUNAHEAD,
         }
     }
 }
+
+/// Frames run ahead when the card does not say. One takes most games' own lag off a press and
+/// costs one extra frame and a state save and load a present, which every core here affords on
+/// the H700; the worker switches it off by itself for a game that cannot.
+const RUNAHEAD: u8 = 1;
 
 impl Look {
     /// Into the renderer, which reads both every frame.

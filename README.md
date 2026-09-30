@@ -58,9 +58,10 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | **Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
 | **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
 | **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
+| **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
 | **About** | Credits (A opens it). |
 
-The picture and grid settings are saved to `System/theme.txt`, so the card remembers them,
+The picture, grid and run-ahead settings are saved to `System/theme.txt`, so the card remembers them,
 and they're read back from it at startup, so editing the file by hand still works.
 
 `System/theme.txt` holds a few more options that aren't in the menu:
@@ -99,6 +100,23 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   pixels square, with a border round them. L stretches one to fill the screen; R puts it back.
 - **SNES games fill the screen at 4:3**, the shape of the TV they were made for, whether the
   game draws at 256×224 or switches to 512×448. They take no LCD grid, since a TV has none.
+
+## Responsive controls
+
+Most games take a frame or two to answer a button, on top of the device's own delay. ezGBA
+takes both down:
+
+- **Run-ahead**, as RetroArch has it. Every frame, the emulator runs the real frame, saves the
+  game, runs one frame further on the same buttons and shows that, then goes back. What you
+  see is where the game will be a frame later, so a frame of the game's own lag is gone. It
+  costs one extra frame of emulation and a save and load, every frame. If a game is too heavy
+  for that, ezGBA switches run-ahead off for it by itself and plays it normally. Set it in the
+  menu, or with `runahead 0`, `1` or `2` in `System/theme.txt`. Two frames removes more lag
+  but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
+  always off in a link session.
+- **In step with the screen.** The emulator runs each frame right after the buttons are read
+  and just before the frame is shown, instead of on a clock of its own that drifts against
+  the screen's, which could leave a press waiting up to a frame longer.
 
 ## SNES games
 
