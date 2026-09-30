@@ -1056,6 +1056,55 @@ fn drain_transport(transport: &mut dyn LinkChannel, link: &Link, cap: u32) {
     }
 }
 
+/// One present of run-ahead: the frame the game is really on, then `ahead` more on the same
+/// buttons, the last of which is the picture shown, then back to where the real one left it.
+///
+/// A game answers a press a frame or more after it reads it, and that lag is part of the game,
+/// not of the device: every frame run ahead is one frame of it the player no longer waits for.
+/// The frames ahead are thrown away, sound and all, and run again for real a present later with
+/// whatever the buttons really are then, so the only thing that can go wrong is a picture that
+/// guessed the buttons would stay as they were and was right to within a frame.
+///
+/// Hands back the real frame's sound, which is the one that should be heard, and the real frame's
+/// state, which the rewind history can take instead of saving it again. `None` when the core
+/// could not save or load its state: nothing ran ahead or was wound back, the real frame ran
+/// once, undrawn, and the picture shown is the one before it — a single repeated frame, once,
+/// before run-ahead is switched off.
+fn run_ahead(
+    core: &mut dyn RetroCore,
+    input: ButtonMask,
+    ahead: u8,
+    picture: &mut Option<(Vec<u8>, (u32, u32))>,
+) -> (Vec<i16>, Option<Vec<u8>>) {
+    // The real frame's picture is never shown, so the core is asked not to draw it.
+    core.set_frame_skip(true);
+    core.run_frame(input);
+    let audio = core.take_audio();
+    let Ok(state) = core.serialize() else {
+        core.set_frame_skip(false);
+        *picture = None;
+        return (audio, None);
+    };
+    for k in 0..ahead {
+        core.set_frame_skip(k + 1 < ahead);
+        core.run_frame(input);
+    }
+    let _ = core.take_audio();
+    // Copied before the state is wound back: a core is free to repaint on a load.
+    if let Some((buf, size)) = picture {
+        buf.clear();
+        buf.extend_from_slice(core.video_xrgb8888());
+        *size = core.video_size();
+    }
+    match core.unserialize(&state) {
+        Ok(()) => (audio, Some(state)),
+        Err(e) => {
+            eprintln!("slot: run-ahead: {e}");
+            (audio, None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,54 +1203,5 @@ mod tests {
         assert_eq!(link.take_inbound().as_deref(), Some(&b"one"[..]));
         assert_eq!(link.take_inbound().as_deref(), Some(&b"two"[..]));
         assert_eq!(link.take_inbound(), None);
-    }
-}
-
-/// One present of run-ahead: the frame the game is really on, then `ahead` more on the same
-/// buttons, the last of which is the picture shown, then back to where the real one left it.
-///
-/// A game answers a press a frame or more after it reads it, and that lag is part of the game,
-/// not of the device: every frame run ahead is one frame of it the player no longer waits for.
-/// The frames ahead are thrown away, sound and all, and run again for real a present later with
-/// whatever the buttons really are then, so the only thing that can go wrong is a picture that
-/// guessed the buttons would stay as they were and was right to within a frame.
-///
-/// Hands back the real frame's sound, which is the one that should be heard, and the real frame's
-/// state, which the rewind history can take instead of saving it again. `None` when the core
-/// could not save or load its state: nothing ran ahead or was wound back, the real frame ran
-/// once, undrawn, and the picture shown is the one before it — a single repeated frame, once,
-/// before run-ahead is switched off.
-fn run_ahead(
-    core: &mut dyn RetroCore,
-    input: ButtonMask,
-    ahead: u8,
-    picture: &mut Option<(Vec<u8>, (u32, u32))>,
-) -> (Vec<i16>, Option<Vec<u8>>) {
-    // The real frame's picture is never shown, so the core is asked not to draw it.
-    core.set_frame_skip(true);
-    core.run_frame(input);
-    let audio = core.take_audio();
-    let Ok(state) = core.serialize() else {
-        core.set_frame_skip(false);
-        *picture = None;
-        return (audio, None);
-    };
-    for k in 0..ahead {
-        core.set_frame_skip(k + 1 < ahead);
-        core.run_frame(input);
-    }
-    let _ = core.take_audio();
-    // Copied before the state is wound back: a core is free to repaint on a load.
-    if let Some((buf, size)) = picture {
-        buf.clear();
-        buf.extend_from_slice(core.video_xrgb8888());
-        *size = core.video_size();
-    }
-    match core.unserialize(&state) {
-        Ok(()) => (audio, Some(state)),
-        Err(e) => {
-            eprintln!("slot: run-ahead: {e}");
-            (audio, None)
-        }
     }
 }
