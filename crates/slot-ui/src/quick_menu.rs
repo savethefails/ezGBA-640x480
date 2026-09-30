@@ -13,6 +13,8 @@ pub enum QuickRow {
     Picture,
     Grid,
     GridDepth,
+    Scaler,
+    Sharpness,
     RunAhead,
     About,
     Brightness,
@@ -23,11 +25,13 @@ impl QuickRow {
     /// the one that sets how soon it answers, which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 7] = [
+    pub const ALL: [QuickRow; 9] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::Grid,
         QuickRow::GridDepth,
+        QuickRow::Scaler,
+        QuickRow::Sharpness,
         QuickRow::RunAhead,
         QuickRow::About,
         QuickRow::Brightness,
@@ -44,6 +48,8 @@ impl QuickRow {
             QuickRow::Picture => "Picture",
             QuickRow::Grid => "LCD Grid",
             QuickRow::GridDepth => "Grid Depth",
+            QuickRow::Scaler => "Scaler",
+            QuickRow::Sharpness => "Sharpness",
             QuickRow::RunAhead => "Run-Ahead",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
@@ -97,10 +103,16 @@ pub enum QuickValue {
     Depth100,
     Ahead1,
     Ahead2,
+    PixelAa,
+    Shimmerless,
+    Sharp05,
+    Sharp10,
+    Sharp15,
+    Sharp20,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 23] = [
+    pub const ALL: [QuickValue; 29] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -124,7 +136,16 @@ impl QuickValue {
         QuickValue::Depth100,
         QuickValue::Ahead1,
         QuickValue::Ahead2,
+        QuickValue::PixelAa,
+        QuickValue::Shimmerless,
+        QuickValue::Sharp05,
+        QuickValue::Sharp10,
+        QuickValue::Sharp15,
+        QuickValue::Sharp20,
     ];
+
+    /// The Sharpness row's steps, in the order the arrows walk them.
+    pub const SHARPNESS: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
 
     /// The Grid Depth row's steps, in percent, in the order the arrows walk them.
     pub const DEPTHS: [u8; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -159,7 +180,20 @@ impl QuickValue {
             QuickValue::Depth100 => "100%",
             QuickValue::Ahead1 => "1 Frame",
             QuickValue::Ahead2 => "2 Frames",
+            QuickValue::PixelAa => "Pixel AA",
+            QuickValue::Shimmerless => "Shimmerless",
+            QuickValue::Sharp05 => "0.5",
+            QuickValue::Sharp10 => "1.0",
+            QuickValue::Sharp15 => "1.5",
+            QuickValue::Sharp20 => "2.0",
         }
+    }
+
+    /// The Sharpness row's value for a sharpness, at the nearest step: a card can hold anything
+    /// from 0 to 2.
+    pub fn sharpness(sharp: f32) -> QuickValue {
+        let step = ((sharp * 2.0).round() as i32).clamp(1, 4) as usize;
+        QuickValue::ALL[QuickValue::Sharp05.index() + step - 1]
     }
 
     /// The Grid Depth row's value for a depth in percent, at the nearest step: a card can hold
@@ -192,19 +226,24 @@ impl QuickValue {
     }
 }
 
-/// A size up from the power menu's rows: 30 px type on 52 px rows, which the full width has
-/// room for.
-pub const QUICK_PITCH: f32 = 52.0;
-/// The first row's top, with all of them centred on the panel: derived from `QuickRow::ALL`, so
-/// a row added or removed moves the whole menu rather than hanging one off the bottom.
-pub const QUICK_TOP: f32 = (OUT_H as f32 - QUICK_PITCH * QuickRow::ALL.len() as f32) / 2.0;
+/// A size up from the power menu's rows: 30 px type on 44 px rows. They were 52 when the menu
+/// had three; nine at 52 run into the legend, and 44 is the tallest that holds them above it
+/// with the menu's 40 px type still clear of the bar's edges.
+pub const QUICK_PITCH: f32 = 44.0;
+/// The first row's top, with all of them centred in the space above the legend: derived from
+/// `QuickRow::ALL`, so a row added or removed moves the whole menu rather than hanging one off
+/// the bottom.
+pub const QUICK_TOP: f32 =
+    ((LEGEND_Y - LEGEND_AIR - QUICK_PITCH * QuickRow::ALL.len() as f32) / 2.0) as i32 as f32;
+/// Kept clear between the last row and the legend.
+const LEGEND_AIR: f32 = 8.0;
 /// Labels start this far in from the left, and values end this far in from the right.
 pub const QUICK_EDGE: f32 = 32.0;
 /// How much shorter the bar is than its row, top and bottom, as the power menu's is.
-const BAR_INSET: f32 = 4.0;
+const BAR_INSET: f32 = 3.0;
 /// Where a line of menu type sits in its row: its baseline lands 36 px below the row's top,
 /// which puts the capitals in the middle of the bar, as the mockup has them.
-const TYPE_DROP: f32 = 4.0;
+const TYPE_DROP: f32 = (QUICK_PITCH - MENU_H as f32) / 2.0;
 /// Between each arrow and the value it stands beside, about a space of the type.
 const CARET_GAP: f32 = 14.0;
 /// A little under the capitals they stand beside, so the arrows read as marks, not letters.

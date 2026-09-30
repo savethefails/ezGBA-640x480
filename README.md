@@ -58,10 +58,12 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | **Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
 | **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
 | **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
+| **Scaler** | `Pixel AA` (the default) or `Shimmerless`: how game pixels are scaled up. |
+| **Sharpness** | How hard Pixel AA's pixel edges are: `0.5`, `1.0` (the default, and the only one with no shimmer when the screen scrolls), `1.5` or `2.0`. |
 | **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
 | **About** | Credits (A opens it). |
 
-The picture, grid and run-ahead settings are saved to `System/theme.txt`, so the card remembers them,
+The picture, grid, scaler, sharpness and run-ahead settings are saved to `System/theme.txt`, so the card remembers them,
 and they're read back from it at startup, so editing the file by hand still works.
 
 `System/theme.txt` holds a few more options that aren't in the menu:

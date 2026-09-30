@@ -118,6 +118,8 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::Picture,
         QuickRow::Grid,
         QuickRow::GridDepth,
+        QuickRow::Scaler,
+        QuickRow::Sharpness,
         QuickRow::RunAhead,
         QuickRow::About,
         QuickRow::About,
@@ -294,11 +296,13 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 6] = [
+const SELECTABLE: [QuickRow; 8] = [
     QuickRow::DateTime,
     QuickRow::Picture,
     QuickRow::Grid,
     QuickRow::GridDepth,
+    QuickRow::Scaler,
+    QuickRow::Sharpness,
     QuickRow::RunAhead,
     QuickRow::About,
 ];
@@ -503,7 +507,7 @@ fn the_bar_runs_edge_to_edge_behind_the_selected_row() {
         let top = QUICK_TOP + QUICK_PITCH * row.index() as f32;
         assert_eq!(
             bars,
-            vec![[0.0, top + 4.0, OUT_W as f32, QUICK_PITCH - 8.0]],
+            vec![[0.0, top + 3.0, OUT_W as f32, QUICK_PITCH - 6.0]],
             "{row:?}"
         );
         press(&mut a, Btn::Down);
@@ -573,4 +577,37 @@ fn the_run_ahead_row_steps_and_is_kept_on_the_card() {
     let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
     assert_eq!(theme, "runahead 2\n");
     assert_eq!(slot_store::Theme::read(d.path()).runahead, Some(2));
+}
+
+/// Scaler switches between Pixel AA and sharp-shimmerless, Sharpness steps Pixel AA's edges
+/// from 0.5 to 2.0, a sharpness set between steps by hand shows as the nearest one, and both
+/// are written to theme.txt for the next boot to read.
+#[test]
+fn the_scaler_and_sharpness_rows_step_and_are_kept_on_the_card() {
+    let (d, mut a) = on_carousel_with_theme("sharpness 1.3\n");
+    assert_eq!(a.quick_value(QuickRow::Scaler), Some(QuickValue::PixelAa));
+    assert_eq!(
+        a.quick_value(QuickRow::Sharpness),
+        Some(QuickValue::Sharp15)
+    );
+    open_at(&mut a, QuickRow::Scaler);
+    press(&mut a, Btn::Right);
+    assert_eq!(
+        a.quick_value(QuickRow::Scaler),
+        Some(QuickValue::Shimmerless)
+    );
+    press(&mut a, Btn::Down);
+    for _ in 0..5 {
+        press(&mut a, Btn::Left);
+    }
+    assert_eq!(
+        a.quick_value(QuickRow::Sharpness),
+        Some(QuickValue::Sharp05)
+    );
+    press(&mut a, Btn::Right);
+    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    assert_eq!(theme, "sharpness 1.0\nscaler shimmerless\n");
+    let again = slot_store::Theme::read(d.path());
+    assert_eq!(again.sharpness, 1.0);
+    assert_eq!(again.scaler, slot_store::Scaling::Shimmerless);
 }

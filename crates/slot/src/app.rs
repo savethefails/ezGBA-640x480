@@ -780,12 +780,10 @@ impl App {
             grid: theme.grid,
             depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
             runahead: theme.runahead.unwrap_or(RUNAHEAD),
+            scaler: theme.scaler,
+            sharpness: theme.sharpness,
         };
         look.apply();
-        slot_gfx::set_scaler(match theme.scaler {
-            Scaling::PixelAa => slot_gfx::Scaler::PixelAa(theme.sharpness),
-            Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
-        });
         slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
         app.look = look;
@@ -999,6 +997,11 @@ impl App {
                 LcdGrid::Lcd => QuickValue::Lcd,
             }),
             QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
+            QuickRow::Scaler => Some(match self.look.scaler {
+                Scaling::PixelAa => QuickValue::PixelAa,
+                Scaling::Shimmerless => QuickValue::Shimmerless,
+            }),
+            QuickRow::Sharpness => Some(QuickValue::sharpness(self.look.sharpness)),
             QuickRow::RunAhead => Some(match self.look.runahead {
                 0 => QuickValue::Off,
                 1 => QuickValue::Ahead1,
@@ -1900,6 +1903,26 @@ impl App {
                 self.look.depth = f32::from(depths[step(now, depths.len())]);
                 ("grid-depth", format!("{}", self.look.depth as u8))
             }
+            QuickRow::Scaler => {
+                const SCALERS: [Scaling; 2] = [Scaling::PixelAa, Scaling::Shimmerless];
+                let at = SCALERS
+                    .iter()
+                    .position(|x| *x == self.look.scaler)
+                    .unwrap_or(0);
+                self.look.scaler = SCALERS[step(at, SCALERS.len())];
+                let word = match self.look.scaler {
+                    Scaling::PixelAa => "pixel-aa",
+                    Scaling::Shimmerless => "shimmerless",
+                };
+                ("scaler", word.to_string())
+            }
+            QuickRow::Sharpness => {
+                let steps = QuickValue::SHARPNESS;
+                let now = QuickValue::sharpness(self.look.sharpness).index()
+                    - QuickValue::Sharp05.index();
+                self.look.sharpness = steps[step(now, steps.len())];
+                ("sharpness", format!("{:.1}", self.look.sharpness))
+            }
             QuickRow::RunAhead => {
                 self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
                 ("runahead", self.look.runahead.to_string())
@@ -1926,6 +1949,8 @@ impl App {
             QuickRow::Picture
             | QuickRow::Grid
             | QuickRow::GridDepth
+            | QuickRow::Scaler
+            | QuickRow::Sharpness
             | QuickRow::RunAhead
             | QuickRow::Brightness => {}
         }
@@ -4549,6 +4574,9 @@ struct Look {
     /// Frames the core runs ahead of the game, 0 to 2. Not how the game is drawn but how soon it
     /// answers, kept here beside the rest because it lives in `theme.txt` and the menu with them.
     runahead: u8,
+    /// Which pixel art scaler draws the picture, and how hard Pixel AA's edges are, 0 to 2.
+    scaler: Scaling,
+    sharpness: f32,
 }
 
 impl Default for Look {
@@ -4558,6 +4586,8 @@ impl Default for Look {
             grid: LcdGrid::Off,
             depth: slot_gfx::GRID_DEPTH,
             runahead: RUNAHEAD,
+            scaler: Scaling::PixelAa,
+            sharpness: 1.0,
         }
     }
 }
@@ -4568,8 +4598,12 @@ impl Default for Look {
 const RUNAHEAD: u8 = 1;
 
 impl Look {
-    /// Into the renderer, which reads both every frame.
+    /// Into the renderer, which reads all of it every frame.
     fn apply(&self) {
+        slot_gfx::set_scaler(match self.scaler {
+            Scaling::PixelAa => slot_gfx::Scaler::PixelAa(self.sharpness),
+            Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
+        });
         slot_gfx::set_picture(match self.picture {
             Aspect::FourThree => slot_gfx::Picture::FourThree,
             Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
