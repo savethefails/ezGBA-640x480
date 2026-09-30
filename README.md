@@ -55,7 +55,8 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | Row | What it does |
 |---|---|
 | **Date & Time** | Set the clock (A opens it). |
-| **Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **GBA Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **SNES Picture** | `Sharp` (the default): full width, every row exactly 2 screen rows, thin bars above and below. `4:3`: the whole screen, rows stretched, so thin lines can blur. |
 | **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
 | **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
 | **Scaler** | `Pixel AA` (the default) or `Shimmerless`: how game pixels are scaled up. |
@@ -63,7 +64,7 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
 | **About** | Credits (A opens it). |
 
-The picture, grid, scaler, sharpness and run-ahead settings are saved to `System/theme.txt`, so the card remembers them,
+All of these settings but Date & Time are saved to `System/theme.txt`, so the card remembers them,
 and they're read back from it at startup, so editing the file by hand still works.
 
 `System/theme.txt` holds a few more options that aren't in the menu:
@@ -103,8 +104,9 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 - **SNES games fill the screen's width, with every row exactly 2 screen rows** (1 in the
   512×448 hi-res mode): 640×448, with a thin bar above and below. Stretched to the full 480,
   rows would come out 2 or 3 screen rows tall, and a one-pixel outline on a letter could thin
-  out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. SNES
-  games take no LCD grid, since a TV has none.
+  out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. Set
+  SNES Picture to `4:3` in the menu, or `snes-picture 4:3` in `System/theme.txt`, for the
+  whole screen instead. SNES games take no LCD grid, since a TV has none.
 
 ## Responsive controls
 

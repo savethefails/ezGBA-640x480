@@ -11,6 +11,7 @@ use crate::text;
 pub enum QuickRow {
     DateTime,
     Picture,
+    SnesPicture,
     Grid,
     GridDepth,
     Scaler,
@@ -25,9 +26,10 @@ impl QuickRow {
     /// the one that sets how soon it answers, which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 9] = [
+    pub const ALL: [QuickRow; 10] = [
         QuickRow::DateTime,
         QuickRow::Picture,
+        QuickRow::SnesPicture,
         QuickRow::Grid,
         QuickRow::GridDepth,
         QuickRow::Scaler,
@@ -45,7 +47,8 @@ impl QuickRow {
     pub fn label(self) -> &'static str {
         match self {
             QuickRow::DateTime => "Date & Time",
-            QuickRow::Picture => "Picture",
+            QuickRow::Picture => "GBA Picture",
+            QuickRow::SnesPicture => "SNES Picture",
             QuickRow::Grid => "LCD Grid",
             QuickRow::GridDepth => "Grid Depth",
             QuickRow::Scaler => "Scaler",
@@ -109,10 +112,11 @@ pub enum QuickValue {
     Sharp10,
     Sharp15,
     Sharp20,
+    SnesSharp,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 29] = [
+    pub const ALL: [QuickValue; 30] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -142,6 +146,7 @@ impl QuickValue {
         QuickValue::Sharp10,
         QuickValue::Sharp15,
         QuickValue::Sharp20,
+        QuickValue::SnesSharp,
     ];
 
     /// The Sharpness row's steps, in the order the arrows walk them.
@@ -186,6 +191,7 @@ impl QuickValue {
             QuickValue::Sharp10 => "1.0",
             QuickValue::Sharp15 => "1.5",
             QuickValue::Sharp20 => "2.0",
+            QuickValue::SnesSharp => "Sharp",
         }
     }
 
@@ -226,10 +232,10 @@ impl QuickValue {
     }
 }
 
-/// A size up from the power menu's rows: 30 px type on 44 px rows. They were 52 when the menu
-/// had three; nine at 52 run into the legend, and 44 is the tallest that holds them above it
-/// with the menu's 40 px type still clear of the bar's edges.
-pub const QUICK_PITCH: f32 = 44.0;
+/// A size up from the power menu's rows: 30 px type on 40 px rows. They were 52 when the menu
+/// had three; ten at 52 run into the legend, and 40 is the tallest that holds them above it.
+/// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar.
+pub const QUICK_PITCH: f32 = 40.0;
 /// The first row's top, with all of them centred in the space above the legend: derived from
 /// `QuickRow::ALL`, so a row added or removed moves the whole menu rather than hanging one off
 /// the bottom.
@@ -240,7 +246,7 @@ const LEGEND_AIR: f32 = 8.0;
 /// Labels start this far in from the left, and values end this far in from the right.
 pub const QUICK_EDGE: f32 = 32.0;
 /// How much shorter the bar is than its row, top and bottom, as the power menu's is.
-const BAR_INSET: f32 = 3.0;
+const BAR_INSET: f32 = 2.0;
 /// Where a line of menu type sits in its row: its baseline lands 36 px below the row's top,
 /// which puts the capitals in the middle of the bar, as the mockup has them.
 const TYPE_DROP: f32 = (QUICK_PITCH - MENU_H as f32) / 2.0;

@@ -18,7 +18,7 @@
 use std::path::Path;
 
 use slot_gfx::Fit;
-use slot_store::{ini, Platform};
+use slot_store::{ini, Platform, SnesPicture};
 
 /// A sibling of `selected_core.ini`, in the same `<stem> = <value>` shape and read by the same
 /// parser. Flat and stem-keyed like that one, which means a `GB/Tetris.gb` and a
@@ -72,7 +72,7 @@ pub fn write_video_mode(root: &Path, stem: &str, mode: VideoMode) -> std::io::Re
 
 /// How a platform's picture is placed. `mode` only moves a Game Boy's: the GBA follows the
 /// card's `picture` setting and a SNES is always the 4:3 its games were drawn for.
-pub fn fit_for(platform: Platform, mode: VideoMode) -> Fit {
+pub fn fit_for(platform: Platform, mode: VideoMode, snes: SnesPicture) -> Fit {
     match platform {
         Platform::Gba => Fit::Gba,
         Platform::Gb | Platform::Gbc => match mode {
@@ -82,6 +82,10 @@ pub fn fit_for(platform: Platform, mode: VideoMode) -> Fit {
         // Full width, rows at a whole multiple: 224 at 2x and 448 hi-res at 1x are both 448,
         // every source row the same height, so no one-pixel outline is thinned into its
         // neighbour, as at 224 to 480. A 4:3 television's shape to within 7%.
-        Platform::Snes => Fit::Rows,
+        // `snes-picture 4:3` is the whole panel instead, rows at 2 or 3 panel rows each.
+        Platform::Snes => match snes {
+            SnesPicture::Sharp => Fit::Rows,
+            SnesPicture::FourThree => Fit::Aspect(4.0 / 3.0),
+        },
     }
 }

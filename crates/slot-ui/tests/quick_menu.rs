@@ -94,7 +94,8 @@ fn the_rows_run_in_the_order_the_user_chose() {
         labels,
         [
             "Date & Time",
-            "Picture",
+            "GBA Picture",
+            "SNES Picture",
             "LCD Grid",
             "Grid Depth",
             "Scaler",
@@ -141,7 +142,8 @@ fn the_values_read_as_the_menu_prints_them() {
             "0.5",
             "1.0",
             "1.5",
-            "2.0"
+            "2.0",
+            "Sharp"
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);

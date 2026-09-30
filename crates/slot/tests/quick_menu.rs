@@ -116,6 +116,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
     );
     for want in [
         QuickRow::Picture,
+        QuickRow::SnesPicture,
         QuickRow::Grid,
         QuickRow::GridDepth,
         QuickRow::Scaler,
@@ -296,9 +297,10 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 8] = [
+const SELECTABLE: [QuickRow; 9] = [
     QuickRow::DateTime,
     QuickRow::Picture,
+    QuickRow::SnesPicture,
     QuickRow::Grid,
     QuickRow::GridDepth,
     QuickRow::Scaler,
@@ -457,6 +459,8 @@ fn the_arrows_change_the_look_and_write_it_to_theme_txt() {
         "an arrow moved the bar"
     );
 
+    // Past SNES Picture to the grid.
+    press(&mut a, Btn::Down);
     press(&mut a, Btn::Down);
     for want in [QuickValue::Strict, QuickValue::Lcd, QuickValue::Lcd] {
         press(&mut a, Btn::Right);
@@ -507,7 +511,7 @@ fn the_bar_runs_edge_to_edge_behind_the_selected_row() {
         let top = QUICK_TOP + QUICK_PITCH * row.index() as f32;
         assert_eq!(
             bars,
-            vec![[0.0, top + 3.0, OUT_W as f32, QUICK_PITCH - 6.0]],
+            vec![[0.0, top + 2.0, OUT_W as f32, QUICK_PITCH - 4.0]],
             "{row:?}"
         );
         press(&mut a, Btn::Down);
@@ -610,4 +614,37 @@ fn the_scaler_and_sharpness_rows_step_and_are_kept_on_the_card() {
     let again = slot_store::Theme::read(d.path());
     assert_eq!(again.sharpness, 1.0);
     assert_eq!(again.scaler, slot_store::Scaling::Shimmerless);
+}
+
+/// SNES Picture opens on Sharp, whole rows, and switches to the full panel's 4:3; the seated
+/// SNES cart is placed by it at once, and theme.txt keeps it.
+#[test]
+fn the_snes_picture_row_chooses_whole_rows_or_4_3() {
+    let (d, mut a) = on_carousel_with_theme("");
+    assert_eq!(
+        a.quick_value(QuickRow::SnesPicture),
+        Some(QuickValue::SnesSharp)
+    );
+    open_at(&mut a, QuickRow::SnesPicture);
+    press(&mut a, Btn::Right);
+    assert_eq!(
+        a.quick_value(QuickRow::SnesPicture),
+        Some(QuickValue::FourThree)
+    );
+    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    assert_eq!(theme, "snes-picture 4:3\n");
+    assert_eq!(
+        slot_store::Theme::read(d.path()).snes_picture,
+        slot_store::SnesPicture::FourThree
+    );
+    use slot::video_mode::{fit_for, VideoMode};
+    use slot_store::{Platform, SnesPicture};
+    assert_eq!(
+        fit_for(Platform::Snes, VideoMode::Actual, SnesPicture::Sharp),
+        slot_gfx::Fit::Rows
+    );
+    assert_eq!(
+        fit_for(Platform::Snes, VideoMode::Actual, SnesPicture::FourThree),
+        slot_gfx::Fit::Aspect(4.0 / 3.0)
+    );
 }

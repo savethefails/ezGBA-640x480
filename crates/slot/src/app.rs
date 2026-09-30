@@ -7,8 +7,8 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart, Core,
-    LcdGrid, Platform, Scaling, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX,
-    BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing, Theme,
+    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -782,6 +782,7 @@ impl App {
             runahead: theme.runahead.unwrap_or(RUNAHEAD),
             scaler: theme.scaler,
             sharpness: theme.sharpness,
+            snes_picture: theme.snes_picture,
         };
         look.apply();
         slot_ui::set_theme(theme);
@@ -997,6 +998,10 @@ impl App {
                 LcdGrid::Lcd => QuickValue::Lcd,
             }),
             QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
+            QuickRow::SnesPicture => Some(match self.look.snes_picture {
+                SnesPicture::Sharp => QuickValue::SnesSharp,
+                SnesPicture::FourThree => QuickValue::FourThree,
+            }),
             QuickRow::Scaler => Some(match self.look.scaler {
                 Scaling::PixelAa => QuickValue::PixelAa,
                 Scaling::Shimmerless => QuickValue::Shimmerless,
@@ -1220,7 +1225,7 @@ impl App {
     /// How the seated cart's picture is placed on the panel: the console's own rule, and for a
     /// Game Boy cart whichever of its two sizes L and R last chose.
     pub fn fit(&self) -> slot_gfx::Fit {
-        video_mode::fit_for(self.platform, self.video_mode)
+        video_mode::fit_for(self.platform, self.video_mode, self.look.snes_picture)
     }
 
     /// Whether L and R belong to slot rather than to the game. The Game Boy and the Game Boy
@@ -1903,6 +1908,19 @@ impl App {
                 self.look.depth = f32::from(depths[step(now, depths.len())]);
                 ("grid-depth", format!("{}", self.look.depth as u8))
             }
+            QuickRow::SnesPicture => {
+                const SNES: [SnesPicture; 2] = [SnesPicture::Sharp, SnesPicture::FourThree];
+                let at = SNES
+                    .iter()
+                    .position(|x| *x == self.look.snes_picture)
+                    .unwrap_or(0);
+                self.look.snes_picture = SNES[step(at, SNES.len())];
+                let word = match self.look.snes_picture {
+                    SnesPicture::Sharp => "sharp",
+                    SnesPicture::FourThree => "4:3",
+                };
+                ("snes-picture", word.to_string())
+            }
             QuickRow::Scaler => {
                 const SCALERS: [Scaling; 2] = [Scaling::PixelAa, Scaling::Shimmerless];
                 let at = SCALERS
@@ -1949,6 +1967,7 @@ impl App {
             QuickRow::Picture
             | QuickRow::Grid
             | QuickRow::GridDepth
+            | QuickRow::SnesPicture
             | QuickRow::Scaler
             | QuickRow::Sharpness
             | QuickRow::RunAhead
@@ -4577,6 +4596,9 @@ struct Look {
     /// Which pixel art scaler draws the picture, and how hard Pixel AA's edges are, 0 to 2.
     scaler: Scaling,
     sharpness: f32,
+    /// How a SNES picture is placed. Read by `App::fit` as the cart is drawn, since a SNES
+    /// picture's place depends on the seated cart rather than on a global the renderer holds.
+    snes_picture: SnesPicture,
 }
 
 impl Default for Look {
@@ -4588,6 +4610,7 @@ impl Default for Look {
             runahead: RUNAHEAD,
             scaler: Scaling::PixelAa,
             sharpness: 1.0,
+            snes_picture: SnesPicture::Sharp,
         }
     }
 }
