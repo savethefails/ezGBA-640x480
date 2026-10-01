@@ -139,10 +139,10 @@ fn a_closed_lid_keeps_the_frame_before_it() {
     assert!(kept == before, "the lid kept some other frame");
 }
 
-/// A held POWER sends a press on the way down, which only saves, and opens the menu once it
-/// has been held a second. The frame kept is the one from before the menu.
+/// A held POWER sends a press on the way down, which only saves, and starts the shutdown once
+/// it has been held three seconds. The frame kept is the one from before the shutdown screen.
 #[test]
-fn a_held_power_keeps_the_frame_before_the_menu() {
+fn a_held_power_keeps_the_frame_before_the_shutdown() {
     let Some((before, kept)) = kept_through(|f, input| {
         input.0.push_back(vec![RawEvent::Down(Btn::Power)]);
         f.advance(input);
