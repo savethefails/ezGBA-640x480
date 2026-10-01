@@ -240,7 +240,7 @@ impl Session {
             self.pad.apply(Action::GbaUp(*btn));
         }
         if let Some(emu) = &self.emu {
-            emu.set_input(self.pad.mask());
+            emu.set_input(self.app.console_buttons(self.pad.mask()));
         }
     }
 
@@ -490,6 +490,14 @@ impl Session {
 
     /// The switcher pauses the game rather than dimming a live one. Paused publishes no
     /// frames, so the compositor keeps showing the last one behind the cards.
+    /// The frontend has shown a frame and fed the buttons for the next one: the core runs its
+    /// next present now. See `EmuHandle::kick`.
+    pub fn kick(&self) {
+        if let Some(emu) = &self.emu {
+            emu.kick();
+        }
+    }
+
     fn sync_speed(&self) {
         if let Some(emu) = &self.emu {
             // Ahead of the speed, so the first fast present already runs at the chosen one. The
@@ -499,6 +507,7 @@ impl Session {
             // can afford, up to this.
             emu.set_fast_steps(u32::from(self.app.ff_speed()));
             emu.set_ff_sound(self.app.ff_sound());
+            emu.set_runahead(self.app.runahead());
             // Loading a core and running one are separate things. The insert animation
             // hides the load, but a core left running behind the cart burns through the
             // GBA bios intro, so the reveal catches only its tail. Paused until the cart is
@@ -617,6 +626,7 @@ impl Session {
         let core = match platform {
             Platform::Gba => slot_store::core_for(&self.root, stem),
             Platform::Gb | Platform::Gbc => Core::Mgba,
+            Platform::Snes => Core::Snes9x,
         };
         self.app.set_core(core);
         // `platform` comes straight off the `Cart` the shelf scanned, not re-derived from the
@@ -626,7 +636,7 @@ impl Session {
         // Read for every cart rather than only for the Game Boy ones. It is a cosmetic
         // preference with no core or directory hanging off it, and reading it unconditionally
         // is what stops a GBA cart inheriting whatever the last Game Boy cart was left in —
-        // `App::source_rect` is the one place that decides a GBA picture never moves.
+        // `App::fit` is the one place that decides how the picture is placed.
         self.app
             .set_video_mode(crate::video_mode::video_mode_for(&self.root, stem));
         // gpSP reads its link mode only while a game loads, so what this hands the core is what

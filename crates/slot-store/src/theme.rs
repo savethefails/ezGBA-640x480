@@ -27,6 +27,62 @@ pub struct Theme {
     pub scrim: [u8; 3],
     /// `menu off` keeps MENU on the shelf from opening the settings menu.
     pub menu: bool,
+    /// `picture 4:3` fills the panel; `picture 3:2` keeps the GBA's own shape with thin bars.
+    pub picture: Aspect,
+    /// `scaler shimmerless` scales the game with sharp-shimmerless instead of Pixel AA.
+    pub scaler: Scaling,
+    /// `sharpness 1.5`: how narrow Pixel AA's blend at a pixel edge is, from 0.0 (soft) through
+    /// 1.0 (area weighted, the default) to 2.0 (nearly hard). Pixel AA only.
+    pub sharpness: f32,
+    /// `grid on` draws ezGBA's LCD grid over the game; `grid strict` does too, but never at the
+    /// cost of any brightness; `grid lcd` darkens every colour alike, as a backlit LCD does;
+    /// `grid off` is the default.
+    pub grid: LcdGrid,
+    /// `grid-depth 40`: how dark the middle of a grid line is, in percent, from 5 to 100. `None`
+    /// is the grid's own default.
+    pub grid_depth: Option<f32>,
+    /// `runahead 1`: frames to run ahead of the game, 0 to 2, to take its own lag off a press.
+    /// `None` is the default, one.
+    pub runahead: Option<u8>,
+    /// `snes-picture sharp` or `snes-picture 4:3`. See `SnesPicture`.
+    pub snes_picture: SnesPicture,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum LcdGrid {
+    #[default]
+    Off,
+    On,
+    Strict,
+    Lcd,
+}
+
+/// Which pixel art scaler draws the game picture.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Scaling {
+    #[default]
+    PixelAa,
+    Shimmerless,
+}
+
+/// How a SNES picture is placed.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum SnesPicture {
+    /// The panel's width, rows at a whole multiple: 640x448, every row the same height.
+    #[default]
+    Sharp,
+    /// The whole panel at 4:3, rows stretched to 2 or 3 panel rows each.
+    FourThree,
+}
+
+/// The shape of the game picture on a 640x480 panel.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Aspect {
+    /// The whole panel, the GBA picture a little narrower than it should be.
+    #[default]
+    FourThree,
+    /// The GBA's own 3:2 at the full panel width, with a thin bar above and below.
+    ThreeTwo,
 }
 
 impl Default for Theme {
@@ -38,6 +94,13 @@ impl Default for Theme {
             edge: [0x4d, 0x4d, 0x57],
             scrim: [0x00, 0x00, 0x00],
             menu: true,
+            picture: Aspect::FourThree,
+            scaler: Scaling::PixelAa,
+            sharpness: 1.0,
+            grid: LcdGrid::Off,
+            grid_depth: None,
+            runahead: None,
+            snes_picture: SnesPicture::Sharp,
         }
     }
 }
@@ -71,6 +134,32 @@ impl Theme {
             match (name.as_str(), value.to_ascii_lowercase().as_str()) {
                 ("menu", "off") => theme.menu = false,
                 ("menu", "on") => theme.menu = true,
+                ("picture", "4:3") => theme.picture = Aspect::FourThree,
+                ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
+                ("grid", "on") => theme.grid = LcdGrid::On,
+                ("grid", "strict") => theme.grid = LcdGrid::Strict,
+                ("grid", "lcd") => theme.grid = LcdGrid::Lcd,
+                ("grid", "off") => theme.grid = LcdGrid::Off,
+                ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
+                ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
+                ("snes-picture", "sharp") => theme.snes_picture = SnesPicture::Sharp,
+                ("snes-picture", "4:3") => theme.snes_picture = SnesPicture::FourThree,
+                ("runahead", "off") => theme.runahead = Some(0),
+                ("runahead", v) => {
+                    if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {
+                        theme.runahead = Some(n);
+                    }
+                }
+                ("grid-depth", v) => {
+                    if let Some(d) = v.parse::<f32>().ok().filter(|d| (5.0..=100.0).contains(d)) {
+                        theme.grid_depth = Some(d);
+                    }
+                }
+                ("sharpness", v) => {
+                    if let Some(s) = v.parse::<f32>().ok().filter(|s| (0.0..=2.0).contains(s)) {
+                        theme.sharpness = s;
+                    }
+                }
                 _ => {}
             }
             let Some(rgb) = hex(value) else {
@@ -87,6 +176,40 @@ impl Theme {
         }
         theme
     }
+}
+
+/// Sets one line of `System/theme.txt`, as the settings menu does, and leaves every other line
+/// as it was: colours, comments and anything misspelt all survive. The first line setting
+/// `name` is rewritten in place and any later ones are dropped, since the last of them was the
+/// one being read; a file with none gets the line added at the end, and a card with no file
+/// gets one with just that line. Written whole and renamed into place, so a card pulled
+/// mid-write keeps the old file rather than half of the new one.
+pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Result<()> {
+    let dir = root.join("System");
+    let path = dir.join(THEME_FILE);
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let line = format!("{name} {value}");
+    let mut out: Vec<String> = Vec::new();
+    let mut written = false;
+    for l in old.lines() {
+        let t = l.trim();
+        let key = t.split_whitespace().next().unwrap_or("");
+        if !t.starts_with('#') && key.eq_ignore_ascii_case(name) {
+            if !written {
+                out.push(line.clone());
+                written = true;
+            }
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    if !written {
+        out.push(line);
+    }
+    let mut text = out.join("\n");
+    text.push('\n');
+    std::fs::create_dir_all(&dir)?;
+    crate::atomic::atomic_write(&path, text.as_bytes())
 }
 
 /// `rrggbb`, with or without the leading hash. Both are written in the wild and neither is

@@ -92,7 +92,18 @@ fn the_rows_run_in_the_order_the_user_chose() {
     let labels = QuickRow::ALL.map(QuickRow::label);
     assert_eq!(
         labels,
-        ["Date & Time", "About", "Brightness"]
+        [
+            "Date & Time",
+            "GBA Picture",
+            "SNES Picture",
+            "LCD Grid",
+            "Grid Depth",
+            "Scaler",
+            "Sharpness",
+            "Run-Ahead",
+            "About",
+            "Brightness"
+        ]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
     assert_eq!(opens, [QuickRow::DateTime, QuickRow::About]);
@@ -102,10 +113,63 @@ fn the_rows_run_in_the_order_the_user_chose() {
 fn the_values_read_as_the_menu_prints_them() {
     assert_eq!(
         QuickValue::ALL.map(QuickValue::text),
-        ["2×", "3×", "4×", "6×", "On", "Off", "L2 / R2"]
+        [
+            "2×",
+            "3×",
+            "4×",
+            "6×",
+            "On",
+            "Off",
+            "L2 / R2",
+            "4:3",
+            "3:2",
+            "Strict",
+            "LCD",
+            "10%",
+            "20%",
+            "30%",
+            "40%",
+            "50%",
+            "60%",
+            "70%",
+            "80%",
+            "90%",
+            "100%",
+            "1 Frame",
+            "2 Frames",
+            "Pixel AA",
+            "Shimmerless",
+            "0.5",
+            "1.0",
+            "1.5",
+            "2.0",
+            "Sharp"
+        ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
     assert_eq!(QuickValue::flag(false), QuickValue::Off);
+}
+
+/// Grid Depth shows the step nearest the card's depth, which can be anything from 5 to 100.
+#[test]
+fn a_depth_shows_as_its_nearest_step() {
+    for (percent, want) in [
+        (5.0, QuickValue::Depth10),
+        (10.0, QuickValue::Depth10),
+        (40.0, QuickValue::Depth40),
+        (44.0, QuickValue::Depth40),
+        (67.0, QuickValue::Depth70),
+        (100.0, QuickValue::Depth100),
+    ] {
+        assert_eq!(QuickValue::depth(percent), want, "{percent}");
+    }
+    for (i, d) in QuickValue::DEPTHS.iter().enumerate() {
+        assert_eq!(
+            QuickValue::depth(f32::from(*d)).text(),
+            format!("{d}%"),
+            "step {i}"
+        );
+    }
 }
 
 /// Ruling S1: the month by name, the day, and the time the way the carousel prints it.

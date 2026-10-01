@@ -13,8 +13,8 @@ use std::num::NonZeroU32;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
-/// Two times the 720x480 output, the size the device panel maps to on a desktop.
-const DEFAULT_W: u32 = 1440;
+/// Two times the 640x480 output, the size the device panel maps to on a desktop.
+const DEFAULT_W: u32 = 1280;
 const DEFAULT_H: u32 = 960;
 
 pub struct HostSurface {

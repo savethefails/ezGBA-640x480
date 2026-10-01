@@ -1,12 +1,11 @@
-use slot_retro::{GBA_H, GBA_W};
-
-/// The polaroid picture: one GBA frame, PNG, at its own size. There is nothing to downscale
-/// because the core's frame is already the 240x160 the switcher shows.
+/// The polaroid picture: one frame, PNG, at the size the core drew it. There is nothing to
+/// downscale because the frame is already no bigger than the switcher shows, and the drawn
+/// still is placed from its own size, as the live game is.
 ///
 /// `xrgb8888` is libretro's frame buffer, little endian, so its bytes arrive B, G, R, X.
-pub fn png(xrgb8888: &[u8]) -> Option<Vec<u8>> {
-    let n = (GBA_W * GBA_H) as usize;
-    if xrgb8888.len() < n * 4 {
+pub fn png(xrgb8888: &[u8], (w, h): (u32, u32)) -> Option<Vec<u8>> {
+    let n = (w * h) as usize;
+    if n == 0 || xrgb8888.len() < n * 4 {
         return None;
     }
     let mut rgb = Vec::with_capacity(n * 3);
@@ -15,7 +14,7 @@ pub fn png(xrgb8888: &[u8]) -> Option<Vec<u8>> {
     }
 
     let mut out = Vec::new();
-    let mut enc = png::Encoder::new(&mut out, GBA_W, GBA_H);
+    let mut enc = png::Encoder::new(&mut out, w, h);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().ok()?;

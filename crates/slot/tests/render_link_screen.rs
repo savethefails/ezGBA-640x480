@@ -188,14 +188,14 @@ fn the_host_picks_a_purple_plug_over_the_port() {
         0,
         "cable-host-pick",
     );
-    let housing = at(&px, 356, 330 - 60);
+    let housing = at(&px, 316, 330 - 60);
     assert!(
         housing[2] > housing[1] + 30,
         "no purple housing above the port: {housing:?}"
     );
-    // R11: (360, 396) lands on the port's middle gold pin (pins sit at y 7-12, x 359-364 on
+    // R11: (320, 396) lands on the port's middle gold pin (pins sit at y 7-12, x 319-324 on
     // the port face); sample the dark slot below the pins instead.
-    let slot = at(&px, 360, 406);
+    let slot = at(&px, 320, 406);
     assert!(
         slot.iter().all(|c| *c < 0x14),
         "no port under the plug: {slot:?}"
@@ -210,7 +210,7 @@ fn a_joiner_picks_a_gray_plug() {
         0,
         "cable-join-pick",
     );
-    let housing = at(&px, 356, 330 - 60);
+    let housing = at(&px, 316, 330 - 60);
     assert!(
         (housing[0] as i32 - housing[2] as i32).abs() < 14 && housing[0] > 0x70,
         "not gray: {housing:?}"
@@ -226,7 +226,7 @@ fn a_wireless_link_seats_the_adapter_with_its_label_plate() {
         opened: false,
     };
     let px = render(menu, LinkKind::Wireless, 2000, "wireless-linked");
-    let plate = at(&px, 360, 388 - 12);
+    let plate = at(&px, 320, 388 - 12);
     assert!(
         plate[0] > 0x28 && plate[0] < 0x70,
         "no plate where the seated adapter's label goes: {plate:?}"
@@ -248,7 +248,7 @@ fn a_failed_plug_leaves_where_it_waited() {
         since: 1200,
     };
     let gone = render(failed, LinkKind::Cable, 1600, "cable-failed");
-    let spot = (356, 350 - 60);
+    let spot = (316, 350 - 60);
     assert_ne!(
         at(&waiting, spot.0, spot.1),
         at(&gone, spot.0, spot.1),
@@ -274,7 +274,7 @@ fn ending_a_link_pulls_the_plug_back_out_of_the_port() {
     };
     let seated = render(menu, LinkKind::Cable, 0, "cable-unplug-start");
     let gone = render(menu, LinkKind::Cable, 400, "cable-unplug-end");
-    let (x, y) = (356, 359);
+    let (x, y) = (316, 359);
     assert_ne!(
         at(&seated, x, y),
         GROUND,
@@ -298,7 +298,7 @@ fn ending_a_wireless_link_lifts_the_adapter_off_the_port() {
     };
     let seated = render(menu, LinkKind::Wireless, 0, "wireless-unplug-start");
     let gone = render(menu, LinkKind::Wireless, 400, "wireless-unplug-end");
-    let (x, y) = (360, 380);
+    let (x, y) = (320, 380);
     assert_ne!(
         at(&seated, x, y),
         GROUND,

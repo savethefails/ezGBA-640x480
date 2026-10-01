@@ -5,6 +5,8 @@
 ezGBA turns an Anbernic RG SP into a Game Boy Advance that anyone can pick up and play.
 Made for kids, and for grown-ups who just want a simple GBA.
 
+This fork is laid out for the **RG35XXSP** and its 640×480 screen.
+
 <p align="center">
   <img src="media/shelf-advance-wars.png" width="45%" alt="The shelf: Advance Wars selected, its box art filling the screen above the carts">
   <img src="media/shelf-wario-land.png" width="45%" alt="The shelf: Wario Land 4 selected">
@@ -23,7 +25,7 @@ Made for kids, and for grown-ups who just want a simple GBA.
 |---|---|
 | **D-pad** | Pick a game |
 | **A** | Play it |
-| **MENU** | In a game: save and go back to your games. On the shelf: settings. |
+| **MENU** | In a game: save and go back to your games. On the shelf: settings. With only one game on the card, it boots straight into it, and MENU still takes you to the shelf and its settings. |
 | **L2 / R2** | Screen darker / brighter |
 | **Close the lid** | Saves and sleeps. Open it within 3 minutes to keep playing. After that it turns itself off to save battery, and the next time you turn it on, your game picks up right where you left off. |
 
@@ -48,25 +50,119 @@ work, unchanged.
 
 ## Settings
 
-Tap **MENU** on the shelf to set the date and time, or see About. It also reminds you that
-L2 / R2 change the brightness.
+Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Right change it:
 
-For a couple more options, edit `System/theme.txt` on the SD card:
+| Row | What it does |
+|---|---|
+| **Date & Time** | Set the clock (A opens it). |
+| **GBA Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **SNES Picture** | `Sharp` (the default): full width, every row exactly 2 screen rows, thin bars above and below. `4:3`: the whole screen, rows stretched, so thin lines can blur. |
+| **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
+| **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
+| **Scaler** | `Pixel AA` (the default) or `Shimmerless`: how game pixels are scaled up. |
+| **Sharpness** | How hard Pixel AA's pixel edges are: `0.5`, `1.0` (the default, and the only one with no shimmer when the screen scrolls), `1.5` or `2.0`. |
+| **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
+| **About** | Credits (A opens it). |
+
+All of these settings but Date & Time are saved to `System/theme.txt`, so the card remembers them,
+and they're read back from it at startup, so editing the file by hand still works.
+
+`System/theme.txt` holds a few more options that aren't in the menu:
 
 | Line | What it does |
 |---|---|
-| `menu off` | Hide the settings menu, so little hands can't change anything |
+| `menu off` | Hide the settings menu, so little hands can't change anything. With one game on the card, MENU then does nothing in the game: it's a one-game console. |
 | `scrim #F7E7CE` | Background color behind the shelf |
+| `picture 3:2` | Show games in the GBA's own shape, with thin black bars above and below. Without it, games fill the whole screen (`picture 4:3`). |
+| `sharpness 1.5` | How hard pixel edges are, from `0` (soft) to `2` (nearly hard). `1` is the default and the only setting with no shimmer at all. |
+| `scaler shimmerless` | Scale games with sharp-shimmerless instead of Pixel AA. |
+| `grid on` | Draw an LCD grid over games: a line between every pixel. The lines sit exactly where the pixels meet, so they're evenly spaced across the whole screen, and each pixel is brightened to make up for its lines. On white and fully saturated colours the lines are lighter, so those colours keep most of their brightness. |
+| `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
+| `grid lcd` | The grid as a real backlit LCD draws it: the lines darken every colour by the same amount and nothing is brightened to make up for it, so every colour keeps its place against every other and nothing washes out. The picture is dimmer (about a third at the default depth); turn the brightness up with R2 to make up for it. |
+| `grid-depth 40` | How dark the grid lines are, from `5` (barely there) to `100` (black at their middle). `40` is the default. Try `60` if you can't see the grid at arm's length. With `grid lcd`, deeper also means a dimmer picture. |
+
+## The RG35XXSP's 640×480 screen
+
+Everything is drawn for 640×480 directly, not made for another screen and shrunk to fit:
+
+- **The shelf, menus, clock and About label are laid out for 640×480**, pixel for pixel.
+- **The game fills the whole screen.** The GBA is a little wider than 4:3, so games look
+  about 11% narrower than on a real GBA. To keep the GBA's exact shape instead, add
+  `picture 3:2` to `System/theme.txt`: the game is then 640×427, with thin black bars above
+  and below.
+- **Sharp pixels, no shimmer.** 240 doesn't go into 640 a whole number of times, so each game
+  pixel is 2 or 3 screen pixels wide. The picture is scaled with Pixel AA, the RetroArch
+  shader, which keeps every pixel solid and blends only the one screen pixel where two meet,
+  mixing them as light rather than as numbers, so edges keep their weight and scrolling
+  doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game pixel, so nothing is
+  blended at all.
+- **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws evenly
+  spaced lines between the pixels, with each pixel brightened to make up for them. It's
+  off unless you turn it on.
+- **Game Boy and Game Boy Color games are exactly 3×**: 480×432, every pixel three screen
+  pixels square, with a border round them. L stretches one to fill the screen; R puts it back.
+- **SNES games fill the screen's width, with every row exactly 2 screen rows** (1 in the
+  512×448 hi-res mode): 640×448, with a thin bar above and below. Stretched to the full 480,
+  rows would come out 2 or 3 screen rows tall, and a one-pixel outline on a letter could thin
+  out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. Set
+  SNES Picture to `4:3` in the menu, or `snes-picture 4:3` in `System/theme.txt`, for the
+  whole screen instead. SNES games take no LCD grid, since a TV has none.
+
+## Responsive controls
+
+Most games take a frame or two to answer a button, on top of the device's own delay. ezGBA
+takes both down:
+
+- **Run-ahead**, as RetroArch has it. Every frame, the emulator runs the real frame, saves the
+  game, runs one frame further on the same buttons and shows that, then goes back. What you
+  see is where the game will be a frame later, so a frame of the game's own lag is gone. It
+  costs one extra frame of emulation and a save and load, every frame. If a game is too heavy
+  for that, ezGBA switches run-ahead off for it by itself and plays it normally. Set it in the
+  menu, or with `runahead 0`, `1` or `2` in `System/theme.txt`. Two frames removes more lag
+  but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
+  always off in a link session.
+- **In step with the screen.** The emulator runs each frame right after the buttons are read
+  and just before the frame is shown, instead of on a clock of its own that drifts against
+  the screen's, which could leave a press waiting up to a frame longer.
+
+## SNES games
+
+Put `.sfc` or `.smc` files in `Games/SNES/`. Every game, whatever it's for, stands on the one
+shelf in order of its name, each in its own console's cartridge. Every button is the
+SNES's own, X and Y included, and L2/R2 are still brightness. Box art and labels work as they
+do for the GBA, from `Backdrops/SNES/` and `Labels/SNES/`.
+
+SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence allows it to be
+shared only for free and non-commercially, with its licence beside it (it ships as
+`System/licenses/snes9x-LICENSE.txt`). ezGBA is free; just don't sell anything with it inside.
 
 ## Setup
 
-1. Set up your RG SP using [slot.'s install guide](https://slot.kowalski.io).
+1. Flash **BaseOS for the RG35XXSP**: `baseos-rg35xxsp-<version>.img.zip` from
+   [BaseOS's releases](https://github.com/pvaibhav/BaseOS/releases), following its
+   [install guide](https://github.com/pvaibhav/BaseOS/wiki/BaseOS-Install-Guide). BaseOS
+   starts ezGBA by itself. Don't use AGS-102's `ags102.img`: it is built for the 720×480
+   RG SP, and on an RG35XXSP the screen stays dark.
 2. Download the latest ezGBA from [releases](../../releases).
-3. Unzip it and copy it onto the second SD card, just like slot.
+3. Unzip it and copy the **contents** of the folder inside onto the card: onto the second
+   SD card if you use two, or onto the card's `BASEOS` drive if you use one.
 4. **Add box art (optional).** Box art isn't included, since it belongs to the publishers.
-   Put a 720×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
+   Put a 640×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
    `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
-   so the carts don't cover it.
+   so the carts don't cover it. Art made for the 720×480 RG SP still works: it is centred
+   and loses 40 pixels off each side.
+
+## Updating
+
+On a card that's already set up, only `System/slot` changes between builds. The **slot**
+workflow builds just that file on every push to this repo, in a couple of minutes. Open the
+latest **slot** run under Actions, download the artifact at the bottom, unzip it, and copy
+`slot` into the card's `System` folder, replacing the old one. Your saves, `theme.txt` and
+settings are left alone.
+
+The **release** workflow builds the whole card, with all three emulators, for setting up a new
+card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as
+well as the new `System/slot`.
 
 ## AI disclosure
 

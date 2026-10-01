@@ -44,6 +44,9 @@ fn bit(btn: Btn) -> Option<u16> {
         Btn::Right => ButtonMask::RIGHT,
         Btn::A => ButtonMask::A,
         Btn::B => ButtonMask::B,
+        // A SNES's. `App::console_buttons` keeps them from every console that had none.
+        Btn::X => ButtonMask::X,
+        Btn::Y => ButtonMask::Y,
         Btn::L1 => ButtonMask::L,
         Btn::R1 => ButtonMask::R,
         Btn::Start => ButtonMask::START,

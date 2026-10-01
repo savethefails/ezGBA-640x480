@@ -30,8 +30,16 @@ jobs:
       gpsp_head: ${{ steps.package.outputs.gpsp_head }}
       gpsp_anchor: ${{ steps.package.outputs.gpsp_anchor }}
       gpsp_method: ${{ steps.package.outputs.gpsp_method }}
+      snes9x_sha: ${{ steps.package.outputs.snes9x_sha }}
+      snes9x_head: ${{ steps.package.outputs.snes9x_head }}
     steps:
       - uses: actions/checkout@v7
+
+      # Named for the tag, or for the branch on a hand run. A branch name can hold a `/`, which
+      # is not allowed in an artifact's name and would nest the tree a folder deeper, so it is
+      # spelled with a `-` instead.
+      - name: Name the tree
+        run: echo "NAME=slot-$(printf '%s' "$GITHUB_REF_NAME" | tr '/' '-')" >> "$GITHUB_ENV"
 
       # The image already carries curl, file and unzip, which the fetch and the arch check
       # need. zip is missing, and so is cmake, which core:device builds mGBA with. Bullseye is
@@ -55,18 +63,21 @@ jobs:
       # Named for the tag, so what comes out of the archive says which version it is rather
       # than landing seven unlabelled folders wherever it was opened.
       - name: Build the tree
-        run: task dist:device OUT="slot-${GITHUB_REF_NAME}"
+        run: task dist:device OUT="$NAME"
 
       # Before anything is published, not after. A tree built by the wrong toolchain is a
       # download that bootloops a device, and it costs one exec to know.
       - name: Check what is about to ship
         run: |
           set -eu
-          out="slot-${GITHUB_REF_NAME}"
+          out="$NAME"
           file "$out/System/slot" | grep -q aarch64
           file "$out/System/mgba_libretro.so" | grep -q aarch64
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
+          file "$out/System/snes9x_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
+          # snes9x's terms: its licence and copyright notice beside every copy.
+          test -f "$out/System/licenses/snes9x-LICENSE.txt"
           # GPL-2.0 section 3(a): the release does not ship without gpSP's corresponding
           # source. `task dist:device` names the file for the commit `core:gpsp` recorded, so
           # that recording is what says which file to look for. The .meta file travels with
@@ -87,7 +98,7 @@ jobs:
         id: package
         run: |
           set -eu
-          out="slot-${GITHUB_REF_NAME}"
+          out="$NAME"
           zip="$out-h700.zip"
           zip -qry "$zip" "$out"
           {
@@ -114,6 +125,8 @@ jobs:
             echo "gpsp_head=$(cat vendor/gpsp-src.sha)"
             echo "gpsp_anchor=$(grep '^binary_date=' vendor/gpsp-src.meta | cut -d= -f2)"
             echo "gpsp_method=$(grep '^resolved_via=' vendor/gpsp-src.meta | cut -d= -f2)"
+            echo "snes9x_sha=$(sha256sum vendor/snes9x_libretro.so | cut -d' ' -f1)"
+            echo "snes9x_head=$(grep '^commit=' vendor/snes9x_libretro.so.meta | cut -d= -f2)"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
@@ -149,6 +162,8 @@ jobs:
           GPSP_HEAD: ${{ needs.build.outputs.gpsp_head }}
           GPSP_ANCHOR: ${{ needs.build.outputs.gpsp_anchor }}
           GPSP_METHOD: ${{ needs.build.outputs.gpsp_method }}
+          SNES9X_SHA: ${{ needs.build.outputs.snes9x_sha }}
+          SNES9X_HEAD: ${{ needs.build.outputs.snes9x_head }}
         run: |
           set -eu
           cat > notes.md <<NOTES
@@ -167,6 +182,7 @@ jobs:
           | \`System/slot\` | aarch64, built against glibc 2.31 |
           | \`System/mgba_libretro.so\` | built from libretro/mgba @ \`${MGBA_HEAD}\` with \`${MGBA_PATCHES}\` applied, sha256 \`${MGBA_SHA}\` |
           | \`System/gpsp_libretro.so\` | libretro buildbot nightly, fetched ${CORE_DATE}, sha256 \`${GPSP_SHA}\` |
+          | \`System/snes9x_libretro.so\` | built from libretro/snes9x @ \`${SNES9X_HEAD}\`, unpatched, sha256 \`${SNES9X_SHA}\` |
           | \`System/licenses/mgba-${MGBA_HEAD}.meta\` | mGBA's source commit and the patches applied, which ship beside it as \`mgba-*.patch\` |
           | \`System/licenses/gpsp-${GPSP_HEAD}.tar.gz\` | gpSP source, libretro/gpsp \`master\` @ \`${GPSP_HEAD}\` |
           | \`System/licenses/gpsp-${GPSP_HEAD}.meta\` | anchor \`${GPSP_ANCHOR}\`, resolved via \`${GPSP_METHOD}\` |
@@ -183,6 +199,11 @@ jobs:
           \`gpsp_libretro.so\` — resolved via \`${GPSP_METHOD}\`, rather than a proven match to
           this exact binary. \`System/licenses/README.md\` says so plainly and keeps a
           section 3(b) written offer as a backstop for the gap.
+
+          snes9x is **not** open source in the same way: its licence allows it to be passed on
+          free, for non-commercial purposes only, with its licence and copyright notice beside
+          it, which ship as \`System/licenses/snes9x-LICENSE.txt\`. This release is free, and
+          nothing built from it may be sold with snes9x in it.
           NOTES
           # --repo because this job never checks out: gh works out where to publish from the
           # git remote otherwise, and there is no repository here to ask.

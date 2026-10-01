@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -82,6 +82,24 @@ const COST_BLEND: u32 = 4;
 /// budget before the core has run at all. The Mac does the same work in 0.33 ms, which is
 /// why this has to be measured on the device and not the desk.
 const SNAPSHOT_EVERY: u32 = 2;
+
+/// How much earlier than its own clock a present may start when the frontend says a frame has
+/// just been put on the panel and fresh input is in. Enough to catch a kick that lands a little
+/// before the deadline and phase-lock to it; never enough to run the game fast.
+const KICK_LEAD: Duration = Duration::from_millis(2);
+/// How much later than its own clock a present waits for that kick before running without one.
+/// A millisecond a frame is what lets a loop that started out of phase with the display drift
+/// into step with it, a sixteenth of a frame at a time, and then stay there; a frontend that
+/// stops kicking costs the game no more than that.
+const KICK_LAG: Duration = Duration::from_millis(1);
+
+/// Run-ahead's share of a present. Past it, the game cannot afford to run a frame twice and
+/// restore a state as well within 16.7 ms, and running ahead would slow it down instead of
+/// making it quicker to answer; run-ahead then switches itself off for the rest of the session.
+const RUNAHEAD_BUDGET: Duration = Duration::from_millis(12);
+/// How many presents in a row may run over `RUNAHEAD_BUDGET` before run-ahead gives up. A
+/// single heavy scene, or the scheduler, is not reason enough to lose it.
+const RUNAHEAD_STRIKES: u32 = 8;
 
 /// Frames between traced pacing lines, about five seconds.
 const TRACE_EVERY: u64 = 300;
@@ -189,6 +207,12 @@ struct Shared {
     /// and only this one can tell the screen which of the two actually happened. See
     /// `EmuHandle::peer_ended`.
     peer_ended: AtomicBool,
+    /// Frames to run ahead of the one the game is really on, 0 to 2. See `Worker::run_ahead`.
+    runahead: AtomicU8,
+    /// Set by `EmuHandle::kick` when the frontend has read the buttons for the frame it is about
+    /// to show, and waited on by the worker's pacing so the core runs right after the read.
+    kick: Mutex<Option<Instant>>,
+    kicked: Condvar,
 }
 
 impl EmuHandle {
@@ -230,6 +254,9 @@ impl EmuHandle {
             sav_refused: AtomicBool::new(false),
             link_lost: AtomicBool::new(false),
             peer_ended: AtomicBool::new(false),
+            runahead: AtomicU8::new(0),
+            kick: Mutex::new(None),
+            kicked: Condvar::new(),
         });
         let (tx, rx) = channel();
         let worker = Worker {
@@ -305,6 +332,22 @@ impl EmuHandle {
 
     pub fn set_input(&self, mask: ButtonMask) {
         self.shared.input.store(mask.0, Ordering::Relaxed);
+    }
+
+    /// Frames to run ahead, 0 to 2. Read by the worker every present.
+    pub fn set_runahead(&self, frames: u8) {
+        self.shared.runahead.store(frames.min(2), Ordering::Relaxed);
+    }
+
+    /// The frontend has put a frame on the panel and handed over the buttons for the next one.
+    /// The worker runs its next present now rather than whenever its own clock comes round, so
+    /// what the core sees is the freshest input there is and the frame it makes is ready for the
+    /// next swap. Within `KICK_LEAD` of its own clock and no further, so a frontend that kicks
+    /// too often cannot run the game fast.
+    pub fn kick(&self) {
+        let mut k = self.shared.kick.lock().unwrap_or_else(|e| e.into_inner());
+        *k = Some(Instant::now());
+        self.shared.kicked.notify_one();
     }
 
     /// What the worker will read on its next pass. The far side of the one boundary a
@@ -580,6 +623,16 @@ impl Worker {
         let mut fast_span: Option<(Instant, Duration)> = None;
         let mut deadline = Instant::now();
         let mut paced = 0u64;
+        // Run-ahead, while it is still affordable and the core can save its state. See `run_ahead`.
+        let mut runahead_on = true;
+        let mut ahead_strikes = 0u32;
+        let mut ahead_audio: Option<Vec<i16>> = None;
+        // The frame ahead's picture, and the buffer it is copied into, kept between presents.
+        let mut ahead_picture: Option<(Vec<u8>, (u32, u32))> = None;
+        let mut ahead_spare: Vec<u8> = Vec::new();
+        // The state run-ahead saved this present, which is the real frame's: rewind takes it
+        // rather than saving the same state again.
+        let mut ahead_state: Option<Vec<u8>> = None;
         // `None` until a session begins. Held here rather than on `Shared`: the transport is
         // not `Sync`-shaped state a render-thread read would make sense of, only something
         // this loop drains and feeds once a frame.
@@ -602,7 +655,8 @@ impl Worker {
                         let _ = reply.send(core.save_ram());
                     }
                     Cmd::Thumb(reply) => {
-                        let _ = reply.send(crate::thumb::png(core.video_xrgb8888()));
+                        let _ =
+                            reply.send(crate::thumb::png(core.video_xrgb8888(), core.video_size()));
                     }
                     Cmd::BeginLink(client_id, t) => {
                         self.shared.link_lost.store(false, Ordering::Relaxed);
@@ -736,7 +790,7 @@ impl Worker {
                     // this branch rather than an inheritance from whatever ran before it.
                     core.set_frame_skip(false);
                     core.run_frame(ButtonMask(0));
-                    self.publish(core.video_xrgb8888());
+                    self.publish(core.video_xrgb8888(), core.video_size());
                 }
                 self.shared
                     .rewind_fill
@@ -762,15 +816,52 @@ impl Worker {
                 let began = Instant::now();
                 let mut ran = 0u32;
                 let mut worst = Duration::ZERO;
-                loop {
-                    ran += 1;
-                    let last = ran >= ceiling || began.elapsed() + frame_peak * 2 > budget;
-                    core.set_frame_skip(!last);
+                // Run-ahead only at normal speed: a fast forward is already showing the future,
+                // and a netpacket session must never be run twice and wound back, since the
+                // peer would hear every packet the hidden frames sent.
+                let ahead = match speed {
+                    Speed::Normal if !link.is_active() && runahead_on => {
+                        self.shared.runahead.load(Ordering::Relaxed)
+                    }
+                    _ => 0,
+                };
+                if ahead > 0 {
+                    ran = 1;
+                    ahead_picture = Some((std::mem::take(&mut ahead_spare), (0, 0)));
                     let frame_began = Instant::now();
-                    core.run_frame(input);
-                    worst = worst.max(frame_began.elapsed());
-                    if last {
-                        break;
+                    let (audio, state) = run_ahead(core.as_mut(), input, ahead, &mut ahead_picture);
+                    ahead_audio = Some(audio);
+                    let ok = state.is_some();
+                    ahead_state = state;
+                    if !ok {
+                        eprintln!("slot: run-ahead: this core cannot save and load its state, off");
+                        runahead_on = false;
+                    }
+                    let spent = frame_began.elapsed();
+                    worst = spent / (u32::from(ahead) + 1);
+                    ahead_strikes = if spent > RUNAHEAD_BUDGET {
+                        ahead_strikes + 1
+                    } else {
+                        0
+                    };
+                    if ahead_strikes >= RUNAHEAD_STRIKES {
+                        eprintln!(
+                            "slot: run-ahead: {} ms a present is more than this game can afford, off",
+                            spent.as_millis()
+                        );
+                        runahead_on = false;
+                    }
+                } else {
+                    loop {
+                        ran += 1;
+                        let last = ran >= ceiling || began.elapsed() + frame_peak * 2 > budget;
+                        core.set_frame_skip(!last);
+                        let frame_began = Instant::now();
+                        core.run_frame(input);
+                        worst = worst.max(frame_began.elapsed());
+                        if last {
+                            break;
+                        }
                     }
                 }
                 let core_time = began.elapsed();
@@ -791,7 +882,15 @@ impl Worker {
                 // and on both devices. A GBA that asked a question and heard nothing for four
                 // frames reports a communication error, which is what it should do.
                 flush_outbound(&mut transport, &link);
-                self.publish(core.video_xrgb8888());
+                // With run-ahead on, the picture is the frame ahead's, copied out before the state
+                // was wound back: a core is free to repaint on a load.
+                match ahead_picture.take() {
+                    Some((picture, size)) => {
+                        self.publish(&picture, size);
+                        ahead_spare = picture;
+                    }
+                    None => self.publish(core.video_xrgb8888(), core.video_size()),
+                }
 
                 // Counted per present rather than per frame, so a fast forward pays the
                 // same snapshot cost per present as normal play and simply records a
@@ -807,8 +906,9 @@ impl Worker {
                 if since_snapshot >= SNAPSHOT_EVERY {
                     since_snapshot = 0;
                     // A core that will not serialize has already said so through the save
-                    // path. Rewind is not the place to say it again at 30 Hz.
-                    if let Ok(state) = core.serialize() {
+                    // path. Rewind is not the place to say it again at 30 Hz. Run-ahead has
+                    // already saved this very state this present, so it is not saved twice.
+                    if let Some(state) = ahead_state.take().or_else(|| core.serialize().ok()) {
                         rewind.push(state);
                         self.shared
                             .rewind_fill
@@ -816,7 +916,10 @@ impl Worker {
                     }
                 }
 
-                let audio = core.take_audio();
+                ahead_state = None;
+                // The real frame's sound, which run-ahead kept aside before running on: the frames
+                // ahead are heard only when they are really played, a present later.
+                let audio = ahead_audio.take().unwrap_or_else(|| core.take_audio());
                 // Fast forward drops the core's audio unless its sound is on. On, the several
                 // frames of audio a fast present produced are squeezed into one present's
                 // worth by stepping through them that many times as fast: it comes out faster
@@ -855,11 +958,12 @@ impl Worker {
             }
             deadline += PRESENT;
             let now = Instant::now();
-            match deadline.checked_duration_since(now) {
-                Some(wait) => std::thread::sleep(wait),
+            if deadline + KICK_LAG < now {
                 // Falling behind by more than a frame means a stall, not a slow frame.
                 // Catching up would sprint through frames nobody sees.
-                None => deadline = now,
+                deadline = now;
+            } else {
+                deadline = self.wait_for_kick(deadline);
             }
         }
         // The ring belongs to the session, so a cart that left while fast forwarding would
@@ -872,12 +976,42 @@ impl Worker {
         }
     }
 
-    fn publish(&self, video: &[u8]) {
+    fn publish(&self, video: &[u8], size: (u32, u32)) {
         let mut buf = self.frames.take_write();
         buf.clear();
         buf.extend_from_slice(video);
-        self.frames.publish(buf);
+        self.frames.publish(buf, size);
         self.shared.published.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Sleeps until the next present is due: at `deadline` on the worker's own clock, or as much
+    /// as `KICK_LEAD` sooner if the frontend kicks, or as much as `KICK_LAG` later waiting for one.
+    /// Returns the moment the present really starts, which the next deadline is counted from:
+    /// that is what lets the loop fall into step with the kicks, and so with the display.
+    fn wait_for_kick(&self, deadline: Instant) -> Instant {
+        let earliest = deadline - KICK_LEAD;
+        let latest = deadline + KICK_LAG;
+        if let Some(wait) = earliest.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        let mut kick = self.shared.kick.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            // A kick from before the window opened was for a frame already under way; only one
+            // inside it says the next one is wanted now.
+            if kick.take().is_some_and(|at| at >= earliest) {
+                return Instant::now();
+            }
+            let now = Instant::now();
+            let Some(left) = latest.checked_duration_since(now) else {
+                return now;
+            };
+            kick = self
+                .shared
+                .kicked
+                .wait_timeout(kick, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
     }
 
     fn speed(&self) -> Speed {
@@ -922,10 +1056,108 @@ fn drain_transport(transport: &mut dyn LinkChannel, link: &Link, cap: u32) {
     }
 }
 
+/// One present of run-ahead: the frame the game is really on, then `ahead` more on the same
+/// buttons, the last of which is the picture shown, then back to where the real one left it.
+///
+/// A game answers a press a frame or more after it reads it, and that lag is part of the game,
+/// not of the device: every frame run ahead is one frame of it the player no longer waits for.
+/// The frames ahead are thrown away, sound and all, and run again for real a present later with
+/// whatever the buttons really are then, so the only thing that can go wrong is a picture that
+/// guessed the buttons would stay as they were and was right to within a frame.
+///
+/// Hands back the real frame's sound, which is the one that should be heard, and the real frame's
+/// state, which the rewind history can take instead of saving it again. `None` when the core
+/// could not save or load its state: nothing ran ahead or was wound back, the real frame ran
+/// once, undrawn, and the picture shown is the one before it — a single repeated frame, once,
+/// before run-ahead is switched off.
+fn run_ahead(
+    core: &mut dyn RetroCore,
+    input: ButtonMask,
+    ahead: u8,
+    picture: &mut Option<(Vec<u8>, (u32, u32))>,
+) -> (Vec<i16>, Option<Vec<u8>>) {
+    // The real frame's picture is never shown, so the core is asked not to draw it.
+    core.set_frame_skip(true);
+    core.run_frame(input);
+    let audio = core.take_audio();
+    let Ok(state) = core.serialize() else {
+        core.set_frame_skip(false);
+        *picture = None;
+        return (audio, None);
+    };
+    for k in 0..ahead {
+        core.set_frame_skip(k + 1 < ahead);
+        core.run_frame(input);
+    }
+    let _ = core.take_audio();
+    // Copied before the state is wound back: a core is free to repaint on a load.
+    if let Some((buf, size)) = picture {
+        buf.clear();
+        buf.extend_from_slice(core.video_xrgb8888());
+        *size = core.video_size();
+    }
+    match core.unserialize(&state) {
+        Ok(()) => (audio, Some(state)),
+        Err(e) => {
+            eprintln!("slot: run-ahead: {e}");
+            (audio, None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use slot_retro::LoopbackLink;
+
+    /// Run-ahead shows the frame after the one the game is really on, and leaves the game
+    /// exactly where plain emulation would: the frames ahead are thrown away, not kept. Read
+    /// against the mock, whose picture and state are pure functions of the frame it is on.
+    #[test]
+    fn run_ahead_shows_the_next_frame_and_keeps_the_real_one() {
+        for ahead in [1u8, 2] {
+            let mut plain = slot_retro::MockCore::new();
+            let mut ahead_core = slot_retro::MockCore::new();
+            let mut picture = None;
+            for _ in 0..30 {
+                plain.run_frame(ButtonMask(0));
+                let _ = plain.take_audio();
+                picture = Some((Vec::new(), (0, 0)));
+                let (audio, state) = run_ahead(&mut ahead_core, ButtonMask(0), ahead, &mut picture);
+                assert!(state.is_some(), "the mock can save and load its state");
+                assert!(!audio.is_empty(), "the real frame's sound was not kept");
+            }
+            assert_eq!(
+                ahead_core.serialize().unwrap(),
+                plain.serialize().unwrap(),
+                "running {ahead} ahead moved the game itself"
+            );
+            for _ in 0..ahead {
+                plain.run_frame(ButtonMask(0));
+            }
+            let (shown, size) = picture.expect("no picture was kept");
+            assert_eq!(size, plain.video_size());
+            assert!(
+                shown == plain.video_xrgb8888(),
+                "the picture shown is not the frame {ahead} ahead"
+            );
+        }
+    }
+
+    /// The sound heard is the real frame's, one frame's worth a present, so running ahead
+    /// neither doubles the audio nor plays the frames ahead early.
+    #[test]
+    fn run_ahead_hears_one_real_frame_a_present() {
+        let mut plain = slot_retro::MockCore::new();
+        let mut core = slot_retro::MockCore::new();
+        for _ in 0..10 {
+            plain.run_frame(ButtonMask(0));
+            let want = plain.take_audio();
+            let mut picture = Some((Vec::new(), (0, 0)));
+            let (got, _) = run_ahead(&mut core, ButtonMask(0), 1, &mut picture);
+            assert_eq!(got, want, "the sound is not the real frame's");
+        }
+    }
 
     /// I6: an unbounded drain here gives a flooding peer unbounded work in a single present.
     /// `LoopbackLink` holds everything sent to it in a plain queue, so filling it past the

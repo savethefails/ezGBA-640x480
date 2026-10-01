@@ -14,9 +14,9 @@ use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face,
     date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face, menu_face, photo_face,
     quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face,
-    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, GbShell, Icon,
-    LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields, Toast, UndoFace,
-    ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    snes_cart_shadow, socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face,
+    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
+    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -237,16 +237,16 @@ impl Frontend {
             legend,
         });
         // The open cart's parts that never change: each socket, the chip seated in each, the
-        // blank chip in flight and its shadow, in `Core::ALL` order. At boot like the power
+        // blank chip in flight and its shadow, in `Core::GBA` order: only a GBA cart opens. At boot like the power
         // menu's rows, so the first frame of a lid coming off is not spent in a rasteriser.
-        let sockets = slot_store::Core::ALL
+        let sockets = slot_store::Core::GBA
             .iter()
             .map(|c| {
                 let f = socket_face(*c);
                 compositor.create_texture(f.w, f.h, &f.rgba)
             })
             .collect();
-        let chips = slot_store::Core::ALL
+        let chips = slot_store::Core::GBA
             .iter()
             .map(|c| {
                 let f = chip_face(Some(*c));
@@ -323,6 +323,9 @@ impl Frontend {
         let rounded = gb_cart_shadow(GbShell::Rounded);
         let rounded = compositor.create_texture(rounded.w, rounded.h, &rounded.rgba);
         self.session.app_mut().set_gb_cart_shadows(notched, rounded);
+        let snes = snes_cart_shadow();
+        let snes = compositor.create_texture(snes.w, snes.h, &snes.rgba);
+        self.session.app_mut().set_snes_cart_shadow(snes);
         // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
         // reserved slot rather than over the fill. The housing tint was only ever needed to
         // hide the bolt inside the fill it sat on; out here it sits where every other HUD
@@ -395,10 +398,10 @@ impl Frontend {
         compositor.set_screen_power(self.session.app().screen_power());
         // Every frame rather than on the edge, for the same reason the grade and the power are:
         // the pass has to be told what to draw whether or not anything just changed it.
-        compositor.set_game_source_rect(self.session.app().source_rect());
+        slot_gfx::set_fit(self.session.app().fit());
         compositor.begin_frame();
         if let Some(frame) = self.session.frame() {
-            compositor.upload_game(&frame);
+            compositor.upload_game(&frame, frame.size());
         }
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
         sync_about(self.session.app_mut(), compositor, &mut self.about);
@@ -471,6 +474,12 @@ impl Frontend {
 
     fn now(&self) -> Millis {
         self.start.elapsed().as_millis() as Millis
+    }
+
+    /// Called once a frame by the device loop, after the swap and the input it fed: the core's
+    /// next frame starts now, on the freshest buttons, in step with the display.
+    pub fn frame_shown(&self) {
+        self.session.kick();
     }
 
     pub fn powering_off(&self) -> bool {
@@ -548,7 +557,10 @@ fn sync_switcher(app: &mut App, compositor: &mut Compositor, texes: Faces, state
                     *id
                 }
                 None => {
-                    let id = compositor.create_texture_nearest(f.w, f.h, &f.rgba);
+                    // Linear, as the live game's texture is: the scaler places its blend with the
+                    // linear tap, and a nearest texture would give the still hard, uneven edges
+                    // the game behind it does not have.
+                    let id = compositor.create_texture(f.w, f.h, &f.rgba);
                     texes.pool.push(id);
                     id
                 }
@@ -654,7 +666,7 @@ fn sync_greeting(app: &mut App, compositor: &mut Compositor, state: &mut Greetin
     app.set_greeting_face(id);
 }
 
-/// Built only once the screen is up: it is a 660 by 228 rasterisation and most sessions never
+/// Built only once the screen is up: it is a 612 by 212 rasterisation and most sessions never
 /// open it.
 fn sync_about(app: &mut App, compositor: &mut Compositor, state: &mut AboutFace) {
     if !matches!(app.phase(), Phase::About) {

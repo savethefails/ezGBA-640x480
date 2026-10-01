@@ -1,0 +1,64 @@
+name: slot
+
+# Only System/slot, for updating a card that is already set up: the cores and licences on it
+# have not changed, so rebuilding mGBA and fetching gpSP again is a wait for nothing. Runs on
+# every push that touches the code, so the binary for a branch's latest commit is always
+# waiting, and by hand from the Actions tab. `release` still builds the whole card tree.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/slot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: System/slot
+    # The same box and image as `release`, so this binary is the one a release would ship:
+    # native arm64, linked against bullseye's glibc 2.31.
+    runs-on: ubuntu-24.04-arm
+    container: rust:1-bullseye
+    steps:
+      - uses: actions/checkout@v7
+
+      # A branch name can hold a `/`, which an artifact's name cannot.
+      - name: Name the artifact
+        run: |
+          short="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          echo "NAME=slot-$(printf '%s' "$GITHUB_REF_NAME" | tr '/' '-')-$short" >> "$GITHUB_ENV"
+
+      # The registry and the build directory, keyed on the lockfile. A code change then
+      # recompiles only the workspace's own crates rather than every dependency.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target-device
+          key: slot-device-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: slot-device-
+
+      # What `task build:device` runs, without installing Task for one command.
+      - name: Build
+        run: |
+          cargo build --profile device --target-dir target-device \
+            -p slot --no-default-features --features device
+
+      # A binary built for the wrong machine does not start, and the card shows nothing.
+      - name: Check it is for the device
+        run: file target-device/device/slot | grep -q aarch64
+
+      # The bare file, not a System folder around it: copied as a folder, a Mac's Replace would
+      # delete the System folder on the card first, cores, theme.txt and slot.state with it.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: target-device/device/slot
+          if-no-files-found: error

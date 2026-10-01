@@ -3,7 +3,7 @@
 //!
 //! `SCRATCH_PNG_DIR=/tmp cargo test -p slot --test render_quick_menu -- --nocapture`
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod common;
 
@@ -86,6 +86,7 @@ fn the_quick_menu_renders_full_screen() {
     let mut bar_on = QuickRow::ALL[0];
     for (name, selected) in [
         ("date-time", QuickRow::DateTime),
+        ("grid-depth", QuickRow::GridDepth),
         ("about", QuickRow::About),
     ] {
         for _ in bar_on.index()..selected.index() {
@@ -96,18 +97,22 @@ fn the_quick_menu_renders_full_screen() {
 
         let top = (QUICK_TOP + QUICK_PITCH * selected.index() as f32) as usize;
         for x in [1, OUT_W as usize - 2] {
-            assert_eq!(at(&px, x, top + 26), bar, "{name}: no bar at x {x}");
+            assert_eq!(
+                at(&px, x, top + QUICK_PITCH as usize / 2),
+                bar,
+                "{name}: no bar at x {x}"
+            );
         }
         // Edge to edge means unbroken all the way across, which is a stronger claim than the two
         // ends and the panel's centre — and a truer one, now that Colour Correction's label is
         // long enough to have type sitting on that centre. Ink over the bar is not a gap in it,
         // and every ink here is lighter than the bar, so only the ground would be a real break.
         assert!(
-            (0..OUT_W as usize).all(|x| at(&px, x, top + 26) != ground),
+            (0..OUT_W as usize).all(|x| at(&px, x, top + QUICK_PITCH as usize / 2) != ground),
             "{name}: the bar breaks somewhere across the row"
         );
         assert_eq!(
-            at(&px, 360, top + 1),
+            at(&px, 320, top + 1),
             ground,
             "{name}: the bar is not inset"
         );
@@ -124,7 +129,7 @@ fn the_quick_menu_renders_full_screen() {
         // inside its own advance.
         for row in QuickRow::ALL {
             let top = (QUICK_TOP + QUICK_PITCH * row.index() as f32) as usize;
-            let label = inked(&px, 0..360, top);
+            let label = inked(&px, 0..320, top);
             let first = *label.first().expect("a row with no label");
             assert!(
                 (32..=36).contains(&first),
@@ -133,10 +138,10 @@ fn the_quick_menu_renders_full_screen() {
             if row == QuickRow::About {
                 continue;
             }
-            let value = inked(&px, 360..OUT_W as usize, top);
+            let value = inked(&px, 320..OUT_W as usize, top);
             let last = *value.last().expect("a row with no value");
             assert!(
-                (679..=688).contains(&last),
+                (599..=608).contains(&last),
                 "{name}: {row:?}'s value ends at x {last}"
             );
         }
@@ -145,7 +150,9 @@ fn the_quick_menu_renders_full_screen() {
     // Ruling S6: Date & Time opens the clock with B BACK beside its own key. Centred as a pair,
     // B's cap runs from about x 225 to 244. The first boot's lone key is centred on its own and
     // its cap starts near x 279, so only ink left of x 270 on this row can be B BACK.
-    tap(&mut f, &mut input, Btn::Up);
+    for _ in QuickRow::DateTime.index()..bar_on.index() {
+        tap(&mut f, &mut input, Btn::Up);
+    }
     tap(&mut f, &mut input, Btn::A);
     let px = composed(&mut f, &mut c, "clock");
     assert!(
@@ -181,21 +188,21 @@ fn every_fast_forward_speed_sits_on_the_rows_right_edge_and_clears_the_label() {
     let top = QUICK_TOP as usize;
     for name in ["2x", "3x", "4x", "6x", "8x"] {
         let px = composed(&mut f, &mut c, name);
-        let value = inked(&px, 360..OUT_W as usize, top);
+        let value = inked(&px, 320..OUT_W as usize, top);
         let last = *value
             .last()
             .unwrap_or_else(|| panic!("{name}: the Fast Forward row has no value"));
         assert!(
-            (679..=688).contains(&last),
+            (599..=608).contains(&last),
             "{name} ends at x {last}, off the edge every other value keeps"
         );
         // The row in hand carries an arrow either side of its value, so nothing on it may be
         // inked across the middle of the row, where the label is heading.
         assert!(
-            inked(&px, 350..370, top).is_empty(),
+            inked(&px, 290..330, top).is_empty(),
             "{name} and its arrows reach the middle of the row"
         );
-        let label = inked(&px, 0..350, top);
+        let label = inked(&px, 0..290, top);
         let first = *label
             .first()
             .unwrap_or_else(|| panic!("{name}: the Fast Forward row has no label"));

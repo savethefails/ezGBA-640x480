@@ -4,13 +4,13 @@ use slot_store::{Cart, Platform};
 use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
 use crate::silhouette::{
-    cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask, Detail,
-    GbShell,
+    cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
+    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell,
 };
 use crate::text;
 
-/// The traced outline's own aspect, so `cart.svg` rasterises unstretched. Three across a
-/// 720 wide row exactly, so the shelf can show a neighbour either side of the selection.
+/// The traced outline's own aspect, so `cart.svg` rasterises unstretched. With a neighbour at
+/// 0.70 either side and a 16 px gap between each, the row spans a 640 panel exactly.
 pub const CART_W: u32 = 240;
 pub const CART_H: u32 = 135;
 
@@ -65,6 +65,26 @@ pub const GB_LABEL_Y: u32 = gb_label_panel(GB_CART_W, GB_CART_H).1;
 pub const GB_LABEL_W: u32 = gb_label_panel(GB_CART_W, GB_CART_H).2 - GB_LABEL_X;
 pub const GB_LABEL_H: u32 = gb_label_panel(GB_CART_W, GB_CART_H).3 - GB_LABEL_Y;
 
+/// The SNES Game Pak: about 120 x 86 mm, drawn the same 240 across as the GBA cart, so it is
+/// half the GBA cart's scale and the row stays the same width. See `snes_cart.svg`.
+pub const SNES_CART_W: u32 = 240;
+pub const SNES_CART_H: u32 = 172;
+
+/// The label on the front, below the grip ridges: 10% to 90% across and 30% to 93% down.
+pub const fn snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
+    (
+        (w * 100 + 500) / 1000,
+        (h * 300 + 500) / 1000,
+        (w * 900 + 500) / 1000,
+        (h * 930 + 500) / 1000,
+    )
+}
+
+pub const SNES_LABEL_X: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).0;
+pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
+pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
+pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
+
 const PAD: u32 = 10;
 const MAX_LINES: usize = 3;
 /// Three lines have to clear the label's height, and Open Sans Bold sets at about 1.36x
@@ -76,6 +96,9 @@ const MAX_PX: f32 = LABEL_H as f32 / (MAX_LINES as f32 * 1.36);
 /// starts from the tallest line the panel could hold at all rather than from a guess at how
 /// tall three of them will be.
 const GB_MAX_PX: f32 = (GB_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
+/// The SNES label is 1.76:1, between the other two, so it is handed both bounds as the Game Boy
+/// one is.
+const SNES_MAX_PX: f32 = (SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 const MIN_PX: f32 = 10.0;
 
 /// How far the translucent edge reaches in. Zero at this depth exactly, so a pixel any
@@ -83,6 +106,7 @@ const MIN_PX: f32 = 10.0;
 const RIM: u32 = 4;
 /// The same depth of plastic on an object 1.87x as tall.
 const GB_RIM: u32 = 7;
+const SNES_RIM: u32 = 5;
 
 pub struct CartFace {
     pub rgba: Vec<u8>,
@@ -122,6 +146,7 @@ struct Spec {
 /// notched one. Asking the folder would draw a misfiled cart as something Nintendo never made.
 enum Shape {
     Gba,
+    Snes,
     Gb(GbShell),
 }
 
@@ -131,7 +156,7 @@ enum Shape {
 /// face is rasterised, and both of those happen at boot.
 pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
     match cart.platform {
-        Platform::Gba => None,
+        Platform::Gba | Platform::Snes => None,
         Platform::Gb | Platform::Gbc => Some(match slot_store::gb::class(&cart.rom) {
             Class::ColourOnly => GbShell::Rounded,
             Class::Original | Class::DualMode => GbShell::Notched,
@@ -140,6 +165,9 @@ pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
 }
 
 fn shape_of(cart: &Cart) -> Shape {
+    if cart.platform == Platform::Snes {
+        return Shape::Snes;
+    }
     match gb_shell_of(cart) {
         None => Shape::Gba,
         Some(shell) => Shape::Gb(shell),
@@ -160,6 +188,17 @@ fn spec(shape: Shape) -> Spec {
             max_px: MAX_PX,
             max_h: f32::INFINITY,
             rim: RIM,
+        },
+        Shape::Snes => Spec {
+            w: SNES_CART_W,
+            h: SNES_CART_H,
+            label: (SNES_LABEL_X, SNES_LABEL_Y, SNES_LABEL_W, SNES_LABEL_H),
+            mask: snes_cart_mask(),
+            depth: snes_cart_depth(),
+            detail: snes_detail_mask(),
+            max_px: SNES_MAX_PX,
+            max_h: (SNES_LABEL_H - 2 * PAD) as f32,
+            rim: SNES_RIM,
         },
         Shape::Gb(shell) => Spec {
             w: GB_CART_W,
@@ -184,6 +223,7 @@ pub fn cart_box(platform: Platform) -> (u32, u32) {
     let s = spec(match platform {
         Platform::Gba => Shape::Gba,
         Platform::Gb | Platform::Gbc => Shape::Gb(GbShell::Notched),
+        Platform::Snes => Shape::Snes,
     });
     (s.w, s.h)
 }
@@ -208,6 +248,11 @@ pub fn cart_shadow() -> CartFace {
 /// it worked out once when the row was built.
 pub fn gb_cart_shadow(shell: GbShell) -> CartFace {
     shadow(GB_CART_W, GB_CART_H, gb_cart_mask(shell))
+}
+
+/// The SNES Game Pak's outline in black, for the same reason the other two have theirs.
+pub fn snes_cart_shadow() -> CartFace {
+    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask())
 }
 
 fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {

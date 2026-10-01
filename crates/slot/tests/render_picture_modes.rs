@@ -12,7 +12,7 @@
 //! Skipped on a machine with no mGBA dylib and no card to take a cart off, the same way every
 //! other test here that needs a real core is.
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod common;
 

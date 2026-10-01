@@ -8,11 +8,35 @@ use libloading::Library;
 
 use crate::surface::{GfxError, Surface};
 
-/// What the panel is if the framebuffer will not say. The RG35XXSP is 640x480 and the RG SP
-/// is expected to be, but the surface is sized from the driver wherever it answers.
-const FALLBACK_PANEL: (u32, u32) = (720, 480);
+/// What the panel is if the framebuffer will not say. This build is for the RG35XXSP, whose
+/// panel is 640x480 and is what the UI is laid out for. The surface is still sized from the
+/// driver wherever it answers, so on a 720x480 RG34XXSP the same picture comes up centred with
+/// a bar either side rather than off the edge.
+const FALLBACK_PANEL: (u32, u32) = (640, 480);
 
 const FB0: &str = "/sys/class/graphics/fb0";
+const FB0_DEV: &str = "/dev/fb0";
+
+/// `FBIOGET_VSCREENINFO`: fills a `struct fb_var_screeninfo`, whose first two fields are the
+/// visible width and height.
+const FBIOGET_VSCREENINFO: std::ffi::c_ulong = 0x4600;
+
+extern "C" {
+    fn ioctl(fd: std::ffi::c_int, request: std::ffi::c_ulong, ...) -> std::ffi::c_int;
+}
+
+/// The visible resolution as the driver scans it out, straight from the framebuffer device.
+/// The sysfs files are text a driver may leave empty or fill with the double buffered
+/// allocation; this is the one answer every fbdev driver has to give.
+fn panel_ioctl() -> Option<(u32, u32)> {
+    use std::os::fd::AsRawFd;
+    let fb = std::fs::File::open(FB0_DEV).ok()?;
+    // `fb_var_screeninfo` is 160 bytes; the buffer is larger so a kernel that has grown the
+    // struct can never write past it.
+    let mut info = [0u32; 64];
+    let ok = unsafe { ioctl(fb.as_raw_fd(), FBIOGET_VSCREENINFO, info.as_mut_ptr()) };
+    (ok == 0 && info[0] > 0 && info[1] > 0).then_some((info[0], info[1]))
+}
 
 const EGL_SUCCESS: i32 = 0x3000;
 const EGL_NONE: i32 = 0x3038;
@@ -43,6 +67,7 @@ type SwapInterval = unsafe extern "C" fn(Ptr, i32) -> u32;
 type GetProcAddress = unsafe extern "C" fn(*const c_char) -> *const c_void;
 type GetError = unsafe extern "C" fn() -> i32;
 type Terminate = unsafe extern "C" fn(Ptr) -> u32;
+type CreatePbufferSurface = unsafe extern "C" fn(Ptr, Ptr, *const i32) -> Ptr;
 
 struct Egl {
     get_display: GetDisplay,
@@ -58,6 +83,7 @@ struct Egl {
     get_proc_address: GetProcAddress,
     get_error: GetError,
     terminate: Terminate,
+    create_pbuffer_surface: CreatePbufferSurface,
     /// Last, so the symbols above are still valid while the rest of the struct drops.
     _lib: Library,
 }
@@ -143,6 +169,7 @@ impl Egl {
                 get_proc_address: sym(&lib, "eglGetProcAddress")?,
                 get_error: sym(&lib, "eglGetError")?,
                 terminate: sym(&lib, "eglTerminate")?,
+                create_pbuffer_surface: sym(&lib, "eglCreatePbufferSurface")?,
                 _lib: lib,
             })
         }
@@ -156,13 +183,12 @@ impl Egl {
 impl FbdevSurface {
     pub fn new() -> Result<Self, GfxError> {
         let attr = |name: &str| std::fs::read_to_string(format!("{FB0}/{name}")).ok();
-        // The mode in use, then the modes on offer, then what was allocated. `mode` is empty
-        // on drivers that never implemented it, and `virtual_size` describes the scrollback
-        // rather than the screen: sizing a window from it asks for a surface half of which is
-        // off the bottom of the panel.
-        let hint = attr("mode")
-            .as_deref()
-            .and_then(panel_mode)
+        // The driver's own answer, then the mode in use, then the modes on offer, then what
+        // was allocated. `mode` is empty on drivers that never implemented it, and
+        // `virtual_size` describes the scrollback rather than the screen: sizing a window from
+        // it asks for a surface half of which is off the bottom of the panel.
+        let hint = panel_ioctl()
+            .or_else(|| attr("mode").as_deref().and_then(panel_mode))
             .or_else(|| attr("modes").as_deref().and_then(panel_mode))
             .or_else(|| attr("virtual_size").as_deref().and_then(panel_size))
             .unwrap_or(FALLBACK_PANEL);
@@ -309,6 +335,157 @@ impl Surface for FbdevSurface {
 }
 
 impl Drop for FbdevSurface {
+    fn drop(&mut self) {
+        unsafe {
+            (self.egl.make_current)(
+                self.display,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            (self.egl.terminate)(self.display);
+        }
+    }
+}
+
+const EGL_PBUFFER_BIT: i32 = 0x0001;
+const EGL_PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
+
+type GetPlatformDisplay = unsafe extern "C" fn(u32, Ptr, *const isize) -> Ptr;
+
+/// An offscreen GLES2 context through the same EGL entry points the device uses, for readback
+/// checks on a Linux machine with no panel and no display server. Mesa's surfaceless platform
+/// renders it in software, which puts every shader through the GLES2 compiler the H700 has.
+pub struct PbufferSurface {
+    egl: Egl,
+    gles: Library,
+    display: Ptr,
+    surface: Ptr,
+    context: Ptr,
+    size: (u32, u32),
+}
+
+impl PbufferSurface {
+    pub fn new(size: (u32, u32)) -> Result<Self, GfxError> {
+        let egl = Egl::load()?;
+        let gles = open("libGLESv2.so.2").or_else(|_| open("libGLESv2.so"))?;
+        unsafe {
+            // Surfaceless first: it needs no X server. The default display is what is left on a
+            // machine whose EGL does not know the Mesa platform.
+            let name = CString::new("eglGetPlatformDisplayEXT").unwrap_or_default();
+            let platform = (egl.get_proc_address)(name.as_ptr());
+            let mut display = std::ptr::null_mut();
+            if !platform.is_null() {
+                let get: GetPlatformDisplay = std::mem::transmute(platform);
+                display = get(
+                    EGL_PLATFORM_SURFACELESS_MESA,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                );
+            }
+            if display.is_null() {
+                display = (egl.get_display)(std::ptr::null_mut());
+            }
+            if display.is_null() {
+                return Err(egl.fail("eglGetDisplay"));
+            }
+            if (egl.initialize)(display, std::ptr::null_mut(), std::ptr::null_mut()) == 0 {
+                return Err(egl.fail("eglInitialize"));
+            }
+            if (egl.bind_api)(EGL_OPENGL_ES_API) == 0 {
+                return Err(egl.fail("eglBindAPI"));
+            }
+            let attrs = [
+                EGL_SURFACE_TYPE,
+                EGL_PBUFFER_BIT,
+                EGL_RED_SIZE,
+                8,
+                EGL_GREEN_SIZE,
+                8,
+                EGL_BLUE_SIZE,
+                8,
+                EGL_ALPHA_SIZE,
+                8,
+                EGL_RENDERABLE_TYPE,
+                EGL_OPENGL_ES2_BIT,
+                EGL_NONE,
+            ];
+            let mut config: Ptr = std::ptr::null_mut();
+            let mut found = 0;
+            if (egl.choose_config)(display, attrs.as_ptr(), &mut config, 1, &mut found) == 0
+                || found == 0
+            {
+                return Err(egl.fail("eglChooseConfig"));
+            }
+            let pbuffer = [
+                EGL_WIDTH,
+                size.0 as i32,
+                EGL_HEIGHT,
+                size.1 as i32,
+                EGL_NONE,
+            ];
+            let surface = (egl.create_pbuffer_surface)(display, config, pbuffer.as_ptr());
+            if surface.is_null() {
+                return Err(egl.fail("eglCreatePbufferSurface"));
+            }
+            let context_attrs = [EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE];
+            let context = (egl.create_context)(
+                display,
+                config,
+                std::ptr::null_mut(),
+                context_attrs.as_ptr(),
+            );
+            if context.is_null() {
+                return Err(egl.fail("eglCreateContext"));
+            }
+            if (egl.make_current)(display, surface, surface, context) == 0 {
+                return Err(egl.fail("eglMakeCurrent"));
+            }
+            Ok(PbufferSurface {
+                egl,
+                gles,
+                display,
+                surface,
+                context,
+                size,
+            })
+        }
+    }
+}
+
+impl Surface for PbufferSurface {
+    fn make_current(&mut self) -> Result<(), GfxError> {
+        let ok = unsafe {
+            (self.egl.make_current)(self.display, self.surface, self.surface, self.context)
+        };
+        match ok {
+            0 => Err(self.egl.fail("eglMakeCurrent")),
+            _ => Ok(()),
+        }
+    }
+
+    fn window_size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    fn swap(&mut self) -> Result<(), GfxError> {
+        unsafe { gl::Finish() };
+        Ok(())
+    }
+
+    fn proc_address(&self, name: &str) -> *const c_void {
+        let Ok(c) = CString::new(name) else {
+            return std::ptr::null();
+        };
+        let exported = unsafe { self.gles.get::<unsafe extern "C" fn()>(name.as_bytes()) };
+        match exported {
+            Ok(f) => *f as *const c_void,
+            Err(_) => unsafe { (self.egl.get_proc_address)(c.as_ptr()) },
+        }
+    }
+}
+
+impl Drop for PbufferSurface {
     fn drop(&mut self) {
         unsafe {
             (self.egl.make_current)(

@@ -59,6 +59,9 @@ pub const DUAL_MODE_SHELL: Shell = shell([0x33, 0x30, 0x31], Finish::Solid);
 /// tell them apart.
 pub const GB_CLEAR_SHELL: Shell = shell([0x7c, 0x7a, 0x8a], Finish::Translucent);
 
+/// The North American SNES Game Pak's light grey, which every cart came in.
+pub const SNES_SHELL: Shell = shell([0x8e, 0x8d, 0x94], Finish::Solid);
+
 /// What plastic this cart shipped in. Which question to ask depends on the platform: a GBA cart
 /// is looked up by the game code in its header, and a Game Boy pak has no such field at all, so
 /// the CGB flag answers instead.
@@ -72,6 +75,7 @@ pub fn shell_for(cart: &Cart) -> Shell {
     match cart.platform {
         Platform::Gba => gba_shell_for(&cart.code),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
+        Platform::Snes => SNES_SHELL,
     }
 }
 

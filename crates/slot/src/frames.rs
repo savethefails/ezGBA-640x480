@@ -14,7 +14,8 @@ pub struct Frames {
 }
 
 struct Inner {
-    ready: Option<Vec<u8>>,
+    /// The published picture and its width and height.
+    ready: Option<(Vec<u8>, (u32, u32))>,
     spare: Vec<Vec<u8>>,
     allocated: usize,
 }
@@ -45,19 +46,20 @@ impl Frames {
 
     /// A frame the renderer never picked up is overwritten rather than queued. Presenting a
     /// stale frame late is worse than never presenting it.
-    pub fn publish(&self, buf: Vec<u8>) {
+    pub fn publish(&self, buf: Vec<u8>, size: (u32, u32)) {
         let mut i = self.lock();
-        if let Some(dropped) = i.ready.replace(buf) {
+        if let Some((dropped, _)) = i.ready.replace((buf, size)) {
             i.spare.push(dropped);
         }
     }
 
     pub fn latest(self: &Arc<Self>) -> Option<FrameRef> {
-        let buf = self.lock().ready.take()?;
+        let (buf, size) = self.lock().ready.take()?;
         self.taken.fetch_add(1, Ordering::Relaxed);
         Some(FrameRef {
             frames: self.clone(),
             buf,
+            size,
         })
     }
 
@@ -88,6 +90,14 @@ impl Frames {
 pub struct FrameRef {
     frames: Arc<Frames>,
     buf: Vec<u8>,
+    size: (u32, u32),
+}
+
+impl FrameRef {
+    /// The picture's width and height, which every console draws differently.
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
 }
 
 impl Deref for FrameRef {

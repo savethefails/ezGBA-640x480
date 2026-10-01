@@ -2,7 +2,7 @@
 //! and blooms, and it dies back down to a dot. `t` is 0.0 dark and 1.0 fully on throughout,
 //! so power off is the same curve walked backwards.
 
-use crate::surface::{OUT_H, OUT_W};
+use crate::surface::game_rect;
 
 /// The line the picture opens from and closes to. Two pixels rather than one: an odd height
 /// centred in an even frame lands on a half pixel and the line reads as grey.
@@ -19,14 +19,22 @@ const OVERSHOOT: f32 = 0.6;
 /// Height of the picture as a fraction of the frame. Ease out: it snaps open and settles,
 /// which is a panel striking rather than a blind going up.
 pub fn screen_scale(t: f32) -> f32 {
+    scale_of(game_rect().3, t)
+}
+
+fn scale_of(game_h: u32, t: f32) -> f32 {
     let left = 1.0 - t.clamp(0.0, 1.0);
-    1.0 - (1.0 - LINE_PX / OUT_H as f32) * left * left
+    1.0 - (1.0 - LINE_PX / game_h as f32) * left * left
 }
 
 /// Width, and only over the last of the collapse. This is the dot the line closes to.
 pub fn screen_width(t: f32) -> f32 {
+    width_of(game_rect().2, t)
+}
+
+fn width_of(game_w: u32, t: f32) -> f32 {
     let left = 1.0 - (t.clamp(0.0, 1.0) / DOT_T).min(1.0);
-    1.0 - (1.0 - LINE_PX / OUT_W as f32) * left
+    1.0 - (1.0 - LINE_PX / game_w as f32) * left
 }
 
 /// Gain on the game layer. Brightest as the line appears and settling to exactly 1.0, so a
@@ -36,10 +44,21 @@ pub fn screen_brightness(t: f32) -> f32 {
     1.0 + OVERSHOOT * left * left
 }
 
-/// The rect the game layer fills, in offscreen pixels. Centred: the line is at the vertical
-/// middle of the frame, not at the slot.
+/// The rect the game layer fills, in offscreen pixels: the game area, collapsing about its
+/// own centre. The line is at the vertical middle of the picture, not at the slot.
 pub fn screen_rect(t: f32) -> (f32, f32, f32, f32) {
-    let w = OUT_W as f32 * screen_width(t);
-    let h = OUT_H as f32 * screen_scale(t);
-    ((OUT_W as f32 - w) / 2.0, (OUT_H as f32 - h) / 2.0, w, h)
+    screen_rect_in(game_rect(), t)
+}
+
+/// The same collapse about any rect: a still's, which is placed from its own size.
+pub fn screen_rect_in(rect: (u32, u32, u32, u32), t: f32) -> (f32, f32, f32, f32) {
+    let (x, y, game_w, game_h) = rect;
+    let w = game_w as f32 * width_of(game_w, t);
+    let h = game_h as f32 * scale_of(game_h, t);
+    (
+        x as f32 + (game_w as f32 - w) / 2.0,
+        y as f32 + (game_h as f32 - h) / 2.0,
+        w,
+        h,
+    )
 }

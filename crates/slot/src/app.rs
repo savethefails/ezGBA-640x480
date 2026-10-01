@@ -6,8 +6,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Cart, Core, Platform, SlotState,
-    StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart, Core,
+    LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing, Theme,
+    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -457,7 +458,7 @@ pub struct App {
     core_lid_face: Option<TexId>,
     /// The cart the uploaded board and lid were built for.
     core_faces_stem: Option<String>,
-    /// In `Core::ALL` order: each socket empty, and the chip seated and named in each. Uploaded
+    /// In `Core::GBA` order: each socket empty, and the chip seated and named in each. Uploaded
     /// at boot, since none of them ever changes.
     core_socket_faces: Vec<TexId>,
     core_chip_faces: Vec<TexId>,
@@ -473,6 +474,12 @@ pub struct App {
     /// what holds the seated cart, and a menu that left it would have to rebuild the session
     /// to come back from cancelling.
     game_menu: Option<GameMenu>,
+    /// How the game is drawn: the picture's shape, the grid and its depth. Read from
+    /// `System/theme.txt` at boot, changed from the settings menu, and written back there.
+    look: Look,
+    /// `menu off` is not on the card: MENU reaches the settings, and one cart ejects to them.
+    /// Kept from boot rather than asked of the theme each time, as `look` is.
+    menu: bool,
     link_sprites: Option<LinkSprites>,
     /// The hardware the link screen shows and a link it starts runs over. Read once when the
     /// screen opens (see `link_mode`) rather than every frame `draw_game_menu` runs, and
@@ -557,7 +564,7 @@ pub struct App {
     named_core: bool,
     /// How the seated cart's picture is drawn, off the card and stored the same way `core` and
     /// `platform` are. Only a Game Boy cart can move it — see `video_mode` — so on a GBA cart
-    /// this is read but never acted on, and `source_rect` is the one place that decides.
+    /// this is read but never acted on, and `fit` is the one place that decides.
     video_mode: VideoMode,
     /// `Some` for as long as a netpacket session is live. `App` never touches the transport
     /// or the core itself — those live on the emulator thread, wherever `EmuHandle::begin_link`
@@ -648,20 +655,23 @@ pub struct App {
     radio: Box<dyn RadioJobs>,
 }
 
-/// The card's library split into shelves, one per platform, in the order the shoulders ring
-/// through them. Every platform `Platform::ALL` names gets a shelf even with nothing on it, so
-/// the ring is a fixed list that the library's contents only decide the stops on.
-fn shelves_of(carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
-    let mut rows: Vec<(Platform, Vec<Cart>)> =
-        Platform::ALL.iter().map(|p| (*p, Vec::new())).collect();
-    for cart in carts {
-        if let Some((_, row)) = rows.iter_mut().find(|(p, _)| *p == cart.platform) {
-            row.push(cart);
-        }
-    }
-    rows.into_iter()
-        .map(|(platform, carts)| (platform, Shelf::new(carts)))
-        .collect()
+/// The card's whole library on one shelf, every console's carts together in the order of their
+/// names, so a game is found by what it is called rather than by which machine it was for. Each
+/// cart still knows its own platform, which is what its face, its core and its picture follow.
+///
+/// Still a list of shelves, of one: the ring the shoulders used to turn through has a single
+/// stop, so they rest inert on the shelf and the corner draws no machine, both of which are what
+/// a card holding one console's games has always done. The platform beside it names nothing
+/// but the list's shape.
+fn shelves_of(mut carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
+    carts.sort_by(|a, b| {
+        a.stem
+            .to_lowercase()
+            .cmp(&b.stem.to_lowercase())
+            .then(a.stem.cmp(&b.stem))
+            .then((a.platform as u8).cmp(&(b.platform as u8)))
+    });
+    vec![(Platform::Gba, Shelf::new(carts))]
 }
 
 impl App {
@@ -695,6 +705,8 @@ impl App {
             core_chip_shadow_face: None,
             core_legend_faces: Vec::new(),
             game_menu: None,
+            look: Look::default(),
+            menu: true,
             link_sprites: None,
             link_hardware: LinkKind::Cable,
             last_role: LinkRow::Host,
@@ -762,8 +774,21 @@ impl App {
         crate::root::migrate(root);
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
-        slot_ui::set_theme(Theme::read(root));
+        let theme = Theme::read(root);
+        let look = Look {
+            picture: theme.picture,
+            grid: theme.grid,
+            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
+            runahead: theme.runahead.unwrap_or(RUNAHEAD),
+            scaler: theme.scaler,
+            sharpness: theme.sharpness,
+            snes_picture: theme.snes_picture,
+        };
+        look.apply();
+        slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
+        app.look = look;
+        app.menu = theme.menu;
         app.root = Some(root.to_path_buf());
         app.state = read_slot_state(root);
         app.greeting_frames = greeting_frame_count(root);
@@ -864,28 +889,23 @@ impl App {
 
     /// Where the cart named `stem` stands: which shelf, and where along it. A stem can collide
     /// across platforms — `Tetris.gb` and `Tetris.gba` are two carts under one name — so
-    /// `platform` is what the card said about which of them was in the slot.
+    /// `platform` is what the card said about which of them was in the slot, and only a cart of
+    /// that platform answers. The cart of the same name for another console is a different game:
+    /// seating it would resume a session that belongs to something the player never put in.
     ///
-    /// Given one, that shelf is the only shelf asked. A cart that is no longer on it is gone
-    /// even if another shelf has a cart of the same name, because the cart of the same name on
-    /// another shelf is a different game: seating it would resume a session that belongs to
-    /// something the player never put in.
-    ///
-    /// `None` is a card that never said, and it resolves the way slot has always resolved a
-    /// stem: the shelves are asked in ring order and the first answer wins, which puts Game Boy
-    /// Advance ahead of both Game Boy shelves. That is the right way round for a card written
-    /// before there was more than one shelf, where every stem meant a GBA cart — which is every
-    /// card that can be holding a `cart` line with no `cart_platform` beside it.
+    /// `None` is a card that never said, and the first cart of that name answers. Carts of one
+    /// name stand in platform order, so that is the GBA one: the right way round for a card
+    /// written before there was more than one console, where every stem meant a GBA cart — which
+    /// is every card that can be holding a `cart` line with no `cart_platform` beside it.
     fn seat_of(&self, stem: &str, platform: Option<Platform>) -> Option<(usize, usize)> {
         self.shelves
             .iter()
             .enumerate()
-            .filter(|(_, (p, _))| platform.is_none_or(|want| *p == want))
             .find_map(|(at, (_, shelf))| {
                 shelf
                     .carts
                     .iter()
-                    .position(|c| c.stem == stem)
+                    .position(|c| c.stem == stem && platform.is_none_or(|p| c.platform == p))
                     .map(|i| (at, i))
             })
     }
@@ -967,6 +987,31 @@ impl App {
     pub fn quick_value(&self, row: QuickRow) -> Option<QuickValue> {
         match row {
             QuickRow::Brightness => Some(QuickValue::L2R2),
+            QuickRow::Picture => Some(match self.look.picture {
+                Aspect::FourThree => QuickValue::FourThree,
+                Aspect::ThreeTwo => QuickValue::ThreeTwo,
+            }),
+            QuickRow::Grid => Some(match self.look.grid {
+                LcdGrid::Off => QuickValue::Off,
+                LcdGrid::On => QuickValue::On,
+                LcdGrid::Strict => QuickValue::Strict,
+                LcdGrid::Lcd => QuickValue::Lcd,
+            }),
+            QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
+            QuickRow::SnesPicture => Some(match self.look.snes_picture {
+                SnesPicture::Sharp => QuickValue::SnesSharp,
+                SnesPicture::FourThree => QuickValue::FourThree,
+            }),
+            QuickRow::Scaler => Some(match self.look.scaler {
+                Scaling::PixelAa => QuickValue::PixelAa,
+                Scaling::Shimmerless => QuickValue::Shimmerless,
+            }),
+            QuickRow::Sharpness => Some(QuickValue::sharpness(self.look.sharpness)),
+            QuickRow::RunAhead => Some(match self.look.runahead {
+                0 => QuickValue::Off,
+                1 => QuickValue::Ahead1,
+                _ => QuickValue::Ahead2,
+            }),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -1010,6 +1055,13 @@ impl App {
         for (_, shelf) in &mut self.shelves {
             shelf.set_gb_shadow(GbShell::Notched, notched);
             shelf.set_gb_shadow(GbShell::Rounded, rounded);
+        }
+    }
+
+    /// The SNES Game Pak's outline in black, handed to every shelf as the other two are.
+    pub fn set_snes_cart_shadow(&mut self, face: TexId) {
+        for (_, shelf) in &mut self.shelves {
+            shelf.set_snes_shadow(face);
         }
     }
 
@@ -1088,11 +1140,11 @@ impl App {
             Phase::Doze { cart: Some(cart) } => cart,
             _ => return None,
         };
-        self.shelf().carts.iter().find(|c| c.stem == *stem)
+        self.shelf().find(stem).map(|(cart, _)| cart)
     }
 
-    /// Exactly one cart on the card, counting every shelf. The shelf is unreachable and eject is
-    /// refused.
+    /// Exactly one cart on the card, counting every shelf. It boots straight into the game, and
+    /// with `menu off` the shelf is unreachable and eject is refused.
     pub fn single_cart(&self) -> bool {
         self.carts().count() == 1
     }
@@ -1165,11 +1217,15 @@ impl App {
         self.video_mode = mode;
     }
 
-    /// The part of the frame buffer the panel shows. `slot_gfx::WHOLE_TEXTURE` for every GBA
-    /// cart and for every Game Boy cart at actual size, which is every cart until somebody
-    /// presses L.
-    pub fn source_rect(&self) -> [f32; 4] {
-        video_mode::source_rect(self.platform, self.video_mode)
+    /// Frames the core runs ahead of the game. See `emu::run_ahead`.
+    pub fn runahead(&self) -> u8 {
+        self.look.runahead
+    }
+
+    /// How the seated cart's picture is placed on the panel: the console's own rule, and for a
+    /// Game Boy cart whichever of its two sizes L and R last chose.
+    pub fn fit(&self) -> slot_gfx::Fit {
+        video_mode::fit_for(self.platform, self.video_mode, self.look.snes_picture)
     }
 
     /// Whether L and R belong to slot rather than to the game. The Game Boy and the Game Boy
@@ -1180,7 +1236,8 @@ impl App {
     /// Only while a game is playing. On the shelf the shoulders already ring the carousel
     /// between platforms, and under a menu the menu has them.
     fn slot_owns_the_shoulders(&self) -> bool {
-        matches!(self.phase, Phase::Playing { .. }) && self.platform != Platform::Gba
+        matches!(self.phase, Phase::Playing { .. })
+            && matches!(self.platform, Platform::Gb | Platform::Gbc)
     }
 
     /// The buttons slot has taken for itself *right now*, which the core must not be handed and
@@ -1197,6 +1254,18 @@ impl App {
             &[Btn::L1, Btn::R1]
         } else {
             &[]
+        }
+    }
+
+    /// The pad as the seated cart's console has it. X and Y are a SNES's and nobody else's: a
+    /// GBA or a Game Boy never had them, and a core for one is not handed buttons its console
+    /// does not have, whatever it might make of them.
+    pub fn console_buttons(&self, mask: slot_retro::ButtonMask) -> slot_retro::ButtonMask {
+        match self.platform {
+            Platform::Snes => mask,
+            _ => slot_retro::ButtonMask(
+                mask.0 & !(slot_retro::ButtonMask::X | slot_retro::ButtonMask::Y),
+            ),
         }
     }
 
@@ -1775,7 +1844,7 @@ impl App {
 
     /// MENU on the carousel. On the top row every time, however the menu was last left.
     fn open_quick_menu(&mut self) {
-        if !slot_ui::theme().menu {
+        if !self.menu {
             return;
         }
         self.about_a_down = None;
@@ -1790,6 +1859,8 @@ impl App {
         let row = match action {
             Action::GbaDown(Btn::Up) => row.up(),
             Action::GbaDown(Btn::Down) => row.down(),
+            Action::GbaDown(Btn::Left) | Action::ShelfLeft => return self.change_look(row, -1),
+            Action::GbaDown(Btn::Right) | Action::ShelfRight => return self.change_look(row, 1),
             Action::GbaDown(Btn::A) if row == QuickRow::About => {
                 self.about_a_down = Some(self.now());
                 return;
@@ -1810,6 +1881,80 @@ impl App {
         self.phase = Phase::QuickMenu { row };
     }
 
+    /// Left or Right on one of the rows that set how the game looks: one step along, stopping at
+    /// the ends as the bar does. Drawn that way from the next frame, and written to
+    /// `System/theme.txt` so the card keeps it and a hand edit there still wins at the next boot.
+    fn change_look(&mut self, row: QuickRow, by: i32) {
+        const PICTURES: [Aspect; 2] = [Aspect::FourThree, Aspect::ThreeTwo];
+        const GRIDS: [LcdGrid; 4] = [LcdGrid::Off, LcdGrid::On, LcdGrid::Strict, LcdGrid::Lcd];
+        let step = |at: usize, len: usize| (at as i32 + by).clamp(0, len as i32 - 1) as usize;
+        let (name, value) = match row {
+            QuickRow::Picture => {
+                let at = PICTURES
+                    .iter()
+                    .position(|p| *p == self.look.picture)
+                    .unwrap_or(0);
+                self.look.picture = PICTURES[step(at, PICTURES.len())];
+                ("picture", aspect_word(self.look.picture).to_string())
+            }
+            QuickRow::Grid => {
+                let at = GRIDS.iter().position(|g| *g == self.look.grid).unwrap_or(0);
+                self.look.grid = GRIDS[step(at, GRIDS.len())];
+                ("grid", grid_word(self.look.grid).to_string())
+            }
+            QuickRow::GridDepth => {
+                let depths = QuickValue::DEPTHS;
+                let now = QuickValue::depth(self.look.depth).index() - QuickValue::Depth10.index();
+                self.look.depth = f32::from(depths[step(now, depths.len())]);
+                ("grid-depth", format!("{}", self.look.depth as u8))
+            }
+            QuickRow::SnesPicture => {
+                const SNES: [SnesPicture; 2] = [SnesPicture::Sharp, SnesPicture::FourThree];
+                let at = SNES
+                    .iter()
+                    .position(|x| *x == self.look.snes_picture)
+                    .unwrap_or(0);
+                self.look.snes_picture = SNES[step(at, SNES.len())];
+                let word = match self.look.snes_picture {
+                    SnesPicture::Sharp => "sharp",
+                    SnesPicture::FourThree => "4:3",
+                };
+                ("snes-picture", word.to_string())
+            }
+            QuickRow::Scaler => {
+                const SCALERS: [Scaling; 2] = [Scaling::PixelAa, Scaling::Shimmerless];
+                let at = SCALERS
+                    .iter()
+                    .position(|x| *x == self.look.scaler)
+                    .unwrap_or(0);
+                self.look.scaler = SCALERS[step(at, SCALERS.len())];
+                let word = match self.look.scaler {
+                    Scaling::PixelAa => "pixel-aa",
+                    Scaling::Shimmerless => "shimmerless",
+                };
+                ("scaler", word.to_string())
+            }
+            QuickRow::Sharpness => {
+                let steps = QuickValue::SHARPNESS;
+                let now = QuickValue::sharpness(self.look.sharpness).index()
+                    - QuickValue::Sharp05.index();
+                self.look.sharpness = steps[step(now, steps.len())];
+                ("sharpness", format!("{:.1}", self.look.sharpness))
+            }
+            QuickRow::RunAhead => {
+                self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
+                ("runahead", self.look.runahead.to_string())
+            }
+            QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
+        };
+        self.look.apply();
+        if let Some(root) = &self.root {
+            if let Err(e) = write_theme_setting(root, name, &value) {
+                eprintln!("slot: theme.txt: {e}");
+            }
+        }
+    }
+
     /// A on a row.
     fn open_quick_row(&mut self, row: QuickRow) {
         match row {
@@ -1819,7 +1964,14 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
-            QuickRow::Brightness => {}
+            QuickRow::Picture
+            | QuickRow::Grid
+            | QuickRow::GridDepth
+            | QuickRow::SnesPicture
+            | QuickRow::Scaler
+            | QuickRow::Sharpness
+            | QuickRow::RunAhead
+            | QuickRow::Brightness => {}
         }
     }
 
@@ -2499,8 +2651,14 @@ impl App {
                         // Dimmed by as much of the open as has happened, so the dark arrives
                         // with the lid coming off and leaves with it going back on.
                         let dim = 1.0 + (CORE_PICKER_DIM - 1.0) * open;
-                        self.shelf()
-                            .draw_row(Some(stem), 0.0, CORE_PICKER_RECEDE * open, dim, SHELF_ROW_LOWER, out);
+                        self.shelf().draw_row(
+                            Some(stem),
+                            0.0,
+                            CORE_PICKER_RECEDE * open,
+                            dim,
+                            SHELF_ROW_LOWER,
+                            out,
+                        );
                         draw_empty_slot(out);
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
@@ -2735,7 +2893,7 @@ impl App {
         self.core_faces_stem = self.selected_stem().map(str::to_string);
     }
 
-    /// `sockets` and `chips` in `Core::ALL` order.
+    /// `sockets` and `chips` in `Core::GBA` order.
     pub fn set_core_part_faces(
         &mut self,
         sockets: Vec<TexId>,
@@ -3077,7 +3235,7 @@ impl App {
     /// screen opening, a core loading, a link being picked — and never once a frame. `None`
     /// for a cart the shelf cannot name.
     fn auto_link(&self, stem: &str) -> Option<(&Cart, LinkKind)> {
-        let cart = self.shelf().carts.iter().find(|c| c.stem == stem)?;
+        let (cart, _) = self.shelf().find(stem)?;
         let auto = link_kind(&cart.code, &cart.title, slot_store::header_clean(&cart.rom));
         Some((cart, auto))
     }
@@ -3133,9 +3291,12 @@ impl App {
     }
 
     fn eject(&mut self) {
-        // Nowhere to eject to. Refused rather than ignored, so the held MENU says no
-        // instead of reading as a device that stopped listening.
-        if self.single_cart() {
+        // One cart boots straight into its game, but the shelf is still where the settings
+        // are, so MENU ejects to it as it does with more. `menu off` is the card that wants
+        // no settings reached, and there one cart is a sealed console: nowhere to eject to.
+        // Refused rather than ignored, so the held MENU says no instead of reading as a
+        // device that stopped listening.
+        if self.single_cart() && !self.menu {
             return self.refuse();
         }
         // Inserting as well as Playing, so a slot with no core behind it can still be
@@ -4410,7 +4571,9 @@ pub fn greeting_dir(root: &Path) -> PathBuf {
 }
 
 pub fn greeting_frame_path(root: &Path, i: usize) -> PathBuf {
-    greeting_dir(root).join("frames").join(format!("{:04}.png", i + 1))
+    greeting_dir(root)
+        .join("frames")
+        .join(format!("{:04}.png", i + 1))
 }
 
 /// Counted from 0001 up to the first gap, so a half-copied folder plays what is there.
@@ -4418,4 +4581,81 @@ fn greeting_frame_count(root: &Path) -> usize {
     (0..)
         .take_while(|&i| greeting_frame_path(root, i).is_file())
         .count()
+}
+
+/// How the game is drawn, as the settings menu and `System/theme.txt` both hold it.
+#[derive(Copy, Clone, PartialEq, Debug)]
+struct Look {
+    picture: Aspect,
+    grid: LcdGrid,
+    /// The grid's depth in percent. The menu steps it by ten; a card can hold anything from 5.
+    depth: f32,
+    /// Frames the core runs ahead of the game, 0 to 2. Not how the game is drawn but how soon it
+    /// answers, kept here beside the rest because it lives in `theme.txt` and the menu with them.
+    runahead: u8,
+    /// Which pixel art scaler draws the picture, and how hard Pixel AA's edges are, 0 to 2.
+    scaler: Scaling,
+    sharpness: f32,
+    /// How a SNES picture is placed. Read by `App::fit` as the cart is drawn, since a SNES
+    /// picture's place depends on the seated cart rather than on a global the renderer holds.
+    snes_picture: SnesPicture,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look {
+            picture: Aspect::FourThree,
+            grid: LcdGrid::Off,
+            depth: slot_gfx::GRID_DEPTH,
+            runahead: RUNAHEAD,
+            scaler: Scaling::PixelAa,
+            sharpness: 1.0,
+            snes_picture: SnesPicture::Sharp,
+        }
+    }
+}
+
+/// Frames run ahead when the card does not say. One takes most games' own lag off a press and
+/// costs one extra frame and a state save and load a present, which every core here affords on
+/// the H700; the worker switches it off by itself for a game that cannot.
+const RUNAHEAD: u8 = 1;
+
+impl Look {
+    /// Into the renderer, which reads all of it every frame.
+    fn apply(&self) {
+        slot_gfx::set_scaler(match self.scaler {
+            Scaling::PixelAa => slot_gfx::Scaler::PixelAa(self.sharpness),
+            Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
+        });
+        slot_gfx::set_picture(match self.picture {
+            Aspect::FourThree => slot_gfx::Picture::FourThree,
+            Aspect::ThreeTwo => slot_gfx::Picture::ThreeTwo,
+        });
+        slot_gfx::set_grid(
+            match self.grid {
+                LcdGrid::Off => slot_gfx::Grid::default(),
+                LcdGrid::On => slot_gfx::Grid::on(),
+                LcdGrid::Strict => slot_gfx::Grid::strict(),
+                LcdGrid::Lcd => slot_gfx::Grid::lcd(),
+            }
+            .with_depth(self.depth),
+        );
+    }
+}
+
+/// The words `System/theme.txt` spells these with, which `Theme::parse` reads back.
+fn aspect_word(picture: Aspect) -> &'static str {
+    match picture {
+        Aspect::FourThree => "4:3",
+        Aspect::ThreeTwo => "3:2",
+    }
+}
+
+fn grid_word(grid: LcdGrid) -> &'static str {
+    match grid {
+        LcdGrid::Off => "off",
+        LcdGrid::On => "on",
+        LcdGrid::Strict => "strict",
+        LcdGrid::Lcd => "lcd",
+    }
 }

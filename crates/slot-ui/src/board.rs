@@ -168,7 +168,7 @@ const SOCKET_SVG: &str = include_str!("../assets/socket.svg");
 const CHIP_SVG: &str = include_str!("../assets/chip.svg");
 
 /// Where the open cart rests.
-pub const BOARD_X: f32 = 174.0;
+pub const BOARD_X: f32 = (slot_gfx::OUT_W - BOARD_W) as f32 / 2.0;
 pub const BOARD_Y: f32 = 150.0;
 
 /// Transparent border on every face that is drawn turned. A turned quad's own edge is not
@@ -198,7 +198,7 @@ pub fn lift_of(progress: f32) -> f32 {
     ease(((progress - SLIDE_SHARE) / (1.0 - SLIDE_SHARE)).clamp(0.0, 1.0))
 }
 
-/// Each socket's face, in `Core::ALL` order: board units of its top left, and its size.
+/// Each socket's face, in `Core::GBA` order: board units of its top left, and its size.
 pub const SOCKET_U: [f32; 2] = [99.5, 171.5];
 pub const SOCKET_V: f32 = 59.1;
 pub const SOCKET_W: u32 = 64;
@@ -219,8 +219,9 @@ const NAME_MIN_PX: f32 = 8.0;
 const SOCKET_INK: [u8; 3] = [0xee, 0xf5, 0xe6];
 const CHIP_INK: [u8; 3] = [0xf2, 0xf2, 0xf2];
 
+/// Centred over the board, above it.
 const LID_REST: Placed = Placed {
-    x: 288.0,
+    x: (slot_gfx::OUT_W as f32 - 144.0) / 2.0,
     y: 30.0,
     w: 144.0,
     h: 81.0,

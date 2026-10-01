@@ -31,14 +31,26 @@ fn one_cart_boots_even_when_slot_state_names_a_cart_that_is_gone() {
     assert!(matches!(a.phase(), Phase::Inserting { .. }));
 }
 
+/// MENU ejects one cart to the shelf, where the settings are, unless the card says `menu off`:
+/// then one cart is a sealed console and there is nowhere to eject to.
 #[test]
-fn eject_is_refused_with_only_one_cart() {
+fn one_cart_ejects_to_the_settings_unless_the_menu_is_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::Eject);
     assert!(
+        matches!(a.phase(), Phase::Ejecting { .. }),
+        "MENU did not eject the only cart: {:?}",
+        a.phase()
+    );
+
+    let d = tmp_root_with_carts(&["Emerald"]);
+    std::fs::write(d.path().join("System/theme.txt"), "menu off\n").unwrap();
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.apply(Action::Eject);
+    assert!(
         matches!(a.phase(), Phase::Playing { .. }),
-        "it ejected with nowhere to go"
+        "it ejected with the menu off"
     );
     assert!(a.refusal_active(a.now()), "the held MENU said nothing");
 }

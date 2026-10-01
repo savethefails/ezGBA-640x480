@@ -223,11 +223,11 @@ pub fn apply_core_options(
     // The key is the core's own name with `_frameskip` after it, which is how both spell it.
     core.set_option(&format!("{}_frameskip", which.as_str()), "auto");
     if which == Core::Mgba {
-        // An SGB border makes the picture 256x224, and 256 is wider than the 240 this whole path
-        // is built on — `video_refresh` would crop it. The core declares this one as `ON|OFF`
-        // and its default is `ON`, so this is not merely belt and braces; and it is set
-        // explicitly rather than counted on staying that way, so a default that changes under us
-        // cannot turn a working screen into a cropped one either.
+        // An SGB border makes the picture 256x224, the Game Boy's own 160x144 a small window in
+        // the middle of a television frame, which would be drawn at 2x rather than the 3x a Game
+        // Boy picture fills the panel at. The core declares this one as `ON|OFF` and its default
+        // is `ON`, so this is not merely belt and braces; and it is set explicitly rather than
+        // counted on staying that way, so a default that changes under us cannot shrink it.
         //
         // `mgba_gb_model` is deliberately left alone. Its default is `Autodetect`, which is each
         // cart's own header read honestly, and naming a model here would override what the cart
