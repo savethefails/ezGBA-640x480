@@ -19,14 +19,20 @@ const OVERSHOOT: f32 = 0.6;
 /// Height of the picture as a fraction of the frame. Ease out: it snaps open and settles,
 /// which is a panel striking rather than a blind going up.
 pub fn screen_scale(t: f32) -> f32 {
-    let (_, _, _, game_h) = game_rect();
+    scale_of(game_rect().3, t)
+}
+
+fn scale_of(game_h: u32, t: f32) -> f32 {
     let left = 1.0 - t.clamp(0.0, 1.0);
     1.0 - (1.0 - LINE_PX / game_h as f32) * left * left
 }
 
 /// Width, and only over the last of the collapse. This is the dot the line closes to.
 pub fn screen_width(t: f32) -> f32 {
-    let (_, _, game_w, _) = game_rect();
+    width_of(game_rect().2, t)
+}
+
+fn width_of(game_w: u32, t: f32) -> f32 {
     let left = 1.0 - (t.clamp(0.0, 1.0) / DOT_T).min(1.0);
     1.0 - (1.0 - LINE_PX / game_w as f32) * left
 }
@@ -41,9 +47,14 @@ pub fn screen_brightness(t: f32) -> f32 {
 /// The rect the game layer fills, in offscreen pixels: the game area, collapsing about its
 /// own centre. The line is at the vertical middle of the picture, not at the slot.
 pub fn screen_rect(t: f32) -> (f32, f32, f32, f32) {
-    let (x, y, game_w, game_h) = game_rect();
-    let w = game_w as f32 * screen_width(t);
-    let h = game_h as f32 * screen_scale(t);
+    screen_rect_in(game_rect(), t)
+}
+
+/// The same collapse about any rect: a still's, which is placed from its own size.
+pub fn screen_rect_in(rect: (u32, u32, u32, u32), t: f32) -> (f32, f32, f32, f32) {
+    let (x, y, game_w, game_h) = rect;
+    let w = game_w as f32 * width_of(game_w, t);
+    let h = game_h as f32 * scale_of(game_h, t);
     (
         x as f32 + (game_w as f32 - w) / 2.0,
         y as f32 + (game_h as f32 - h) / 2.0,

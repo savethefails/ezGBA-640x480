@@ -1,5 +1,5 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
-use slot_store::Cart;
+use slot_store::{Cart, Platform};
 
 use crate::cart::{cart_box, gb_shell_of, label_colour, label_text, CART_W};
 use crate::hud::Millis;
@@ -69,6 +69,7 @@ pub struct Shelf {
     shadow: Option<TexId>,
     gb_shadow: Option<TexId>,
     gbc_shadow: Option<TexId>,
+    snes_shadow: Option<TexId>,
     /// Which mould each cart in `carts` came out of, `None` for a GBA cart. Worked out once
     /// here because the answer is in the rom's header: asking it while drawing would open a
     /// file on every cart of every frame.
@@ -95,6 +96,7 @@ impl Shelf {
             shadow: None,
             gb_shadow: None,
             gbc_shadow: None,
+            snes_shadow: None,
             ride: 0.0,
             vel: 0.0,
             held: None,
@@ -121,6 +123,11 @@ impl Shelf {
     /// The Game Boy pak's outline in black, one per shell mould. A row whose carts are paks and
     /// whose only uploaded shadow is the GBA one draws no black at all rather than a tapered
     /// shape stretched under a straight sided cart.
+    /// The SNES Game Pak's outline in black: a shape of its own, not the GBA cart's grown.
+    pub fn set_snes_shadow(&mut self, face: TexId) {
+        self.snes_shadow = Some(face);
+    }
+
     pub fn set_gb_shadow(&mut self, shell: GbShell, face: TexId) {
         match shell {
             GbShell::Notched => self.gb_shadow = Some(face),
@@ -142,8 +149,16 @@ impl Shelf {
     }
 
     /// In `hints` order.
+    ///
+    /// The selected cart first. One shelf holds every console's carts, so two can share a name
+    /// — `Tetris.gb` and `Tetris.gba` — and the cart in the slot is always the selected one: the
+    /// shelf cannot move while a cart is in it. Only a name that is not the selection's falls back
+    /// to the first cart that has it.
     pub fn find(&self, stem: &str) -> Option<(&Cart, Option<TexId>)> {
-        let i = self.carts.iter().position(|c| c.stem == stem)?;
+        let i = match self.carts.get(self.index) {
+            Some(c) if c.stem == stem => self.index,
+            _ => self.carts.iter().position(|c| c.stem == stem)?,
+        };
         Some((&self.carts[i], self.faces.get(i).copied()))
     }
 
@@ -284,7 +299,12 @@ impl Shelf {
         }
         let r = off.rem_euclid(n);
         let nearest = if r * 2 > n { r - n } else { r };
-        (nearest == off).then(|| at(off))
+        // On an even row the cart half way round stands at both ends: it is as near one way as
+        // the other. Left at only one, the cart leaving on the left of a slide vanished the
+        // moment the press landed, before it had moved, since the slot it was sliding out of
+        // stopped being its own. It is past the screen's edge at rest on any row of four or more.
+        let halfway = n % 2 == 0 && off.abs() * 2 == n;
+        (nearest == off || halfway).then(|| at(off))
     }
 
     /// Where the selected cart stands once the row has settled, in offscreen pixels: dead
@@ -392,6 +412,7 @@ impl Shelf {
                 // whose mould was never recorded gets the straight sided backing, which is the
                 // same degrading a cart whose face was never uploaded already gets.
                 let backing = match self.shells.get(i).copied().flatten() {
+                    None if cart.platform == Platform::Snes => self.snes_shadow,
                     None => self.shadow,
                     Some(GbShell::Notched) => self.gb_shadow,
                     Some(GbShell::Rounded) => self.gbc_shadow,

@@ -3,7 +3,7 @@ use std::path::Path;
 /// Which console a cart is for, and therefore which folder every one of its files lives in —
 /// and, since there is one shelf per platform, which shelf of the carousel it stands on.
 ///
-/// Three variants, one per card directory. There is deliberately no variant meaning "loose at
+/// One variant per card directory. There is deliberately no variant meaning "loose at
 /// the root": nothing stays loose, and a file's platform is a property of *where it is*, which
 /// is what lets the scan answer it without opening the file at all.
 ///
@@ -18,11 +18,12 @@ pub enum Platform {
     Gba,
     Gb,
     Gbc,
+    Snes,
 }
 
 impl Platform {
     /// Every variant, once, in the order the shelves are switched through.
-    pub const ALL: [Platform; 3] = [Platform::Gba, Platform::Gb, Platform::Gbc];
+    pub const ALL: [Platform; 4] = [Platform::Gba, Platform::Gb, Platform::Gbc, Platform::Snes];
 
     /// The card directory this platform's files live under, in `Games/`, `Saves/`, `States/`
     /// and `Labels/` alike. Every platform has one — see the type's own comment.
@@ -31,6 +32,7 @@ impl Platform {
             Platform::Gba => "GBA",
             Platform::Gb => "GB",
             Platform::Gbc => "GBC",
+            Platform::Snes => "SNES",
         }
     }
 
@@ -41,13 +43,12 @@ impl Platform {
         match self {
             Platform::Gba => &["gba"],
             Platform::Gb | Platform::Gbc => &["gb", "gbc"],
+            Platform::Snes => &["sfc", "smc"],
         }
     }
 
-    /// The picture this console draws, in pixels. The GBA's is the whole frame buffer the
-    /// device is built around; a Game Boy's is smaller and `video_refresh` centres it inside
-    /// that same buffer, so this is also what says how much of the buffer is the picture and
-    /// how much is the margin around it.
+    /// The picture this console draws, in pixels, before a core has drawn one: a SNES can
+    /// also go to 512 across and 448 down, and the frame says which.
     ///
     /// A Game Boy Color draws the same 160x144 as a Game Boy — the colour is in the pixels,
     /// not in how many of them there are.
@@ -58,6 +59,7 @@ impl Platform {
         match self {
             Platform::Gba => (240, 160),
             Platform::Gb | Platform::Gbc => (160, 144),
+            Platform::Snes => (256, 224),
         }
     }
 

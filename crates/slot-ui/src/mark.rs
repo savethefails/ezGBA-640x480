@@ -14,6 +14,8 @@ use crate::CartFace;
 const GBA_SVG: &str = include_str!("../assets/platform_gba.svg");
 const GB_SVG: &str = include_str!("../assets/platform_gb.svg");
 const GBC_SVG: &str = include_str!("../assets/platform_gbc.svg");
+/// ezGBA's own drawing rather than the Noun Project's; see the file.
+const SNES_SVG: &str = include_str!("../assets/platform_snes.svg");
 
 /// How tall a mark is drawn, in offscreen pixels.
 ///
@@ -120,6 +122,7 @@ pub fn mark_face(platform: Platform) -> CartFace {
         Platform::Gba => GBA_SVG,
         Platform::Gb => GB_SVG,
         Platform::Gbc => GBC_SVG,
+        Platform::Snes => SNES_SVG,
     };
     let Some(rgba) = render_svg(svg, MARK_W, MARK_H) else {
         return CartFace {
@@ -260,6 +263,7 @@ mod tests {
             Platform::Gba => GBA_SVG,
             Platform::Gb => GB_SVG,
             Platform::Gbc => GBC_SVG,
+            Platform::Snes => SNES_SVG,
         }
     }
 

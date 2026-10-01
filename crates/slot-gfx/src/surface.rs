@@ -182,17 +182,115 @@ pub fn grid() -> Grid {
     }
 }
 
-/// Where the game picture sits in the frame, as x, y, width and height in panel pixels.
-/// Neither shape is a whole multiple of the source across, so the game pass scales it with
-/// sharp-shimmerless rather than nearest (see `GAME_FRAG`).
-pub fn game_rect() -> (u32, u32, u32, u32) {
-    match picture() {
-        Picture::FourThree => (0, 0, OUT_W, OUT_H),
-        Picture::ThreeTwo => {
-            let h = 427;
-            (0, (OUT_H - h) / 2, OUT_W, h)
+/// How a console's picture is placed on the panel. The console decides, not the picture: a
+/// GBA follows the card's `picture` setting, a Game Boy is drawn at a whole multiple, a SNES at
+/// the 4:3 its games were made for.
+#[derive(Copy, Clone, PartialEq, Debug, Default)]
+pub enum Fit {
+    /// A GBA's: the shape `picture` chooses, whatever the size of the frame.
+    #[default]
+    Gba,
+    /// Square pixels at the largest whole multiple of the frame that fits, centred. A Game
+    /// Boy's 160x144 is exactly 3x on a 640x480 panel: 480x432, every pixel three by three.
+    Whole,
+    /// A display shape, as large as fits and centred, at whatever scale that takes. A SNES
+    /// draws 256x224 (or 512x448) for a 4:3 television, which fills a 4:3 panel exactly.
+    Aspect(f32),
+    /// The whole panel, shape and all: a Game Boy picture stretched to fill it.
+    Fill,
+    /// The panel's full width, and its height at the largest whole multiple of the frame's rows:
+    /// a SNES's 224 at 2x is 448, with a 16 px bar above and below, and its 448 hi-res rows at
+    /// 1x are the same 448. Every source row is exactly the same number of panel rows, so a one
+    /// pixel line across a letter can never be thinned into its neighbour by the scale, as it is
+    /// at 224 to 480 (2.14 rows each, two or three). About 7% shorter than 4:3, which is the
+    /// price of rows that are all the same height.
+    Rows,
+}
+
+impl Fit {
+    /// How a still is placed. A photograph is a picture of the game, not of the display
+    /// setting it was later viewed at, so a stretched Game Boy's polaroids stay the shape the
+    /// game is.
+    pub fn still(self) -> Fit {
+        match self {
+            Fit::Fill => Fit::Whole,
+            other => other,
         }
     }
+
+    /// Where a `w` by `h` frame goes on the panel, as x, y, width and height in panel pixels,
+    /// every edge on a whole pixel.
+    pub fn rect(self, (w, h): (u32, u32)) -> (u32, u32, u32, u32) {
+        let centred = |dw: u32, dh: u32| ((OUT_W - dw) / 2, (OUT_H - dh) / 2, dw, dh);
+        let aspect = |a: f32| {
+            if (OUT_W as f32 / OUT_H as f32) > a {
+                centred(((OUT_H as f32 * a).round() as u32).min(OUT_W), OUT_H)
+            } else {
+                centred(OUT_W, ((OUT_W as f32 / a).round() as u32).min(OUT_H))
+            }
+        };
+        match self {
+            Fit::Gba => match picture() {
+                Picture::FourThree => (0, 0, OUT_W, OUT_H),
+                Picture::ThreeTwo => centred(OUT_W, 427),
+            },
+            Fit::Fill => (0, 0, OUT_W, OUT_H),
+            Fit::Rows if h > 0 && h <= OUT_H => centred(OUT_W, (OUT_H / h) * h),
+            Fit::Aspect(a) if a > 0.0 => aspect(a),
+            _ if w == 0 || h == 0 => (0, 0, OUT_W, OUT_H),
+            Fit::Whole => match (OUT_W / w).min(OUT_H / h) {
+                // A frame bigger than the panel has no whole multiple, and is fitted instead.
+                0 => aspect(w as f32 / h as f32),
+                s => centred(w * s, h * s),
+            },
+            Fit::Aspect(_) | Fit::Rows => aspect(w as f32 / h as f32),
+        }
+    }
+}
+
+static FIT: AtomicU8 = AtomicU8::new(0);
+static FIT_ASPECT: AtomicU32 = AtomicU32::new(0);
+/// The live frame's width and height, packed, as last uploaded.
+static SOURCE: AtomicU32 = AtomicU32::new((240 << 16) | 160);
+
+/// Set by the app for the cart in the slot, and read by every draw.
+pub fn set_fit(fit: Fit) {
+    let (which, aspect) = match fit {
+        Fit::Gba => (0, 0.0),
+        Fit::Whole => (1, 0.0),
+        Fit::Aspect(a) => (2, a),
+        Fit::Fill => (3, 0.0),
+        Fit::Rows => (4, 0.0),
+    };
+    FIT_ASPECT.store(f32::to_bits(aspect), Ordering::Relaxed);
+    FIT.store(which, Ordering::Relaxed);
+}
+
+pub fn fit() -> Fit {
+    match FIT.load(Ordering::Relaxed) {
+        1 => Fit::Whole,
+        2 => Fit::Aspect(f32::from_bits(FIT_ASPECT.load(Ordering::Relaxed))),
+        3 => Fit::Fill,
+        4 => Fit::Rows,
+        _ => Fit::Gba,
+    }
+}
+
+/// The size of the live frame, set whenever one of a new size is uploaded.
+pub fn set_source_size((w, h): (u32, u32)) {
+    SOURCE.store((w.min(0xffff) << 16) | h.min(0xffff), Ordering::Relaxed);
+}
+
+pub fn source_size() -> (u32, u32) {
+    let v = SOURCE.load(Ordering::Relaxed);
+    (v >> 16, v & 0xffff)
+}
+
+/// Where the live game picture sits in the frame, as x, y, width and height in panel pixels:
+/// the fit in force for the frame being shown. Only a Game Boy's is a whole multiple, so the
+/// game pass scales with Pixel AA or sharp-shimmerless (see `GAME_FRAG`).
+pub fn game_rect() -> (u32, u32, u32, u32) {
+    fit().rect(source_size())
 }
 
 #[derive(Debug)]

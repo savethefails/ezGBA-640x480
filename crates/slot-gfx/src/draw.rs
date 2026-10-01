@@ -64,6 +64,8 @@ pub struct Sprites {
     prog: gl::types::GLuint,
     white: gl::types::GLuint,
     textures: Vec<gl::types::GLuint>,
+    /// Each texture's width and height, in `textures` order.
+    sizes: Vec<(u32, u32)>,
     u_rect: gl::types::GLint,
     u_colour: gl::types::GLint,
     u_turn: gl::types::GLint,
@@ -97,6 +99,7 @@ impl Sprites {
             prog,
             white,
             textures: Vec::new(),
+            sizes: Vec::new(),
             u_rect,
             u_colour,
             u_turn,
@@ -117,6 +120,7 @@ impl Sprites {
     fn push(&mut self, w: u32, h: u32, rgba: &[u8], filter: gl::types::GLenum) -> TexId {
         let tex = crate::gl::texture(w, h, filter, gl::CLAMP_TO_EDGE, gl::RGBA, Some(rgba));
         self.textures.push(tex);
+        self.sizes.push((w, h));
         TexId(self.textures.len() - 1)
     }
 
@@ -129,6 +133,9 @@ impl Sprites {
         };
         if rgba.len() < (w * h * 4) as usize {
             return;
+        }
+        if let Some(size) = self.sizes.get_mut(id.0) {
+            *size = (w, h);
         }
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, *tex);
@@ -150,6 +157,10 @@ impl Sprites {
     /// For the passes that sample a sprite texture without drawing it as a sprite.
     pub fn source(&self, id: TexId) -> Option<gl::types::GLuint> {
         self.textures.get(id.0).copied()
+    }
+
+    pub fn size(&self, id: TexId) -> Option<(u32, u32)> {
+        self.sizes.get(id.0).copied()
     }
 
     pub fn draw(&self, items: &[Draw], quad: &Quad) {

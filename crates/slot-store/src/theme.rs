@@ -41,6 +41,11 @@ pub struct Theme {
     /// `grid-depth 40`: how dark the middle of a grid line is, in percent, from 5 to 100. `None`
     /// is the grid's own default.
     pub grid_depth: Option<f32>,
+    /// `runahead 1`: frames to run ahead of the game, 0 to 2, to take its own lag off a press.
+    /// `None` is the default, one.
+    pub runahead: Option<u8>,
+    /// `snes-picture sharp` or `snes-picture 4:3`. See `SnesPicture`.
+    pub snes_picture: SnesPicture,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -58,6 +63,16 @@ pub enum Scaling {
     #[default]
     PixelAa,
     Shimmerless,
+}
+
+/// How a SNES picture is placed.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum SnesPicture {
+    /// The panel's width, rows at a whole multiple: 640x448, every row the same height.
+    #[default]
+    Sharp,
+    /// The whole panel at 4:3, rows stretched to 2 or 3 panel rows each.
+    FourThree,
 }
 
 /// The shape of the game picture on a 640x480 panel.
@@ -84,6 +99,8 @@ impl Default for Theme {
             sharpness: 1.0,
             grid: LcdGrid::Off,
             grid_depth: None,
+            runahead: None,
+            snes_picture: SnesPicture::Sharp,
         }
     }
 }
@@ -125,6 +142,14 @@ impl Theme {
                 ("grid", "off") => theme.grid = LcdGrid::Off,
                 ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
+                ("snes-picture", "sharp") => theme.snes_picture = SnesPicture::Sharp,
+                ("snes-picture", "4:3") => theme.snes_picture = SnesPicture::FourThree,
+                ("runahead", "off") => theme.runahead = Some(0),
+                ("runahead", v) => {
+                    if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {
+                        theme.runahead = Some(n);
+                    }
+                }
                 ("grid-depth", v) => {
                     if let Some(d) = v.parse::<f32>().ok().filter(|d| (5.0..=100.0).contains(d)) {
                         theme.grid_depth = Some(d);

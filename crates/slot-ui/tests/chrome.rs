@@ -2,6 +2,7 @@ use slot_store::{Cart, Platform};
 use slot_ui::{
     cart_box, draw_empty_slot, edge, housing, icon_box, opening, recess, Draw, Shelf, SlotChrome,
     ALERT_PX, CART_H, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, MOUTH_H, OUT_H, OUT_W,
+    SNES_LABEL_H, SNES_LABEL_Y,
 };
 
 /// Where a shelf of three or more stands its selected cart, which is what the chrome is handed
@@ -35,9 +36,26 @@ fn pak() -> Cart {
     }
 }
 
-/// Both cartridges, each named for the failure message.
-fn both() -> [(&'static str, Cart); 2] {
-    [("the GBA cart", cart()), ("the Game Boy pak", pak())]
+/// A SNES Game Pak: the same width again and 1.27x the GBA cart's height.
+fn snes() -> Cart {
+    Cart {
+        platform: Platform::Snes,
+        stem: "Super Metroid".into(),
+        rom: "Games/SNES/Super Metroid.sfc".into(),
+        label: None,
+        backdrop: None,
+        code: String::new(),
+        title: String::new(),
+    }
+}
+
+/// Every cartridge, each named for the failure message.
+fn both() -> [(&'static str, Cart); 3] {
+    [
+        ("the GBA cart", cart()),
+        ("the Game Boy pak", pak()),
+        ("the SNES pak", snes()),
+    ]
 }
 
 /// Where the label well of this cartridge starts and how tall it is. A pak's paper sits high on
@@ -47,6 +65,7 @@ fn label_band(c: &Cart) -> (f32, f32) {
     match c.platform {
         Platform::Gba => (LABEL_Y as f32, LABEL_H as f32),
         Platform::Gb | Platform::Gbc => (GB_LABEL_Y as f32, GB_LABEL_H as f32),
+        Platform::Snes => (SNES_LABEL_Y as f32, SNES_LABEL_H as f32),
     }
 }
 

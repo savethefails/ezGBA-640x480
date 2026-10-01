@@ -93,8 +93,8 @@ impl Compositor {
         }
     }
 
-    pub fn upload_game(&mut self, xrgb8888: &[u8]) {
-        self.game.upload(xrgb8888);
+    pub fn upload_game(&mut self, xrgb8888: &[u8], size: (u32, u32)) {
+        self.game.upload(xrgb8888, size);
     }
 
     pub fn draw_game(&mut self) {
@@ -114,8 +114,10 @@ impl Compositor {
                 Draw::Shot { tex } => {
                     self.sprites.draw(&items[from..i], &self.quad);
                     // A shot naming a texture nobody made draws nothing, as a sprite does.
-                    if let Some(tex) = self.sprites.source(tex) {
-                        self.game.draw_still(tex, &self.quad);
+                    if let (Some(gl_tex), Some(size)) =
+                        (self.sprites.source(tex), self.sprites.size(tex))
+                    {
+                        self.game.draw_still(gl_tex, size, &self.quad);
                     }
                 }
                 _ => continue,
@@ -145,10 +147,6 @@ impl Compositor {
     /// stays where it is while the picture blooms out from behind it.
     pub fn set_screen_power(&mut self, t: f32) {
         self.game.set_power(t);
-    }
-
-    pub fn set_game_source_rect(&mut self, rect: [f32; 4]) {
-        self.game.set_source_rect(rect);
     }
 
     /// Pixels, in offscreen space, applied to the whole presented image. On the blit rather

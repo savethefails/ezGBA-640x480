@@ -152,3 +152,14 @@ fn write_theme_setting_changes_one_line_and_keeps_the_rest() {
     assert_eq!(theme.grid_depth, Some(70.0));
     assert_eq!(theme.scrim, [0xF7, 0xE7, 0xCE]);
 }
+
+/// Run-ahead is 0, 1 or 2 frames, or `off`; anything else leaves the default.
+#[test]
+fn runahead_is_read_as_a_frame_count() {
+    assert_eq!(Theme::parse("").runahead, None);
+    assert_eq!(Theme::parse("runahead 0").runahead, Some(0));
+    assert_eq!(Theme::parse("runahead off").runahead, Some(0));
+    assert_eq!(Theme::parse("runahead 2").runahead, Some(2));
+    assert_eq!(Theme::parse("runahead 3").runahead, None);
+    assert_eq!(Theme::parse("runahead lots").runahead, None);
+}

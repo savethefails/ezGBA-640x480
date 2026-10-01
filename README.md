@@ -55,12 +55,16 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | Row | What it does |
 |---|---|
 | **Date & Time** | Set the clock (A opens it). |
-| **Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **GBA Picture** | `4:3` fills the screen; `3:2` is the GBA's own shape, with thin bars. |
+| **SNES Picture** | `Sharp` (the default): full width, every row exactly 2 screen rows, thin bars above and below. `4:3`: the whole screen, rows stretched, so thin lines can blur. |
 | **LCD Grid** | `Off`, `On`, `Strict` or `LCD`, as described below. |
 | **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
+| **Scaler** | `Pixel AA` (the default) or `Shimmerless`: how game pixels are scaled up. |
+| **Sharpness** | How hard Pixel AA's pixel edges are: `0.5`, `1.0` (the default, and the only one with no shimmer when the screen scrolls), `1.5` or `2.0`. |
+| **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
 | **About** | Credits (A opens it). |
 
-The picture and grid settings are saved to `System/theme.txt`, so the card remembers them,
+All of these settings but Date & Time are saved to `System/theme.txt`, so the card remembers them,
 and they're read back from it at startup, so editing the file by hand still works.
 
 `System/theme.txt` holds a few more options that aren't in the menu:
@@ -95,6 +99,42 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 - **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws evenly
   spaced lines between the pixels, with each pixel brightened to make up for them. It's
   off unless you turn it on.
+- **Game Boy and Game Boy Color games are exactly 3×**: 480×432, every pixel three screen
+  pixels square, with a border round them. L stretches one to fill the screen; R puts it back.
+- **SNES games fill the screen's width, with every row exactly 2 screen rows** (1 in the
+  512×448 hi-res mode): 640×448, with a thin bar above and below. Stretched to the full 480,
+  rows would come out 2 or 3 screen rows tall, and a one-pixel outline on a letter could thin
+  out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. Set
+  SNES Picture to `4:3` in the menu, or `snes-picture 4:3` in `System/theme.txt`, for the
+  whole screen instead. SNES games take no LCD grid, since a TV has none.
+
+## Responsive controls
+
+Most games take a frame or two to answer a button, on top of the device's own delay. ezGBA
+takes both down:
+
+- **Run-ahead**, as RetroArch has it. Every frame, the emulator runs the real frame, saves the
+  game, runs one frame further on the same buttons and shows that, then goes back. What you
+  see is where the game will be a frame later, so a frame of the game's own lag is gone. It
+  costs one extra frame of emulation and a save and load, every frame. If a game is too heavy
+  for that, ezGBA switches run-ahead off for it by itself and plays it normally. Set it in the
+  menu, or with `runahead 0`, `1` or `2` in `System/theme.txt`. Two frames removes more lag
+  but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
+  always off in a link session.
+- **In step with the screen.** The emulator runs each frame right after the buttons are read
+  and just before the frame is shown, instead of on a clock of its own that drifts against
+  the screen's, which could leave a press waiting up to a frame longer.
+
+## SNES games
+
+Put `.sfc` or `.smc` files in `Games/SNES/`. Every game, whatever it's for, stands on the one
+shelf in order of its name, each in its own console's cartridge. Every button is the
+SNES's own, X and Y included, and L2/R2 are still brightness. Box art and labels work as they
+do for the GBA, from `Backdrops/SNES/` and `Labels/SNES/`.
+
+SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence allows it to be
+shared only for free and non-commercially, with its licence beside it (it ships as
+`System/licenses/snes9x-LICENSE.txt`). ezGBA is free; just don't sell anything with it inside.
 
 ## Setup
 
@@ -120,7 +160,9 @@ latest **slot** run under Actions, download the artifact at the bottom, unzip it
 `slot` into the card's `System` folder, replacing the old one. Your saves, `theme.txt` and
 settings are left alone.
 
-The **release** workflow builds the whole card, with both emulators, for setting up a new card.
+The **release** workflow builds the whole card, with all three emulators, for setting up a new
+card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as
+well as the new `System/slot`.
 
 ## AI disclosure
 

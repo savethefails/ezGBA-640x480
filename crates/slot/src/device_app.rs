@@ -46,6 +46,7 @@ pub fn run() {
             return;
         }
         frontend.advance(&mut input);
+        frontend.frame_shown();
         if frontend.restarting() {
             frontend.restart();
         }

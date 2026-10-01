@@ -97,14 +97,18 @@ fn the_quick_menu_renders_full_screen() {
 
         let top = (QUICK_TOP + QUICK_PITCH * selected.index() as f32) as usize;
         for x in [1, OUT_W as usize - 2] {
-            assert_eq!(at(&px, x, top + 26), bar, "{name}: no bar at x {x}");
+            assert_eq!(
+                at(&px, x, top + QUICK_PITCH as usize / 2),
+                bar,
+                "{name}: no bar at x {x}"
+            );
         }
         // Edge to edge means unbroken all the way across, which is a stronger claim than the two
         // ends and the panel's centre — and a truer one, now that Colour Correction's label is
         // long enough to have type sitting on that centre. Ink over the bar is not a gap in it,
         // and every ink here is lighter than the bar, so only the ground would be a real break.
         assert!(
-            (0..OUT_W as usize).all(|x| at(&px, x, top + 26) != ground),
+            (0..OUT_W as usize).all(|x| at(&px, x, top + QUICK_PITCH as usize / 2) != ground),
             "{name}: the bar breaks somewhere across the row"
         );
         assert_eq!(

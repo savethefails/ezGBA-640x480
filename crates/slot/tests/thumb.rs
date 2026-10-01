@@ -18,7 +18,7 @@ fn a_thumbnail_keeps_the_frames_colours() {
     for px in frame.chunks_exact_mut(4) {
         px.copy_from_slice(&[0x20, 0x40, 0xd0, 0xff]);
     }
-    let encoded = thumb::png(&frame).expect("encode");
+    let encoded = thumb::png(&frame, (GBA_W, GBA_H)).expect("encode");
     let (rgb, w, h) = decode(&encoded);
     assert_eq!((w, h), (GBA_W, GBA_H));
     assert_eq!(&rgb[..3], &[0xd0, 0x40, 0x20]);
@@ -28,6 +28,19 @@ fn a_thumbnail_keeps_the_frames_colours() {
 /// truncated read of one is worse than no polaroid at all.
 #[test]
 fn a_short_frame_is_not_a_thumbnail() {
-    assert!(thumb::png(&[]).is_none());
-    assert!(thumb::png(&vec![0u8; (GBA_W * GBA_H * 4) as usize - 4]).is_none());
+    assert!(thumb::png(&[], (GBA_W, GBA_H)).is_none());
+    assert!(thumb::png(&[], (0, 0)).is_none());
+    assert!(thumb::png(&vec![0u8; (GBA_W * GBA_H * 4) as usize - 4], (GBA_W, GBA_H)).is_none());
+}
+
+/// Every console's picture is photographed at its own size: a Game Boy's 160x144, a SNES's
+/// 256x224, with nothing of a GBA-sized buffer around it.
+#[test]
+fn a_thumbnail_is_the_size_the_core_drew() {
+    for (w, h) in [(160u32, 144u32), (256, 224), (512, 448)] {
+        let frame = vec![0x80u8; (w * h * 4) as usize];
+        let encoded = thumb::png(&frame, (w, h)).expect("encode");
+        let (_, got_w, got_h) = decode(&encoded);
+        assert_eq!((got_w, got_h), (w, h));
+    }
 }

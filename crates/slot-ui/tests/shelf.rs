@@ -67,14 +67,21 @@ fn drawn_cart_indices(out: &[Draw]) -> Vec<usize> {
         .collect()
 }
 
+/// The selection and a shrunken neighbour either side of it all stand wholly on a 640 px row:
+/// three full size carts are 720 px, which is why the neighbours are drawn smaller.
 #[test]
 fn three_carts_fit_across_the_shelf() {
-    let row = CART_W * 3;
-    assert!(
-        row <= OUT_W,
-        "three carts are {row} px across a {OUT_W} px row, so it cannot show one either \
-         side of the selection"
-    );
+    let mut s = shelf_with(3);
+    settle(&mut s);
+    let row = placed(&s);
+    assert_eq!(row.len(), 3, "a row of three does not show all three");
+    for (x, w) in row {
+        assert!(
+            x >= 0.0 && x + w <= OUT_W as f32,
+            "a cart stands from {x} to {} on a {OUT_W} px row",
+            x + w
+        );
+    }
 }
 
 #[test]
@@ -164,7 +171,7 @@ fn one_cart_stands_alone_in_the_middle() {
     assert!((w - CART_W as f32).abs() < 0.5, "the lone cart is {w} wide");
     let centre = x + w / 2.0;
     assert!(
-        (centre - 360.0).abs() < 0.5,
+        (centre - OUT_W as f32 / 2.0).abs() < 0.5,
         "the lone cart sits at {centre}"
     );
 }
@@ -187,13 +194,15 @@ fn two_carts_repeat_around_the_ring() {
     let row = placed(&s);
     let centres: Vec<f32> = row.iter().map(|(x, w)| x + w / 2.0).collect();
     assert!(
-        (centres[1] - 360.0).abs() < 0.5,
+        (centres[1] - OUT_W as f32 / 2.0).abs() < 0.5,
         "the selected cart sits at {}, not the middle of the screen",
         centres[1]
     );
     for (a, b) in [(centres[0], centres[1]), (centres[1], centres[2])] {
         assert!(
-            (b - a - 240.0).abs() < 0.5,
+            // The shelf's pitch on a 640 row: 220, so a 168 px neighbour clears the selection by
+            // 16 px and the screen's edge by the same.
+            (b - a - 220.0).abs() < 0.5,
             "the row is {} apart rather than one pitch",
             b - a
         );
@@ -371,7 +380,7 @@ fn a_row_of_three_or_more_is_centred_on_its_selection() {
             .fold((0.0, 0.0), |a, b| if b.1 > a.1 { b } else { a });
         let centre = x + w / 2.0;
         assert!(
-            (centre - 360.0).abs() < 0.5,
+            (centre - OUT_W as f32 / 2.0).abs() < 0.5,
             "{n} carts: the selected cart sits at {centre}"
         );
     }
@@ -424,7 +433,7 @@ fn the_selected_cart_is_centred_and_full_size() {
     assert!((w - CART_W as f32).abs() < 0.5, "selected cart is {w} wide");
     let centre = x + w / 2.0;
     assert!(
-        (centre - 360.0).abs() < 0.5,
+        (centre - OUT_W as f32 / 2.0).abs() < 0.5,
         "selected cart centre is {centre}"
     );
 }

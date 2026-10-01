@@ -7,13 +7,14 @@ use crate::rumble::Rumble;
 pub const GBA_W: u32 = 240;
 pub const GBA_H: u32 = 160;
 
-/// libretro `RETRO_DEVICE_ID_JOYPAD` bit order. Y and X have no GBA equivalent, so bits 1
-/// and 9 are never set.
+/// libretro `RETRO_DEVICE_ID_JOYPAD` bit order. Y and X have no GBA or Game Boy equivalent and
+/// are only set for a console that has them.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct ButtonMask(pub u16);
 
 impl ButtonMask {
     pub const B: u16 = 1 << 0;
+    pub const Y: u16 = 1 << 1;
     pub const SELECT: u16 = 1 << 2;
     pub const START: u16 = 1 << 3;
     pub const UP: u16 = 1 << 4;
@@ -21,6 +22,7 @@ impl ButtonMask {
     pub const LEFT: u16 = 1 << 6;
     pub const RIGHT: u16 = 1 << 7;
     pub const A: u16 = 1 << 8;
+    pub const X: u16 = 1 << 9;
     pub const L: u16 = 1 << 10;
     pub const R: u16 = 1 << 11;
 }
@@ -79,8 +81,13 @@ pub trait RetroCore: Send {
     /// A core with no way to skip a render draws every frame, which is correct but slower, so
     /// the default does nothing.
     fn set_frame_skip(&mut self, _skip: bool) {}
-    /// `GBA_W * GBA_H * 4` bytes, little endian XRGB8888, so the byte order is B, G, R, unused.
+    /// The last picture, `video_size` wide and high and packed, four bytes a pixel: little
+    /// endian XRGB8888, so the byte order is B, G, R, unused.
     fn video_xrgb8888(&self) -> &[u8];
+    /// The last picture's width and height. A GBA's until a core says otherwise.
+    fn video_size(&self) -> (u32, u32) {
+        (GBA_W, GBA_H)
+    }
     fn take_audio(&mut self) -> Vec<i16>;
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError>;
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError>;
