@@ -1563,6 +1563,15 @@ impl App {
         }
     }
 
+    /// Whether what is on the panel is no longer the game or the shelf itself: the power menu
+    /// is over it, the panel has gone dark for a doze, or the shutdown screen is up. The frame
+    /// before this turns true is the one the next boot opens on (see `boot_picture`).
+    pub fn scene_covered(&self) -> bool {
+        self.shutting_down()
+            || self.power_menu.is_some()
+            || matches!(self.phase, Phase::Doze { .. })
+    }
+
     pub fn power_menu(&self) -> Option<usize> {
         self.power_menu
     }

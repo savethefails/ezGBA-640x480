@@ -1,4 +1,4 @@
-use slot_store::{Aspect, LcdGrid, Scaling, Theme};
+use slot_store::{Aspect, BootPicture, LcdGrid, Scaling, Theme};
 
 /// The card is edited on a desktop by hand. Every way that can go wrong has to leave a device
 /// that still boots and a slot that is still visible.
@@ -162,4 +162,14 @@ fn runahead_is_read_as_a_frame_count() {
     assert_eq!(Theme::parse("runahead 2").runahead, Some(2));
     assert_eq!(Theme::parse("runahead 3").runahead, None);
     assert_eq!(Theme::parse("runahead lots").runahead, None);
+}
+
+#[test]
+fn the_boot_picture_is_the_last_screen_unless_turned_off() {
+    let read = |text: &str| Theme::parse(text).boot_picture;
+    assert_eq!(read(""), BootPicture::Last);
+    assert_eq!(read("boot-picture off\n"), BootPicture::Off);
+    assert_eq!(read("boot-picture OFF\n"), BootPicture::Off);
+    assert_eq!(read("boot-picture last\n"), BootPicture::Last);
+    assert_eq!(read("boot-picture never\n"), BootPicture::Last, "a typo is the default");
 }

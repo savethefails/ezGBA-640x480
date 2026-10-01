@@ -44,6 +44,14 @@ const ALERT_INK: [u8; 3] = [0xf0, 0xb4, 0x3c];
 
 pub struct Frontend {
     session: Session,
+    /// The last frame before the screen was covered by the power menu, a doze or the shutdown
+    /// screen: what the next boot shows. See `boot_picture`.
+    scene: Option<Vec<u8>>,
+    /// Whether the previous frame was covered, so the frame before the cover is read once,
+    /// on the edge, and never while playing.
+    covered: bool,
+    /// Whether anything has been composed yet: before that the offscreen target holds nothing.
+    composed: bool,
     start: Instant,
     last: Instant,
     draws: Vec<Draw>,
@@ -147,6 +155,9 @@ impl Frontend {
             about: AboutFace::default(),
             quick_clock: QuickClock::default(),
             greeting: GreetingFace::default(),
+            scene: None,
+            covered: false,
+            composed: false,
         }
     }
 
@@ -391,6 +402,14 @@ impl Frontend {
     /// One frame into the offscreen target and no further: what `render` presents, and what a
     /// test with no window to present to reads back with `Compositor::read_frame`.
     pub fn compose(&mut self, compositor: &mut Compositor) {
+        // Before anything is drawn: the offscreen target still holds the previous frame, the
+        // last one with nothing over it. One read on the edge, never one a frame.
+        let covered = self.session.app().scene_covered();
+        if covered && !self.covered && self.composed {
+            self.scene = Some(compositor.read_frame());
+        }
+        self.covered = covered;
+        self.composed = true;
         // Set every frame rather than on the edge: the grade is part of the final blit, so
         // it has to be right whether or not anything just changed it.
         compositor.set_blue_light(self.session.app().blue_light());
@@ -480,6 +499,11 @@ impl Frontend {
     /// next frame starts now, on the freshest buttons, in step with the display.
     pub fn frame_shown(&self) {
         self.session.kick();
+    }
+
+    /// The frame the next boot should open on, taken once.
+    pub fn take_scene(&mut self) -> Option<Vec<u8>> {
+        self.scene.take()
     }
 
     pub fn powering_off(&self) -> bool {

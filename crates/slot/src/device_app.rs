@@ -38,6 +38,7 @@ pub fn run() {
     let mut frontend = Frontend::boot(Box::new(platform));
     frontend.upload_faces(&mut compositor);
     let mut input = DeviceInput::open(&root);
+    let mut boot_picture_done = false;
     loop {
         let began = Instant::now();
         frontend.render(&mut compositor, surface.window_size());
@@ -47,6 +48,14 @@ pub fn run() {
         }
         frontend.advance(&mut input);
         frontend.frame_shown();
+        if frontend.restarting() || frontend.powering_off() {
+            // Once, before either: the shutdown screen is already on the panel and stays there
+            // while this writes. Bounded, and never in the way of the power off itself.
+            if !boot_picture_done {
+                slot::boot_picture::on_power_off(&root, frontend.take_scene());
+                boot_picture_done = true;
+            }
+        }
         if frontend.restarting() {
             frontend.restart();
         }

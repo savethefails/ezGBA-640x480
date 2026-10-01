@@ -46,6 +46,19 @@ pub struct Theme {
     pub runahead: Option<u8>,
     /// `snes-picture sharp` or `snes-picture 4:3`. See `SnesPicture`.
     pub snes_picture: SnesPicture,
+    /// `boot-picture last` or `boot-picture off`. See `BootPicture`.
+    pub boot_picture: BootPicture,
+}
+
+/// What the bootloader shows while the device starts.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum BootPicture {
+    /// The screen as it was when the device last powered off: the game at that moment, or the
+    /// shelf.
+    #[default]
+    Last,
+    /// BaseOS's own logo, put back from the copy slot kept before it first replaced it.
+    Off,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -101,6 +114,7 @@ impl Default for Theme {
             grid_depth: None,
             runahead: None,
             snes_picture: SnesPicture::Sharp,
+            boot_picture: BootPicture::Last,
         }
     }
 }
@@ -144,6 +158,8 @@ impl Theme {
                 ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
                 ("snes-picture", "sharp") => theme.snes_picture = SnesPicture::Sharp,
                 ("snes-picture", "4:3") => theme.snes_picture = SnesPicture::FourThree,
+                ("boot-picture", "last") => theme.boot_picture = BootPicture::Last,
+                ("boot-picture", "off") => theme.boot_picture = BootPicture::Off,
                 ("runahead", "off") => theme.runahead = Some(0),
                 ("runahead", v) => {
                     if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {

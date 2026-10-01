@@ -80,6 +80,37 @@ and they're read back from it at startup, so editing the file by hand still work
 | `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
 | `grid lcd` | The grid as a real backlit LCD draws it: the lines darken every colour by the same amount and nothing is brightened to make up for it, so every colour keeps its place against every other and nothing washes out. The picture is dimmer (about a third at the default depth); turn the brightness up with R2 to make up for it. |
 | `grid-depth 40` | How dark the grid lines are, from `5` (barely there) to `100` (black at their middle). `40` is the default. Try `60` if you can't see the grid at arm's length. With `grid lcd`, deeper also means a dimmer picture. |
+| `boot-picture off` | Start up with BaseOS's own logo instead of the last screen (see below). `boot-picture last` is the default. |
+
+## Starting where you left off
+
+When the SP powers off or restarts, slot saves the screen as it was just before: the game at
+that moment, or the shelf. The next time you switch on, that picture is what the SP starts up
+with, and slot then carries on from the same spot. It's the frame before the power menu, the
+dark of a doze or the shutdown screen came up, so nothing is drawn over it. The clock and
+battery in the corner of a shelf picture are as they were at power off.
+
+The picture is BaseOS's `bootlogo.bmp`, which the bootloader shows from a small hidden
+partition (`boot-resource`) on the card the system boots from. That partition also holds files
+the SP needs to start, so slot writes to it as carefully as it can:
+
+- It only ever replaces the picture inside the existing file: the same file, the same length,
+  the same header. Nothing is created, renamed, resized or deleted, so the partition's layout
+  is never touched. If the power is cut mid-write, the worst case is a picture half old and
+  half new.
+- It writes only if the file is already exactly the picture BaseOS ships: 640×480, 24-bit,
+  uncompressed. Anything else and it leaves it alone.
+- It finds the partition by name, on the card the system booted from, and only on BaseOS.
+  If it can't tell which partition is the right one, it does nothing.
+- Before the first time, it copies BaseOS's logo to `System/bootlogo-baseos.bmp` on your card.
+  `boot-picture off` in `System/theme.txt` puts it back at the next power off and stops the
+  screenshots. Keep that file: without it the original logo can only come back by
+  reflashing BaseOS.
+- It never holds up the power off: anything that goes wrong is logged to `/tmp/slot.log`
+  and skipped, and it gives up after five seconds.
+
+If the battery runs flat or you hold POWER until the SP cuts out, slot gets no chance to save,
+and the next start shows the last picture it did save.
 
 ## The RG35XXSP's 640×480 screen
 
