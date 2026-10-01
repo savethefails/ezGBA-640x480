@@ -270,7 +270,7 @@ pub fn cart_face(cart: &Cart) -> CartFace {
     let (_, _, lw, lh) = s.label;
     let label = match cart.label.as_deref().and_then(|p| art::cover(p, lw, lh)) {
         Some(rgba) => rgba,
-        None => generated_label(&s, &label_text(cart)),
+        None => generated_label(&s, &label_text(cart), label_paint(cart)),
     };
     mould_detail(&s, &mut face, &shell);
     recess_label(&s, &mut face, &shell);
@@ -295,7 +295,103 @@ pub fn label_colour(title: &str) -> [u8; 3] {
         h ^= *b as u64;
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    hsv_to_rgb((h % 360) as f32, 0.52, 0.74)
+    hsv_to_rgb((h % 360) as f32, LABEL_S, LABEL_V)
+}
+
+/// Every generated label sits at one saturation and value, so a hashed colour and a painted one
+/// read as the same paper, and `ink` only ever has to choose between two inks for a given hue.
+const LABEL_S: f32 = 0.52;
+const LABEL_V: f32 = 0.74;
+
+/// The colour a cart is painted once the game has been seen: on a label with no art, the hue
+/// the game's own picture spends most of its colour on, instead of one hashed from its name.
+pub fn label_paint(cart: &Cart) -> [u8; 3] {
+    cart.paint
+        .unwrap_or_else(|| label_colour(&label_text(cart)))
+}
+
+/// Hue buckets of 15°: narrow enough to tell a lime from a grass green, wide enough that one
+/// sprite's shading does not split across three of them.
+const PAINT_BINS: usize = 24;
+
+/// Below this share of the picture's pixels counted at full vividness there is no colour to
+/// read, and `paint_of` answers `None`: a black fade, a white flash, a grey menu or a Game Boy's
+/// four greens on an uncoloured screen.
+const PAINT_FLOOR: f32 = 0.03;
+
+/// The hue a game's picture is, at the label's own saturation and value. `rgb` is packed
+/// 8-bit RGB, any size.
+///
+/// Each pixel votes for its hue with saturation squared times value, so a field of vivid grass
+/// outvotes a larger field of faded sky, and a dark grey that happens to lean blue counts for
+/// almost nothing. The winning bucket is then refined by a weighted circular mean of it and its
+/// neighbours, so the answer is a hue the picture actually holds rather than a bucket's middle.
+pub fn paint_of(rgb: &[u8]) -> Option<[u8; 3]> {
+    let mut votes = [0f32; PAINT_BINS];
+    let mut hues = [(0f32, 0f32); PAINT_BINS];
+    let mut pixels = 0usize;
+    for px in rgb.chunks_exact(3) {
+        pixels += 1;
+        let (h, s, v) = rgb_to_hsv([px[0], px[1], px[2]]);
+        let w = s * s * v;
+        if w < 0.02 {
+            continue;
+        }
+        let bin = ((h / 360.0 * PAINT_BINS as f32) as usize).min(PAINT_BINS - 1);
+        votes[bin] += w;
+        let r = h.to_radians();
+        hues[bin].0 += w * r.cos();
+        hues[bin].1 += w * r.sin();
+    }
+    if pixels == 0 || votes.iter().sum::<f32>() < PAINT_FLOOR * pixels as f32 {
+        return None;
+    }
+
+    // Smoothed around the wheel before the peak is chosen, so a hue on a bucket's edge is not
+    // split into two runners-up that each lose to a smaller, tidier colour.
+    let at = |i: isize| votes[i.rem_euclid(PAINT_BINS as isize) as usize];
+    let peak = (0..PAINT_BINS as isize)
+        .max_by(|a, b| {
+            let sa = at(a - 1) + 2.0 * at(*a) + at(a + 1);
+            let sb = at(b - 1) + 2.0 * at(*b) + at(b + 1);
+            sa.total_cmp(&sb)
+        })
+        .unwrap_or(0);
+    let (mut x, mut y) = (0.0, 0.0);
+    for i in [peak - 1, peak, peak + 1] {
+        let (cx, cy) = hues[i.rem_euclid(PAINT_BINS as isize) as usize];
+        x += cx;
+        y += cy;
+    }
+    let hue = y.atan2(x).to_degrees().rem_euclid(360.0);
+    Some(hsv_to_rgb(hue, LABEL_S, LABEL_V))
+}
+
+/// `paint_of` for a PNG, as `Snapshot::thumb` hands one over.
+pub fn paint_of_png(png: &[u8]) -> Option<[u8; 3]> {
+    let (rgba, _, _) = art::decode_bytes(png)?;
+    let rgb: Vec<u8> = rgba
+        .chunks_exact(4)
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+    paint_of(&rgb)
+}
+
+fn rgb_to_hsv([r, g, b]: [u8; 3]) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    if d <= 0.0 {
+        return (0.0, 0.0, max);
+    }
+    let h = if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h, d / max, max)
 }
 
 /// The header title is capped at twelve characters, so it reads `POKEMON EMER`. The
@@ -503,9 +599,8 @@ fn paste_label(s: &Spec, face: &mut CartFace, label: &[u8]) {
     }
 }
 
-fn generated_label(s: &Spec, title: &str) -> Vec<u8> {
+fn generated_label(s: &Spec, title: &str, bg: [u8; 3]) -> Vec<u8> {
     let (_, _, lw, lh) = s.label;
-    let bg = label_colour(title);
     let mut rgba = Vec::with_capacity((lw * lh * 4) as usize);
     for _ in 0..lw * lh {
         rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);

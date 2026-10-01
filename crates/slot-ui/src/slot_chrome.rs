@@ -4,7 +4,7 @@ use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::Cart;
 use slot_store::Theme;
 
-use crate::cart::{cart_box, label_colour, label_text, CART_W};
+use crate::cart::{cart_box, label_paint, CART_W};
 use crate::icon::icon_box;
 use crate::shelf::{foot_y, rest_y};
 
@@ -84,7 +84,11 @@ pub fn housing() -> [f32; 4] {
 /// belong to the theme, only the colour it tints towards does.
 pub fn scrim() -> [f32; 3] {
     let c = theme().scrim;
-    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]
+    [
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+    ]
 }
 
 pub fn opening() -> [f32; 4] {
@@ -245,7 +249,7 @@ impl SlotChrome<'_> {
                 alpha: cart_alpha,
             },
             None => {
-                let c = label_colour(&label_text(self.cart));
+                let c = label_paint(self.cart);
                 Draw::Rect {
                     x,
                     y,

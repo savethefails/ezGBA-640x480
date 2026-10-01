@@ -124,3 +124,35 @@ fn the_same_stem_on_two_platforms_is_two_carts_with_two_labels() {
         "the GBA cart borrowed the Game Boy label"
     );
 }
+
+#[test]
+fn a_hand_written_colour_beside_the_label_paints_the_cart() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("Games/GBA")).unwrap();
+    std::fs::write(d.path().join("Games/GBA/Zelda.gba"), vec![0u8; 0x100]).unwrap();
+    std::fs::write(d.path().join("Games/GBA/Metroid.gba"), vec![0u8; 0x100]).unwrap();
+    std::fs::create_dir_all(d.path().join("Labels/GBA")).unwrap();
+    std::fs::write(
+        d.path().join("Labels/GBA/Zelda.colour"),
+        "  #1A8f3c \n# my favourite\n",
+    )
+    .unwrap();
+    std::fs::write(d.path().join("Labels/GBA/Metroid.colour"), "orange\n").unwrap();
+    let carts = slot_store::scan(d.path()).unwrap();
+    let paint = |stem: &str| carts.iter().find(|c| c.stem == stem).unwrap().paint;
+    assert_eq!(paint("Zelda"), Some([0x1a, 0x8f, 0x3c]));
+    assert_eq!(
+        paint("Metroid"),
+        None,
+        "a colour that does not parse is no colour"
+    );
+}
+
+#[test]
+fn a_written_colour_reads_back() {
+    let d = tempfile::tempdir().unwrap();
+    slot_store::write_paint(d.path(), slot_store::Platform::Snes, "Mario", [1, 128, 255]).unwrap();
+    let path = slot_store::paint_path(d.path(), slot_store::Platform::Snes, "Mario");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "#0180ff\n");
+    assert_eq!(slot_store::read_paint(&path), Some([1, 128, 255]));
+}

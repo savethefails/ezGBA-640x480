@@ -793,3 +793,62 @@ fn each_game_boy_shell_gets_a_black_shadow_of_its_own_exact_outline() {
         bare / 255
     );
 }
+
+fn flat(px: [u8; 3], n: usize) -> Vec<u8> {
+    px.iter().copied().cycle().take(n * 3).collect()
+}
+
+#[test]
+fn a_picture_with_no_colour_paints_nothing() {
+    assert_eq!(slot_ui::paint_of(&flat([0, 0, 0], 100)), None);
+    assert_eq!(slot_ui::paint_of(&flat([255, 255, 255], 100)), None);
+    assert_eq!(slot_ui::paint_of(&flat([90, 92, 95], 100)), None);
+    assert_eq!(slot_ui::paint_of(&[]), None);
+}
+
+/// One label paper: whatever the picture's own brightness, the paint lands where the hashed
+/// colours do, so a painted cart sits on the shelf beside the rest rather than glowing.
+#[test]
+fn a_paint_is_the_picture_s_hue_on_the_label_s_paper() {
+    let red = slot_ui::paint_of(&flat([120, 10, 10], 100)).unwrap();
+    assert_eq!(red, [189, 91, 91]);
+    let blue = slot_ui::paint_of(&flat([30, 60, 250], 100)).unwrap();
+    assert!(blue[2] > blue[0] && blue[2] > blue[1], "{blue:?}");
+    assert_eq!(*blue.iter().max().unwrap(), 189);
+}
+
+/// Vividness outvotes area: a small field of saturated grass beats a large pale sky.
+#[test]
+fn the_vivid_colour_wins_over_the_large_pale_one() {
+    let mut rgb = flat([170, 190, 215], 300);
+    rgb.extend(flat([40, 200, 60], 100));
+    let p = slot_ui::paint_of(&rgb).unwrap();
+    assert!(p[1] > p[0] && p[1] > p[2], "{p:?}");
+}
+
+/// Red sits either side of 0°, so a picture split between 355° and 5° is red, not cyan.
+#[test]
+fn a_hue_across_zero_is_averaged_round_the_wheel() {
+    let mut rgb = flat([230, 20, 40], 100);
+    rgb.extend(flat([230, 40, 20], 100));
+    let p = slot_ui::paint_of(&rgb).unwrap();
+    assert!(p[0] > p[1] && p[0] > p[2], "{p:?}");
+}
+
+#[test]
+fn a_painted_cart_s_label_is_its_paint() {
+    let d = tmp_root();
+    std::fs::write(d.path().join("Games/GBA/Emerald.gba"), vec![0u8; 0x100]).unwrap();
+    let mut cart = scan(d.path()).unwrap().remove(0);
+    let hashed = cart_face(&cart);
+    cart.paint = Some([30, 160, 90]);
+    assert_eq!(slot_ui::label_paint(&cart), [30, 160, 90]);
+    let painted = cart_face(&cart);
+    let (lx, ly, _, _) = label_panel(CART_W, CART_H);
+    let at = |f: &slot_ui::CartFace| {
+        let i = (((ly + 4) * f.w + lx + 6) * 4) as usize;
+        [f.rgba[i], f.rgba[i + 1], f.rgba[i + 2]]
+    };
+    assert_eq!(at(&painted), [30, 160, 90]);
+    assert_ne!(at(&hashed), [30, 160, 90]);
+}

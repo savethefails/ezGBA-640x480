@@ -18,6 +18,11 @@ pub struct Cart {
     /// Same lookup as `label` but under `Backdrops`, and just as optional: most carts
     /// will not have one, and the shelf falls back to its ordinary random wallpaper.
     pub backdrop: Option<PathBuf>,
+    /// The label's colour when it has no art: `#rrggbb` read from `Labels/<platform>/<stem>.colour`,
+    /// which slot writes from the game's own picture the first time it leaves the game with
+    /// colour on screen, and which a person can write by hand. `None` falls back to the colour
+    /// hashed from the name.
+    pub paint: Option<[u8; 3]>,
     pub title: String,
     /// The four character header game code, empty when the rom has none. A Game Boy cart has
     /// no equivalent field, so this is always empty for `Platform::Gb` and `Platform::Gbc`.
@@ -96,12 +101,50 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 code,
                 label: label.is_file().then_some(label),
                 backdrop: backdrop.is_file().then_some(backdrop),
+                paint: read_paint(&paint_path(root, platform, stem)),
                 rom,
             });
         }
     }
     carts.sort_by(|a, b| (a.platform as u8, &a.stem).cmp(&(b.platform as u8, &b.stem)));
     Ok(carts)
+}
+
+/// Where a cart's label colour is kept: beside its label art, under the same stem.
+pub fn paint_path(root: &Path, platform: Platform, stem: &str) -> PathBuf {
+    root.join("Labels")
+        .join(platform.dir_name())
+        .join(format!("{stem}.colour"))
+}
+
+/// `#rrggbb` on the first line. Anything else reads as no colour rather than as an error: a
+/// hand-written file with a typo leaves the cart its hashed colour, not off the shelf.
+pub fn read_paint(path: &Path) -> Option<[u8; 3]> {
+    parse_paint(&std::fs::read_to_string(path).ok()?)
+}
+
+pub fn parse_paint(text: &str) -> Option<[u8; 3]> {
+    let hex = text.lines().next()?.trim().strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+/// Written once, atomically, so a cut mid-write leaves the old file or none.
+pub fn write_paint(
+    root: &Path,
+    platform: Platform,
+    stem: &str,
+    rgb: [u8; 3],
+) -> std::io::Result<()> {
+    let path = paint_path(root, platform, stem);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let [r, g, b] = rgb;
+    crate::atomic::atomic_write(&path, format!("#{r:02x}{g:02x}{b:02x}\n").as_bytes())
 }
 
 /// A leading dot is card metadata rather than content, and every folder on the card is read

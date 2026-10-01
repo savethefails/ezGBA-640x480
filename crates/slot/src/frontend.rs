@@ -403,6 +403,12 @@ impl Frontend {
         if let Some(frame) = self.session.frame() {
             compositor.upload_game(&frame, frame.size());
         }
+        // Once per painted cart, in the frame after the eject that painted it: the cart is still
+        // sliding out, so it lands on the shelf already in its new colour.
+        if let Some((cart, tex)) = self.session.app_mut().take_repainted() {
+            let f = cart_face(&cart);
+            compositor.update_texture(tex, f.w, f.h, &f.rgba);
+        }
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
         sync_about(self.session.app_mut(), compositor, &mut self.about);
         sync_greeting(self.session.app_mut(), compositor, &mut self.greeting);

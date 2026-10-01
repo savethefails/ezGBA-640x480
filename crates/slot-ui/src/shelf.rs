@@ -1,7 +1,7 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::{Cart, Platform};
 
-use crate::cart::{cart_box, gb_shell_of, label_colour, label_text, CART_W};
+use crate::cart::{cart_box, gb_shell_of, label_paint, CART_W};
 use crate::hud::Millis;
 use crate::silhouette::GbShell;
 use crate::slot_chrome::draw_empty_slot;
@@ -440,7 +440,7 @@ impl Shelf {
                 // A cart whose face has not been uploaded still holds its place. A gap in
                 // the row would read as a missing game.
                 None => {
-                    let c = label_colour(&label_text(cart));
+                    let c = label_paint(cart);
                     Draw::Rect {
                         x,
                         y,

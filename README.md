@@ -125,6 +125,18 @@ takes both down:
   and just before the frame is shown, instead of on a clock of its own that drifts against
   the screen's, which could leave a press waiting up to a frame longer.
 
+## Cart colours
+
+A cart with no label art gets a coloured label with its name on it. At first that colour comes
+from the name alone. The first time you leave the game with colour on screen, the label is
+repainted in the colour the game was showing: sky blue for a game spent in the clouds, green
+for one on a card table. It's kept in `Labels/<console>/<name>.colour`, so it never changes
+after that.
+
+To choose a colour yourself, write it in that file as `#rrggbb` (for example `#2f7fd0`).
+Delete the file and the game picks again next time. Game Boy carts keep the colour from their
+name, since every Game Boy picture is the same green.
+
 ## SNES games
 
 Put `.sfc` or `.smc` files in `Games/SNES/`. Every game, whatever it's for, stands on the one

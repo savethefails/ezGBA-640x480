@@ -437,6 +437,9 @@ pub struct App {
     /// The `t` a refused cart's exit started from, which is also how long there is left to
     /// say so. `None` for an eject the user asked for: nothing was refused.
     refused_from: Option<f32>,
+    /// A cart whose label was just painted from its game, waiting for the frontend to redraw
+    /// its face: only the frontend holds the context a texture can be written from.
+    repainted: Option<String>,
     alert_face: Option<TexId>,
     /// What the shutdown says, one per `PowerChoice::ALL` in that order and rastered at the
     /// menu's own size. "Powering down" under a restart was the screen contradicting the row
@@ -691,6 +694,7 @@ impl App {
             play_held: None,
             refusal: None,
             refused_from: None,
+            repainted: None,
             alert_face: None,
             shutdown_faces: Vec::new(),
             power_menu: None,
@@ -3320,6 +3324,7 @@ impl App {
         // one caller that happened to need it.
         self.close_game_menu();
         self.flush_eject(&cart);
+        self.paint_from_play(&cart);
         // The offer names a file in this cart's ring and a state only this cart's core can
         // read. Carried across the slot it would delete or load the wrong one.
         self.pending = None;
@@ -3330,6 +3335,43 @@ impl App {
             cart,
             t: -EJECT_HOLD_S,
         };
+    }
+
+    /// A label with no art takes the colour of the game it holds, read from the last frame the
+    /// game showed and kept beside its label, so it is read once and never drifts after.
+    /// Leaving a game on a black fade or a grey menu reads no colour, and the next eject tries
+    /// again. A Game Boy cart is left its hashed colour: its picture is the screen's tint, and
+    /// every one of them would come out the same green.
+    fn paint_from_play(&mut self, stem: &str) {
+        let (Some(root), Some(snapshot)) = (&self.root, &self.snapshot) else {
+            return;
+        };
+        let Some((cart, _)) = self.shelf().find(stem) else {
+            return;
+        };
+        if cart.label.is_some() || cart.paint.is_some() || cart.platform == Platform::Gb {
+            return;
+        }
+        let Some(paint) = snapshot.thumb().and_then(|png| slot_ui::paint_of_png(&png)) else {
+            return;
+        };
+        // Painted for this boot even when the card would not take the file: the colour is
+        // right either way, and a failed write only means it is read again next time.
+        if let Err(e) = slot_store::write_paint(root, cart.platform, stem, paint) {
+            eprintln!("slot: paint: {e}");
+        }
+        if let Some(cart) = self.shelf_mut().carts.iter_mut().find(|c| c.stem == stem) {
+            cart.paint = Some(paint);
+            self.repainted = Some(stem.to_string());
+        }
+    }
+
+    /// The cart `paint_from_play` just painted, with the face texture the shelf draws it from,
+    /// for the frontend to rebuild. Taken, so each repaint is drawn once.
+    pub fn take_repainted(&mut self) -> Option<(Cart, TexId)> {
+        let stem = self.repainted.take()?;
+        let (cart, tex) = self.shelf().find(&stem)?;
+        Some((cart.clone(), tex?))
     }
 
     /// Everything durable happens here, before the animation rather than after it: the

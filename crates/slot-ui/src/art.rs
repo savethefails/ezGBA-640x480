@@ -55,7 +55,16 @@ fn box_average(src: &[u8], sw: u32, sh: u32, x0: f32, y0: f32, x1: f32, y1: f32)
 
 fn decode(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = std::fs::File::open(path).ok()?;
-    let mut dec = png::Decoder::new(std::io::BufReader::new(file));
+    decode_from(std::io::BufReader::new(file))
+}
+
+/// RGBA from a PNG already in memory, such as the frame a core just gave up.
+pub fn decode_bytes(png: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    decode_from(std::io::Cursor::new(png))
+}
+
+fn decode_from(read: impl std::io::BufRead + std::io::Seek) -> Option<(Vec<u8>, u32, u32)> {
+    let mut dec = png::Decoder::new(read);
     dec.set_transformations(png::Transformations::normalize_to_color8());
     // A card holds user supplied art; a hostile or broken header must not become an OOM.
     dec.set_limits(png::Limits { bytes: 64 << 20 });
