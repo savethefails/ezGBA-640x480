@@ -213,6 +213,10 @@ struct Shared {
     /// to show, and waited on by the worker's pacing so the core runs right after the read.
     kick: Mutex<Option<Instant>>,
     kicked: Condvar,
+    /// Notified on every publish, so the display can wait for the frame it just kicked for rather
+    /// than drawing the one before it. See `EmuHandle::wait_published`.
+    publish_lock: Mutex<()>,
+    published_cv: Condvar,
 }
 
 impl EmuHandle {
@@ -257,6 +261,8 @@ impl EmuHandle {
             runahead: AtomicU8::new(0),
             kick: Mutex::new(None),
             kicked: Condvar::new(),
+            publish_lock: Mutex::new(()),
+            published_cv: Condvar::new(),
         });
         let (tx, rx) = channel();
         let worker = Worker {
@@ -385,6 +391,32 @@ impl EmuHandle {
 
     pub fn published_count(&self) -> u64 {
         self.shared.published.load(Ordering::Relaxed)
+    }
+
+    /// Waits until a frame newer than the `since`th has been published, for at most `timeout`.
+    /// Answers whether one came. What lets the display read the buttons, kick, and draw the
+    /// frame made from them in the same refresh.
+    pub fn wait_published(&self, since: u64, timeout: Duration) -> bool {
+        let until = Instant::now() + timeout;
+        let mut guard = self
+            .shared
+            .publish_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        loop {
+            if self.shared.published.load(Ordering::Acquire) > since {
+                return true;
+            }
+            let Some(left) = until.checked_duration_since(Instant::now()) else {
+                return false;
+            };
+            guard = self
+                .shared
+                .published_cv
+                .wait_timeout(guard, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
     }
 
     /// What the worker last read `speed` as, not what this side last told it to be — the gap
@@ -837,6 +869,9 @@ impl Worker {
                     ahead_state = state;
                     if !ok {
                         eprintln!("slot: run-ahead: this core cannot save and load its state, off");
+                        crate::latency::note(
+                            "run-ahead: this core cannot save and load its state, off",
+                        );
                         runahead_on = false;
                     }
                     let spent = frame_began.elapsed();
@@ -851,6 +886,10 @@ impl Worker {
                             "slot: run-ahead: {} ms a present is more than this game can afford, off",
                             spent.as_millis()
                         );
+                        crate::latency::note(&format!(
+                            "run-ahead {ahead}: {:.1} ms a present is more than this game can afford, off",
+                            spent.as_secs_f64() * 1000.0
+                        ));
                         runahead_on = false;
                     }
                 } else {
@@ -984,7 +1023,16 @@ impl Worker {
         buf.clear();
         buf.extend_from_slice(video);
         self.frames.publish(buf, size);
-        self.shared.published.fetch_add(1, Ordering::Relaxed);
+        {
+            // Under the lock, so a waiter between its check and its wait cannot miss this.
+            let _g = self
+                .shared
+                .publish_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            self.shared.published.fetch_add(1, Ordering::Release);
+        }
+        self.shared.published_cv.notify_all();
         crate::latency::published();
     }
 

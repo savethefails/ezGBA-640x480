@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use slot_input::{Action, Gestures, Millis, RawEvent};
 use slot_retro::Rumble;
@@ -496,6 +497,21 @@ impl Session {
         if let Some(emu) = &self.emu {
             emu.kick();
         }
+    }
+
+    /// Kicks the core and waits, at most `timeout`, for the frame it makes from the buttons just
+    /// fed, so the display can draw that frame in this refresh. Answers how long the wait took,
+    /// or `None` when there is no running core to wait on: on the shelf, or while it is paused,
+    /// it publishes nothing, and waiting would only waste the refresh.
+    pub fn kick_and_wait(&self, timeout: Duration) -> Option<Duration> {
+        let emu = self.emu.as_ref()?;
+        let since = emu.published_count();
+        emu.kick();
+        if emu.observed_speed() == Speed::Paused {
+            return None;
+        }
+        let began = Instant::now();
+        emu.wait_published(since, timeout).then(|| began.elapsed())
     }
 
     fn sync_speed(&self) {

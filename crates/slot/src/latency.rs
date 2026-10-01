@@ -86,6 +86,11 @@ fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
+/// Whether the trace is on, for a caller with numbers of its own to note.
+pub fn tracing() -> bool {
+    on()
+}
+
 /// Microseconds since the trace started, plus one so a stamp is never zero.
 fn now() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_micros() as u64 + 1

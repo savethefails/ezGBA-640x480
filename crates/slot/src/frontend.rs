@@ -529,6 +529,12 @@ impl Frontend {
         self.session.kick();
     }
 
+    /// Kicks the core on the buttons just fed and waits, at most `timeout`, for the frame it
+    /// makes, so this refresh can draw it. See `Session::kick_and_wait`.
+    pub fn kick_and_wait(&self, timeout: std::time::Duration) -> Option<std::time::Duration> {
+        self.session.kick_and_wait(timeout)
+    }
+
     /// The frame the next boot should open on, taken once.
     pub fn take_scene(&mut self) -> Option<Vec<u8>> {
         self.scene.take()

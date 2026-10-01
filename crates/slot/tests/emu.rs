@@ -1116,3 +1116,25 @@ fn a_kick_a_frame_brings_the_present_right_after_it() {
         "only {prompt} of {kicks} presents followed their kick"
     );
 }
+
+/// The display kicks and waits for the frame the kick asked for, so it can draw it in the same
+/// refresh; with nothing coming the wait gives up at its timeout instead of holding the display.
+#[test]
+fn the_display_can_wait_for_the_frame_it_kicked_for() {
+    let emu = spawn();
+    std::thread::sleep(Duration::from_millis(100));
+    let since = emu.published_count();
+    emu.kick();
+    assert!(
+        emu.wait_published(since, Duration::from_millis(100)),
+        "the kicked frame never came"
+    );
+    assert!(emu.published_count() > since);
+
+    emu.set_speed(Speed::Paused);
+    std::thread::sleep(Duration::from_millis(50));
+    let since = emu.published_count();
+    let began = Instant::now();
+    assert!(!emu.wait_published(since, Duration::from_millis(30)));
+    assert!(began.elapsed() >= Duration::from_millis(30));
+}
