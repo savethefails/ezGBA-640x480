@@ -331,7 +331,8 @@ impl EmuHandle {
     }
 
     pub fn set_input(&self, mask: ButtonMask) {
-        self.shared.input.store(mask.0, Ordering::Relaxed);
+        let before = self.shared.input.swap(mask.0, Ordering::Relaxed);
+        crate::latency::pad(before, mask.0);
     }
 
     /// Frames to run ahead, 0 to 2. Read by the worker every present.
@@ -825,6 +826,7 @@ impl Worker {
                     }
                     _ => 0,
                 };
+                crate::latency::emu_started(input.0, ahead);
                 if ahead > 0 {
                     ran = 1;
                     ahead_picture = Some((std::mem::take(&mut ahead_spare), (0, 0)));
@@ -865,6 +867,7 @@ impl Worker {
                     }
                 }
                 let core_time = began.elapsed();
+                crate::latency::emu_done(core_time);
                 // Up at once, down slowly: a frame that costs more is believed immediately,
                 // because the next present has to survive it, while one cheap present is not
                 // enough to conclude the heavy scene is over.
@@ -982,6 +985,7 @@ impl Worker {
         buf.extend_from_slice(video);
         self.frames.publish(buf, size);
         self.shared.published.fetch_add(1, Ordering::Relaxed);
+        crate::latency::published();
     }
 
     /// Sleeps until the next present is due: at `deadline` on the worker's own clock, or as much

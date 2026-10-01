@@ -176,6 +176,22 @@ takes both down:
 - **In step with the screen.** The emulator runs each frame right after the buttons are read
   and just before the frame is shown, instead of on a clock of its own that drifts against
   the screen's, which could leave a press waiting up to a frame longer.
+- **Faster button scanning.** The SP checks its buttons on a timer, every 20 ms out of the
+  box, so a press waited 10 ms on average before anything could see it. ezGBA asks for every
+  10 ms, the fastest the system allows.
+
+### Measuring it
+
+To see the timing on your own SP, create an empty file named `latency-trace.log` at the top of
+the SD card and play. ezGBA adds lines to it as it runs; delete the file to stop.
+
+- A `press:` line follows one button press from the moment ezGBA reads it to the moment the
+  screen shows the frame it changed, stage by stage, in milliseconds.
+- A `pace:` line every ten seconds sums up the screen's real refresh period, how long the
+  emulator's frames take (run-ahead included), and how long each finished frame waited
+  before the screen showed it.
+
+It can't see the game's own frames of lag, or the wait before the button scan.
 
 ## SNES games
 

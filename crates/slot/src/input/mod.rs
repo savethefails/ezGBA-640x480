@@ -9,7 +9,7 @@ mod mask;
 mod pad;
 pub mod trace;
 
-pub use device::DeviceInput;
+pub use device::{faster_poll, DeviceInput, POLL_MS};
 #[cfg(feature = "host")]
 pub use host::HostInput;
 pub use mask::Pad;

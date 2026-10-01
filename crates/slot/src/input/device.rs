@@ -7,7 +7,7 @@ use std::time::Instant;
 use slot_input::{Btn, InputSource, Millis, RawEvent};
 
 use super::evdev::{
-    decode, device_name, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_SYN,
+    decode, device_name, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_KEY, EV_SYN,
 };
 use super::trace;
 
@@ -59,6 +59,10 @@ impl DeviceInput {
                 node.display(),
                 device_name(sys, &node)
             );
+            if let Some(note) = faster_poll(sys, &node) {
+                eprintln!("slot: input {}: {note}", node.display());
+                crate::latency::note(&format!("input {}: {note}", node.display()));
+            }
             let queue = pending.clone();
             let name = node.display().to_string();
             let trace = trace.clone();
@@ -76,6 +80,28 @@ impl DeviceInput {
             next_lid_poll: 0,
         }
     }
+}
+
+/// How often a polled key device is read, in milliseconds. The SP's buttons are not wired to
+/// interrupts: the kernel scans them on a timer, 20 ms by default, and a press waits on average
+/// half of that before anything in userspace can see it. The kernel's clock ticks at 100 Hz and
+/// a scan is scheduled in whole ticks, so 10 ms is the shortest period it can keep; asking for
+/// less buys nothing, and asking for 0 would rescan without pause and keep a core busy.
+pub const POLL_MS: u32 = 10;
+
+/// Asks a polled node to be scanned every `POLL_MS`, if it is scanned less often. Answers what
+/// it did, for the log: `None` for a node that is not polled at all (it has no `poll`
+/// attribute, and its presses already arrive the moment they happen) or that is already fast.
+pub fn faster_poll(sys: &Path, node: &Path) -> Option<String> {
+    let attr = sys.join(node.file_name()?).join("device").join("poll");
+    let was: u32 = std::fs::read_to_string(&attr).ok()?.trim().parse().ok()?;
+    if was <= POLL_MS {
+        return None;
+    }
+    Some(match std::fs::write(&attr, POLL_MS.to_string()) {
+        Ok(()) => format!("scanned every {POLL_MS} ms, was {was} ms"),
+        Err(e) => format!("left at {was} ms, the kernel would not take {POLL_MS}: {e}"),
+    })
 }
 
 /// Until the node goes away. The threads are never joined: the process ends by powering the
@@ -112,6 +138,11 @@ fn read_node(node: &Path, queue: &Mutex<Vec<RawEvent>>, trace: Option<&Trace>) {
         for ev in buf[..read].chunks_exact(EVENT_BYTES).filter_map(decode) {
             if let Some(trace) = trace {
                 trace.event(&label, ev);
+            }
+            // A button going down or the d-pad leaving centre: the moment a press is first
+            // seen, where the latency trace starts its clock.
+            if (ev.kind == EV_KEY && ev.value == 1) || (ev.kind == EV_ABS && ev.value != 0) {
+                crate::latency::read();
             }
             match ev.kind {
                 // The d-pad, which needs the axis it arrived on to say what it released.

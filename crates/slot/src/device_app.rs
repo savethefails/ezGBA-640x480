@@ -37,15 +37,19 @@ pub fn run() {
     platform.trace_boot();
     let mut frontend = Frontend::boot(Box::new(platform));
     frontend.upload_faces(&mut compositor);
+    // Before the input opens, so the key scan rate it sets is in the trace.
+    slot::latency::start(&root, slot_store::Theme::read(&root).runahead.unwrap_or(1));
     let mut input = DeviceInput::open(&root);
     let mut boot_picture_done = false;
     loop {
         let began = Instant::now();
         frontend.render(&mut compositor, surface.window_size());
+        let swap = Instant::now();
         if let Err(e) = surface.swap() {
             eprintln!("slot: {e}");
             return;
         }
+        slot::latency::shown(swap.elapsed().as_micros() as u64);
         frontend.advance(&mut input);
         frontend.frame_shown();
         if frontend.restarting() || frontend.powering_off() {
