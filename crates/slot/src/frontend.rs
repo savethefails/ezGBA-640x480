@@ -394,15 +394,28 @@ impl Frontend {
     fn upload_wallpaper(&mut self, compositor: &mut Compositor) {
         let app = self.session.app();
         let seed = app.wall_secs().unsigned_abs();
-        let Some(rgba) = app
-            .root()
-            .and_then(|root| wallpaper::pick(root, seed))
-            .and_then(|path| wallpaper_face(&path))
-        else {
+        let Some(root) = app.root() else {
+            return;
+        };
+        // The same picture as last time when this boot opens on it, so the shelf slot draws is
+        // the shelf the bootloader just showed. Otherwise a new one, as every boot gets.
+        let kept = app
+            .remembered_wallpaper()
+            .filter(|_| app.boot_picture_carried())
+            .map(|name| root.join("Wallpapers").join(name))
+            .filter(|path| path.is_file());
+        let Some(path) = kept.or_else(|| wallpaper::pick(root, seed)) else {
+            return;
+        };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let Some(rgba) = wallpaper_face(&path) else {
             return;
         };
         let id = compositor.create_texture(OUT_W, OUT_H, &rgba);
         self.session.app_mut().set_wallpaper(id);
+        if let Some(name) = name {
+            self.session.app_mut().set_wallpaper_name(name);
+        }
     }
 
     /// One frame into the offscreen target and out to a surface of `window` pixels. The

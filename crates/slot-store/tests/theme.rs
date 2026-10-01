@@ -171,5 +171,9 @@ fn the_boot_picture_is_the_last_screen_unless_turned_off() {
     assert_eq!(read("boot-picture off\n"), BootPicture::Off);
     assert_eq!(read("boot-picture OFF\n"), BootPicture::Off);
     assert_eq!(read("boot-picture last\n"), BootPicture::Last);
-    assert_eq!(read("boot-picture never\n"), BootPicture::Last, "a typo is the default");
+    assert_eq!(
+        read("boot-picture never\n"),
+        BootPicture::Last,
+        "a typo is the default"
+    );
 }

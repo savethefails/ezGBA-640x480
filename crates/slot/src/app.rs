@@ -478,6 +478,9 @@ pub struct App {
     /// a resumed cart's whole insert, in place of the slot and the bloom, until the game's own
     /// first frame replaces it at full power. `None` on every other boot. See `boot_picture`.
     boot_still: Option<TexId>,
+    /// The panel left at the level the bootloader lit it to, so the picture slot carries on
+    /// looks exactly like the one the bootloader showed. See `BacklightHold`.
+    backlight_hold: BacklightHold,
     /// How the game is drawn: the picture's shape, the grid and its depth. Read from
     /// `System/theme.txt` at boot, changed from the settings menu, and written back there.
     look: Look,
@@ -696,6 +699,7 @@ impl App {
             refusal: None,
             refused_from: None,
             boot_still: None,
+            backlight_hold: BacklightHold::Free,
             alert_face: None,
             shutdown_faces: Vec::new(),
             power_menu: None,
@@ -844,7 +848,17 @@ impl App {
             }
             // A cart the library no longer has is an empty slot. Left uncorrected on disk:
             // the next seat rewrites it, and a boot is the worst moment to need a write.
-            None => self.state.cart = None,
+            None => {
+                self.state.cart = None;
+                // The shelf as it was left, on the cart that was highlighted, which is what the
+                // boot picture shows. A cart that has gone since leaves the shelf where it opens.
+                let left = self.state.shelf_cart.clone();
+                let platform = self.state.shelf_platform;
+                if let Some((at, i)) = left.and_then(|stem| self.seat_of(&stem, platform)) {
+                    self.shelf_at = at;
+                    self.shelf_mut().select(i);
+                }
+            }
         }
     }
 
@@ -1072,6 +1086,22 @@ impl App {
 
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
+    }
+
+    /// Which wallpaper this session shows, by file name, kept with the shelf at power off.
+    pub fn set_wallpaper_name(&mut self, name: String) {
+        self.state.wallpaper = Some(name);
+    }
+
+    /// The wallpaper the last session showed, for a boot that opens on its picture.
+    pub fn remembered_wallpaper(&self) -> Option<&str> {
+        self.state.wallpaper.as_deref()
+    }
+
+    /// Whether this boot carries the bootloader's picture over: the shelf or the game it
+    /// shows is what slot opens on.
+    pub fn boot_picture_carried(&self) -> bool {
+        self.backlight_held()
     }
 
     pub fn set_bolt_face(&mut self, bolt: TexId) {
@@ -1472,7 +1502,20 @@ impl App {
     /// The panel comes up at the level the card remembers rather than at whatever the
     /// kernel left it at.
     pub fn set_power(&mut self, mut power: Power) {
-        power.set_backlight(self.state.brightness);
+        // Except under the picture a boot carries over from the bootloader: lit to the card's
+        // level now, the bootloader's dim picture would brighten before slot had drawn a frame
+        // of its own, or a resume's game had drawn one. A shelf boot's own first frame is the
+        // shelf in that picture, so its hold ends on the update after that frame is presented.
+        let carried = (self.resuming_at_boot() || matches!(self.phase, Phase::Shelf))
+            && self
+                .root
+                .as_ref()
+                .is_some_and(|r| r.join(crate::boot_picture::LAST_SCREEN).is_file());
+        if carried {
+            self.backlight_hold = BacklightHold::Held { since: self.now() };
+        } else {
+            power.set_backlight(self.state.brightness);
+        }
         // The device's own clock, which the host's stands in for. Boot has nothing better to
         // seed the picker from, so a device with a live RTC only gets its confirmation here.
         // The first moment the device's own clock can be asked, and so the first moment a
@@ -2343,7 +2386,25 @@ impl App {
     /// own, straight to full power: the bloom is the picture arriving from nothing, and here it
     /// is already there. Anything else that becomes of the resume (a refusal, an eject, a doze)
     /// drops it as well, and plays as it always has.
+    ///
+    /// The backlight comes up with the game rather than before it: the panel stays at the
+    /// bootloader's level for as long as the picture is up, and the card's level is applied on
+    /// the update after the hand over, which is the one after the game's first frame has been
+    /// presented. Whatever else happens to the picture, the level is never held past it, nor
+    /// past `BOOT_STILL_MAX_MS`.
     fn hand_over_boot_still(&mut self) {
+        match self.backlight_hold {
+            BacklightHold::ReleaseNext => return self.release_backlight(),
+            BacklightHold::Held { since } => {
+                if self.boot_still.is_none()
+                    || self.now().saturating_sub(since) >= BOOT_STILL_MAX_MS
+                {
+                    self.boot_still = None;
+                    return self.release_backlight();
+                }
+            }
+            BacklightHold::Free => {}
+        }
         if self.boot_still.is_none() {
             return;
         }
@@ -2353,9 +2414,31 @@ impl App {
             Phase::Playing { .. } => {
                 self.boot_still = None;
                 self.screen = 1.0;
+                if matches!(self.backlight_hold, BacklightHold::Held { .. }) {
+                    self.backlight_hold = BacklightHold::ReleaseNext;
+                }
             }
-            _ => self.boot_still = None,
+            _ => {
+                self.boot_still = None;
+                self.release_backlight();
+            }
         }
+    }
+
+    fn release_backlight(&mut self) {
+        if matches!(self.backlight_hold, BacklightHold::Free) {
+            return;
+        }
+        self.backlight_hold = BacklightHold::Free;
+        let level = self.state.brightness;
+        if let Some(power) = &mut self.power {
+            power.set_backlight(level);
+        }
+    }
+
+    /// Whether the backlight is still at the bootloader's level rather than the card's.
+    pub fn backlight_held(&self) -> bool {
+        !matches!(self.backlight_hold, BacklightHold::Free)
     }
 
     fn push_boot_still(&self, out: &mut Vec<Draw>) {
@@ -3584,6 +3667,7 @@ impl App {
                 self.close_game_menu();
                 match PowerChoice::ALL[index] {
                     PowerChoice::Restart => {
+                        self.remember_shelf();
                         self.restarting = true;
                         self.act_at = self.now() + SHUTDOWN_SHOW_MS;
                         self.set_led(LedState::Off);
@@ -4080,6 +4164,24 @@ impl App {
     /// leaves the LED reporting Running or Charging through a shutdown the user is not
     /// watching finish. A real behaviour on a handheld: the case still has a light on it for
     /// as long as `poweroff` takes to actually cut power.
+    /// The highlighted cart and the wallpaper, on the card, so a boot to the shelf opens on the
+    /// shelf the boot picture shows. Written on the way to a power off or restart, never as the
+    /// highlight moves: a card is not written for every press of a direction.
+    fn remember_shelf(&mut self) {
+        let selected = self
+            .shelf()
+            .carts
+            .get(self.shelf().index)
+            .map(|c| (c.stem.clone(), c.platform));
+        self.state.shelf_cart = selected.as_ref().map(|(stem, _)| stem.clone());
+        self.state.shelf_platform = selected.map(|(_, platform)| platform);
+        if let Some(root) = &self.root {
+            if let Err(e) = write_slot_state(root, &self.state) {
+                eprintln!("slot: slot.state: {e}");
+            }
+        }
+    }
+
     fn begin_power_off(&mut self) {
         // Idempotent, and that is the whole of why: `doze_expired` is a level rather than an
         // edge and this leaves the phase on `Doze`, so `timers` calls back here every frame
@@ -4105,6 +4207,7 @@ impl App {
             self.end_link();
         }
         self.close_game_menu();
+        self.remember_shelf();
         self.powering_off = true;
         self.act_at = self.now() + SHUTDOWN_SHOW_MS;
         self.set_led(LedState::Off);
@@ -4651,6 +4754,21 @@ fn greeting_frame_count(root: &Path) -> usize {
         .take_while(|&i| greeting_frame_path(root, i).is_file())
         .count()
 }
+
+/// The backlight through a resume that carries the bootloader's picture over.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum BacklightHold {
+    /// At the card's level, as everywhere else.
+    Free,
+    /// Left where the bootloader lit it, since `since`.
+    Held { since: Millis },
+    /// The game is on screen: lit on the next update, once its first frame has been presented.
+    ReleaseNext,
+}
+
+/// Longest the backlight is held at the bootloader's level, whatever the core is doing: a
+/// resume that never reaches the game must not leave the panel dim behind whatever comes next.
+const BOOT_STILL_MAX_MS: Millis = 10_000;
 
 /// How the game is drawn, as the settings menu and `System/theme.txt` both hold it.
 #[derive(Copy, Clone, PartialEq, Debug)]

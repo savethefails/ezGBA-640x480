@@ -107,6 +107,14 @@ pub struct SlotState {
     pub colour_correction: bool,
     /// The card's greeting has been shown once.
     pub greeted: bool,
+    /// The cart highlighted on the shelf when the device last powered off, and the shelf it
+    /// stands on, so a boot to the shelf opens where the boot picture shows it. `None` on a
+    /// card that has never said: the shelf opens on its first cart, as it always has.
+    pub shelf_cart: Option<String>,
+    pub shelf_platform: Option<Platform>,
+    /// The wallpaper behind the shelf this session, by file name in `Wallpapers`, so a boot that
+    /// opens on the boot picture can keep the same one rather than pick another.
+    pub wallpaper: Option<String>,
 }
 
 /// Not derived. `read_slot_state` falls back here on a first boot, and all zeroes would
@@ -128,6 +136,9 @@ impl Default for SlotState {
             ff_sound: false,
             colour_correction: false,
             greeted: false,
+            shelf_cart: None,
+            shelf_platform: None,
+            wallpaper: None,
         }
     }
 }
@@ -146,7 +157,7 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngreeted={}\n",
+        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngreeted={}\nshelf_cart={}\nshelf_platform={}\nwallpaper={}\n",
         s.cart.as_deref().unwrap_or(""),
         s.cart_platform.map_or(String::new(), platform_key),
         s.brightness,
@@ -159,7 +170,10 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.ff_speed,
         s.ff_sound as u8,
         s.colour_correction as u8,
-        s.greeted as u8
+        s.greeted as u8,
+        s.shelf_cart.as_deref().unwrap_or(""),
+        s.shelf_platform.map_or(String::new(), platform_key),
+        s.wallpaper.as_deref().unwrap_or(""),
     );
     atomic_write(&state_path(root), text.as_bytes())
 }
@@ -186,6 +200,9 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut ff_sound = None;
     let mut colour_correction = None;
     let mut greeted = None;
+    let mut shelf_cart = None;
+    let mut shelf_platform = None;
+    let mut wallpaper = None;
     for line in text.lines().filter(|l| !l.is_empty()) {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -204,6 +221,10 @@ fn parse(text: &str) -> Option<SlotState> {
             "ff_sound" => ff_sound = flag(value),
             "colour_correction" => colour_correction = flag(value),
             "greeted" => greeted = flag(value),
+            // Forgiven like the settings: a card that never wrote them opens as it always did.
+            "shelf_cart" => shelf_cart = (!value.is_empty()).then(|| value.to_string()),
+            "shelf_platform" => shelf_platform = platform_value(value),
+            "wallpaper" => wallpaper = (!value.is_empty()).then(|| value.to_string()),
             _ => {}
         }
     }
@@ -228,6 +249,9 @@ fn parse(text: &str) -> Option<SlotState> {
         ff_sound: ff_sound.unwrap_or(fallback.ff_sound),
         colour_correction: colour_correction.unwrap_or(fallback.colour_correction),
         greeted: greeted.unwrap_or(fallback.greeted),
+        shelf_cart,
+        shelf_platform,
+        wallpaper,
     })
 }
 

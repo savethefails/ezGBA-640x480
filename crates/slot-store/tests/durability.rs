@@ -179,6 +179,7 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
             ff_sound: false,
             colour_correction: false,
             greeted: false,
+            ..Default::default()
         }
     );
 }

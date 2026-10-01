@@ -92,7 +92,12 @@ they were at power off.
 
 When it's a game, slot keeps the same picture on screen while the game loads, then cuts
 straight to the game the moment it draws its first frame, with no cart animation in between,
-so the picture simply comes to life. For this it keeps a copy in `System/last-screen.png`,
+so the picture simply comes to life. The screen stays at the bootloader's dim level the whole
+time and comes up to your brightness with the game's first frame (or after ten seconds, if the
+game never starts). When it's the shelf, slot opens on the cart that was highlighted, behind
+the same wallpaper, and the brightness comes up with slot's first frame. With the boot picture
+on, the wallpaper is kept from one session to the next rather than changing at each start, so
+the shelf you start up on is the shelf you left. For this it keeps a copy in `System/last-screen.png`,
 written only once the boot picture itself has been saved, and removed before every attempt,
 so slot never shows a picture the SP didn't start up with.
 

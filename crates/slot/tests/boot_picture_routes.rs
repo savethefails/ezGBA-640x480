@@ -204,3 +204,133 @@ fn an_eject_during_the_resume_drops_the_picture() {
     a.update(1.0 / 60.0);
     assert!(!a.boot_still_up());
 }
+
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+/// The copy a power off leaves once the boot partition holds the picture.
+fn picture_kept(root: &std::path::Path) {
+    let path = root.join(slot::boot_picture::LAST_SCREEN);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, b"png").unwrap();
+}
+
+/// The level slot lights the panel to; the rig's panel starts at 0, which stands in for
+/// wherever the bootloader left it.
+const CARD_LEVEL: u8 = 5;
+
+/// Dim picture, dim picture, then the game and the card's level together: the backlight is
+/// left alone through the whole load and comes up on the update after the game's first frame.
+#[test]
+fn a_resume_keeps_the_bootloader_s_level_until_the_game_is_on_screen() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = resuming(d.path(), "Emerald");
+    picture_kept(d.path());
+    let (power, backlight) = common::panel(d.path(), Duration::from_secs(60));
+    a.set_power(power);
+    a.set_boot_still(slot_gfx::TexId::from_raw(STILL));
+    a.set_snapshot(common::StubSnapshot::boxed());
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        0,
+        "lit before slot drew anything"
+    );
+
+    for _ in 0..30 {
+        a.update(1.0 / 60.0);
+        assert_eq!(
+            backlight.load(Ordering::Relaxed),
+            0,
+            "lit while the picture was up"
+        );
+    }
+    a.on_core_ready();
+    a.update(1.0 / 60.0);
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        0,
+        "lit before the game had a frame"
+    );
+
+    // The game's first frame: the hand over, and the frame drawn with the game in it...
+    a.set_game_ready(true);
+    a.update(1.0 / 60.0);
+    assert!(drawn(&a).iter().any(|d| matches!(d, slot_gfx::Draw::Game)));
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        0,
+        "lit before the game was presented"
+    );
+    // ...presented, and then the light.
+    a.update(1.0 / 60.0);
+    assert_eq!(backlight.load(Ordering::Relaxed), CARD_LEVEL);
+    assert!(!a.backlight_held());
+}
+
+/// A shelf boot's first frame is the shelf in the picture: the light comes up as soon as
+/// that frame is presented, which is the first update.
+#[test]
+fn a_shelf_boot_lights_on_its_first_presented_frame() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    picture_kept(d.path());
+    let mut a = boot(d.path());
+    let (power, backlight) = common::panel(d.path(), Duration::from_secs(60));
+    a.set_power(power);
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        0,
+        "lit before the shelf was drawn"
+    );
+    a.update(1.0 / 60.0);
+    assert_eq!(backlight.load(Ordering::Relaxed), CARD_LEVEL);
+}
+
+/// With no picture carried over, the panel comes up at once, as it always has.
+#[test]
+fn without_a_picture_the_panel_lights_at_once() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = boot(d.path());
+    let (power, backlight) = common::panel(d.path(), Duration::from_secs(60));
+    a.set_power(power);
+    assert_eq!(backlight.load(Ordering::Relaxed), CARD_LEVEL);
+}
+
+/// A resume that never reaches the game does not leave the panel dim.
+#[test]
+fn the_hold_gives_up_if_the_game_never_comes() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = resuming(d.path(), "Emerald");
+    picture_kept(d.path());
+    let (power, backlight) = common::panel(d.path(), Duration::from_secs(600));
+    a.set_power(power);
+    a.set_boot_still(slot_gfx::TexId::from_raw(STILL));
+    a.update(1.0 / 60.0);
+    assert_eq!(backlight.load(Ordering::Relaxed), 0);
+    a.tick_ms(a.now() + 11_000);
+    a.update(1.0 / 60.0);
+    assert_eq!(backlight.load(Ordering::Relaxed), CARD_LEVEL);
+    assert!(!a.boot_still_up());
+}
+
+/// The shelf comes back on the cart that was highlighted at power off, which is the one the
+/// boot picture shows.
+#[test]
+fn the_shelf_reopens_on_the_cart_highlighted_at_power_off() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion", "Zelda"]);
+    let mut a = boot(d.path());
+    for _ in 0..60 {
+        a.update(1.0 / 60.0);
+    }
+    a.apply(Action::ShelfRight);
+    a.apply(Action::ShelfRight);
+    let left_on = a.selected_stem().unwrap().to_string();
+    assert_ne!(left_on, "Emerald", "the highlight did not move");
+    a.apply(Action::PowerHold);
+    a.apply(Action::GbaDown(Btn::Down));
+    a.apply(Action::GbaDown(Btn::A));
+
+    let state = slot_store::read_slot_state(d.path());
+    assert_eq!(state.shelf_cart.as_deref(), Some(left_on.as_str()));
+    let b = boot(d.path());
+    assert_eq!(b.selected_stem(), Some(left_on.as_str()));
+}
