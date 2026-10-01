@@ -86,9 +86,15 @@ and they're read back from it at startup, so editing the file by hand still work
 
 When the SP powers off or restarts, slot saves the screen as it was just before: the game at
 that moment, or the shelf. The next time you switch on, that picture is what the SP starts up
-with, and slot then carries on from the same spot. It's the frame before the power menu, the
-dark of a doze or the shutdown screen came up, so nothing is drawn over it. The clock and
-battery in the corner of a shelf picture are as they were at power off.
+with. It's the frame before the power menu, the dark of a doze or the shutdown screen came up,
+so nothing is drawn over it. The clock and battery in the corner of a shelf picture are as
+they were at power off.
+
+When it's a game, slot keeps the same picture on screen while the game loads, then cuts
+straight to the game the moment it draws its first frame, with no cart animation in between,
+so the picture simply comes to life. For this it keeps a copy in `System/last-screen.png`,
+written only once the boot picture itself has been saved, and removed before every attempt,
+so slot never shows a picture the SP didn't start up with.
 
 The picture is BaseOS's `bootlogo.bmp`, which the bootloader shows from a small hidden
 partition (`boot-resource`) on the card the system boots from. That partition also holds files

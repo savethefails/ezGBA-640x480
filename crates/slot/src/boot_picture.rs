@@ -40,6 +40,11 @@ pub const LOGO: &str = "bootlogo.bmp";
 /// BaseOS's own logo, kept on the card before slot first paints over it.
 pub const BACKUP: &str = "System/bootlogo-baseos.bmp";
 
+/// The same picture the boot partition now holds, on the card, where slot can read it as it
+/// starts without mounting anything: what it draws until a resumed game's first frame, so the
+/// bootloader's picture becomes the game with nothing between them.
+pub const LAST_SCREEN: &str = "System/last-screen.png";
+
 /// The partition's GPT name, which U-Boot itself goes by.
 const PARTNAME: &str = "boot-resource";
 
@@ -151,10 +156,10 @@ pub enum Want {
 /// The copy comes first and must be on the card before a single pixel of the original is
 /// replaced. A copy that already exists is never overwritten: once the logo has been painted,
 /// what is in it is no longer BaseOS's.
-pub fn apply(logo: &Path, backup: &Path, want: Want) -> io::Result<Painted> {
+pub fn apply(logo: &Path, backup: &Path, want: &Want) -> io::Result<Painted> {
     let pixels = match want {
         Want::Scene(rgba) => {
-            let pixels = bmp_pixels(&rgba)
+            let pixels = bmp_pixels(rgba)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a whole frame"))?;
             if !backup.exists() {
                 let original = std::fs::read(logo)?;
@@ -234,7 +239,7 @@ fn mounted(sys: &Path, device: &str) -> bool {
 }
 
 /// Mounts the partition, applies, and unmounts, on the device.
-fn on_device(card: &Path, want: Want) -> Result<Painted, String> {
+fn on_device(card: &Path, want: &Want) -> Result<Painted, String> {
     let sys = Path::new("/");
     if !on_baseos(sys) {
         return Err("not BaseOS with an unturned panel".into());
@@ -264,6 +269,68 @@ fn on_device(card: &Path, want: Want) -> Result<Painted, String> {
     result.map_err(|e| e.to_string())
 }
 
+/// The boot partition's picture, then the card's copy of it. The copy goes first, before the
+/// partition is touched, and comes back only once the partition holds the same picture: any
+/// failure, or a power off that cuts this short, leaves no copy, and the next boot plays the
+/// ordinary insert rather than showing a picture the bootloader did not.
+pub fn write_both(
+    card: &Path,
+    want: &Want,
+    device: impl FnOnce(&Path, &Want) -> Result<Painted, String>,
+) -> Result<Painted, String> {
+    let last = card.join(LAST_SCREEN);
+    match std::fs::remove_file(&last) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("could not clear {LAST_SCREEN}: {e}")),
+    }
+    let painted = device(card, want)?;
+    if let Want::Scene(rgba) = want {
+        let png = encode_png(rgba).ok_or("could not encode the picture")?;
+        if let Err(e) = atomic_write(&last, &png) {
+            eprintln!("slot: boot picture: {LAST_SCREEN} not kept: {e}");
+        }
+    }
+    Ok(painted)
+}
+
+fn encode_png(rgba: &[u8]) -> Option<Vec<u8>> {
+    if rgba.len() != OUT_W as usize * OUT_H as usize * 4 {
+        return None;
+    }
+    let rgb: Vec<u8> = rgba
+        .chunks_exact(4)
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, OUT_W, OUT_H);
+    e.set_color(png::ColorType::Rgb);
+    e.set_depth(png::BitDepth::Eight);
+    let mut w = e.write_header().ok()?;
+    w.write_image_data(&rgb).ok()?;
+    w.finish().ok()?;
+    Some(out)
+}
+
+/// `LAST_SCREEN` as RGBA top row first, if it is there and is a whole 640x480 picture.
+pub fn read_last_screen(card: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(card.join(LAST_SCREEN)).ok()?;
+    let mut dec = png::Decoder::new(std::io::BufReader::new(file));
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = dec.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    if (info.width, info.height) != (OUT_W, OUT_H) || info.color_type != png::ColorType::Rgb {
+        return None;
+    }
+    Some(
+        buf[..info.buffer_size()]
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+    )
+}
+
 /// Called on the way to a power off or a restart, with the frame that was on screen just before
 /// the shutdown began. Never fails and never waits longer than `TIME_LIMIT`.
 pub fn on_power_off(card: &Path, scene: Option<Vec<u8>>) {
@@ -279,7 +346,7 @@ pub fn on_power_off(card: &Path, scene: Option<Vec<u8>>) {
     let spawned = std::thread::Builder::new()
         .name("slot-boot-picture".into())
         .spawn(move || {
-            let _ = tx.send(on_device(&card, want));
+            let _ = tx.send(write_both(&card, &want, on_device));
         });
     if spawned.is_err() {
         eprintln!("slot: boot picture: no thread to write it from");

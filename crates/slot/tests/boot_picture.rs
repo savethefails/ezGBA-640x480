@@ -128,7 +128,7 @@ fn baseos_s_logo_is_kept_on_the_card_before_it_is_first_painted_over_and_can_com
     let original = baseos_logo(7);
     std::fs::write(&logo_path, &original).unwrap();
 
-    apply(&logo_path, &backup, Want::Scene(frame([255, 0, 0, 255]))).unwrap();
+    apply(&logo_path, &backup, &Want::Scene(frame([255, 0, 0, 255]))).unwrap();
     assert_eq!(
         std::fs::read(&backup).unwrap(),
         original,
@@ -137,12 +137,12 @@ fn baseos_s_logo_is_kept_on_the_card_before_it_is_first_painted_over_and_can_com
     assert_ne!(std::fs::read(&logo_path).unwrap(), original);
 
     // A second power off paints again but never copies a painted logo over the original.
-    apply(&logo_path, &backup, Want::Scene(frame([0, 255, 0, 255]))).unwrap();
+    apply(&logo_path, &backup, &Want::Scene(frame([0, 255, 0, 255]))).unwrap();
     assert_eq!(std::fs::read(&backup).unwrap(), original);
     let painted = std::fs::read(&logo_path).unwrap();
     assert_eq!(&painted[54..57], &[0, 255, 0]);
 
-    apply(&logo_path, &backup, Want::Original).unwrap();
+    apply(&logo_path, &backup, &Want::Original).unwrap();
     assert_eq!(std::fs::read(&logo_path).unwrap(), original);
 }
 
@@ -154,7 +154,7 @@ fn nothing_is_copied_or_written_when_the_logo_is_not_one_slot_writes() {
     let backup = card.path().join(BACKUP);
     let other = logo(720, 480, 24, 0, 7);
     std::fs::write(&logo_path, &other).unwrap();
-    assert!(apply(&logo_path, &backup, Want::Scene(frame([255, 0, 0, 255]))).is_err());
+    assert!(apply(&logo_path, &backup, &Want::Scene(frame([255, 0, 0, 255]))).is_err());
     assert!(!backup.exists());
     assert_eq!(std::fs::read(&logo_path).unwrap(), other);
 }
@@ -165,7 +165,7 @@ fn putting_the_logo_back_needs_the_copy() {
     let card = tempfile::tempdir().unwrap();
     let logo_path = part.path().join("bootlogo.bmp");
     std::fs::write(&logo_path, baseos_logo(9)).unwrap();
-    assert!(apply(&logo_path, &card.path().join(BACKUP), Want::Original).is_err());
+    assert!(apply(&logo_path, &card.path().join(BACKUP), &Want::Original).is_err());
     assert_eq!(std::fs::read(&logo_path).unwrap(), baseos_logo(9));
 }
 
@@ -236,4 +236,44 @@ fn only_baseos_with_an_unturned_panel_is_written_to() {
     assert!(check(&release(Some("BASEOS_TARGET=rg35xxsp\n"))));
     assert!(!check(&release(Some("BASEOS_PANEL_ROTATION_CCW=90\n"))));
     assert!(!check(&release(None)), "not BaseOS");
+}
+
+#[test]
+fn the_card_keeps_the_same_picture_only_once_the_partition_has_it() {
+    use slot::boot_picture::{read_last_screen, write_both, LAST_SCREEN};
+    let card = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(card.path().join("System")).unwrap();
+    let rgba = frame([12, 34, 56, 255]);
+
+    let ok = write_both(card.path(), &Want::Scene(rgba.clone()), |_, _| {
+        Ok(Painted::Written)
+    });
+    assert_eq!(ok, Ok(Painted::Written));
+    assert_eq!(read_last_screen(card.path()), Some(rgba.clone()));
+
+    // A partition that would not take it: the card's copy, which now disagrees, goes.
+    let failed = write_both(card.path(), &Want::Scene(frame([1, 2, 3, 255])), |_, _| {
+        Err("no".into())
+    });
+    assert!(failed.is_err());
+    assert!(!card.path().join(LAST_SCREEN).exists());
+
+    // Gone before the partition is even touched, so a power off that cuts the write short
+    // can never leave the old copy beside a new picture.
+    write_both(card.path(), &Want::Scene(rgba.clone()), |_, _| {
+        Ok(Painted::Written)
+    })
+    .unwrap();
+    write_both(card.path(), &Want::Scene(rgba), |card, _| {
+        assert!(
+            !card.join(LAST_SCREEN).exists(),
+            "the old copy was still there"
+        );
+        Ok(Painted::Written)
+    })
+    .unwrap();
+
+    // Putting BaseOS's logo back leaves no copy: the next boot is an ordinary one.
+    write_both(card.path(), &Want::Original, |_, _| Ok(Painted::Written)).unwrap();
+    assert!(!card.path().join(LAST_SCREEN).exists());
 }

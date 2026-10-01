@@ -474,6 +474,10 @@ pub struct App {
     /// what holds the seated cart, and a menu that left it would have to rebuild the session
     /// to come back from cancelling.
     game_menu: Option<GameMenu>,
+    /// The screen the device powered off on, which the bootloader has just shown: drawn over
+    /// a resumed cart's whole insert, in place of the slot and the bloom, until the game's own
+    /// first frame replaces it at full power. `None` on every other boot. See `boot_picture`.
+    boot_still: Option<TexId>,
     /// How the game is drawn: the picture's shape, the grid and its depth. Read from
     /// `System/theme.txt` at boot, changed from the settings menu, and written back there.
     look: Look,
@@ -691,6 +695,7 @@ impl App {
             play_held: None,
             refusal: None,
             refused_from: None,
+            boot_still: None,
             alert_face: None,
             shutdown_faces: Vec::new(),
             power_menu: None,
@@ -1563,6 +1568,25 @@ impl App {
         }
     }
 
+    /// Whether the device has just booted back into a seated cart, which is the only boot the
+    /// bootloader's picture can be carried through.
+    pub fn resuming_at_boot(&self) -> bool {
+        matches!(self.phase, Phase::Inserting { resumed: true, .. })
+    }
+
+    /// The picture the bootloader showed, as a texture the size of the panel. Taken only while
+    /// a resume is under way: anywhere else there is nothing for it to carry over.
+    pub fn set_boot_still(&mut self, tex: TexId) {
+        if self.resuming_at_boot() {
+            self.boot_still = Some(tex);
+        }
+    }
+
+    /// Whether the bootloader's picture is still what is drawn.
+    pub fn boot_still_up(&self) -> bool {
+        self.boot_still.is_some()
+    }
+
     /// Whether what is on the panel is no longer the game or the shelf itself: the power menu
     /// is over it, the panel has gone dark for a doze, or the shutdown screen is up. The frame
     /// before this turns true is the one the next boot opens on (see `boot_picture`).
@@ -2312,6 +2336,39 @@ impl App {
             self.record_cart(seated);
         }
         self.step_screen(dt);
+        self.hand_over_boot_still();
+    }
+
+    /// The bootloader's picture gives way to the game the moment the game has a frame of its
+    /// own, straight to full power: the bloom is the picture arriving from nothing, and here it
+    /// is already there. Anything else that becomes of the resume (a refusal, an eject, a doze)
+    /// drops it as well, and plays as it always has.
+    fn hand_over_boot_still(&mut self) {
+        if self.boot_still.is_none() {
+            return;
+        }
+        match self.phase {
+            Phase::Inserting { resumed: true, .. } => {}
+            Phase::Playing { .. } if !self.game_ready => {}
+            Phase::Playing { .. } => {
+                self.boot_still = None;
+                self.screen = 1.0;
+            }
+            _ => self.boot_still = None,
+        }
+    }
+
+    fn push_boot_still(&self, out: &mut Vec<Draw>) {
+        if let Some(tex) = self.boot_still {
+            out.push(Draw::Tex {
+                x: 0.0,
+                y: 0.0,
+                w: OUT_W as f32,
+                h: OUT_H as f32,
+                tex,
+                alpha: 1.0,
+            });
+        }
     }
 
     /// The game layer's own power, which answers to the phase rather than to an event: an
@@ -2692,6 +2749,9 @@ impl App {
             }
             // The shelf recedes behind the cart on the way in; on the way out the live
             // game is what darkens, and the compositor has already drawn it.
+            Phase::Inserting { .. } | Phase::Playing { .. } if self.boot_still.is_some() => {
+                self.push_boot_still(out)
+            }
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
                 if !resumed {

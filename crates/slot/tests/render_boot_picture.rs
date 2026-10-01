@@ -82,7 +82,7 @@ fn the_frame_before_a_doze_is_the_one_kept_for_the_next_boot() {
         slot::boot_picture::apply(
             &logo,
             &backup,
-            slot::boot_picture::Want::Scene(kept.clone()),
+            &slot::boot_picture::Want::Scene(kept.clone()),
         )
         .expect("paint");
         println!("wrote {}", logo.display());

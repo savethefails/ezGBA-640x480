@@ -174,6 +174,19 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_faces(faces);
+        // Before the first frame, so the panel goes from the bootloader's picture to the same
+        // picture drawn by slot, with nothing between them.
+        if self.session.app().resuming_at_boot() {
+            if let Some(rgba) = self
+                .session
+                .app()
+                .root()
+                .and_then(crate::boot_picture::read_last_screen)
+            {
+                let tex = compositor.create_texture(OUT_W, OUT_H, &rgba);
+                self.session.app_mut().set_boot_still(tex);
+            }
+        }
         self.upload_backdrops(compositor);
         let icons = Icon::ALL
             .iter()
