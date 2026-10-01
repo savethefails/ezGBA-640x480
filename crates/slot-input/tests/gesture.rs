@@ -116,13 +116,24 @@ fn power_flushes_on_the_press_and_locks_on_the_release() {
 /// The hold arms while the button is still down and the release commits, so the shutdown
 /// screen is on the panel for as long as the user holds rather than flashing past.
 #[test]
-fn power_held_past_the_threshold_raises_the_menu_and_the_release_does_nothing() {
+fn power_held_past_the_threshold_fires_the_hold_once() {
     let mut g = Gestures::new();
     g.feed(Down(Btn::Power), 0);
     assert!(g.tick(POWER_HOLD_MS - 1).is_empty());
     assert_eq!(g.tick(POWER_HOLD_MS), vec![PowerHold]);
     assert!(g.tick(4000).is_empty(), "the hold fires once, not per tick");
     assert_eq!(g.feed(Up(Btn::Power), 4500), vec![PowerOff]);
+}
+
+/// Three seconds: long enough that a press which merely lingers is still a doze, and well short
+/// of the PMIC's own six second cutoff.
+#[test]
+fn the_hold_is_three_seconds() {
+    assert_eq!(POWER_HOLD_MS, 3000);
+    let mut g = Gestures::new();
+    g.feed(Down(Btn::Power), 0);
+    assert!(g.tick(2000).is_empty(), "two seconds is not a hold");
+    assert_eq!(g.feed(Up(Btn::Power), 2000), vec![PowerTap], "it is a doze");
 }
 
 /// And a release that never reached the threshold is a lock, never a shutdown.

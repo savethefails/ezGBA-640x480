@@ -8,7 +8,7 @@ mod common;
 
 use common::{app_playing_in, boot, tmp_root_with_carts};
 use slot::app::App;
-use slot_input::{Action, Btn};
+use slot_input::Action;
 
 /// Runs the app on until the power off may happen, asserting the screen stays covered.
 fn covered_until_off(a: &mut App, ready: fn(&App) -> bool) {
@@ -45,23 +45,12 @@ fn a_closed_lid_dozes_and_powers_off_the_same_way() {
 }
 
 #[test]
-fn a_hold_then_power_off_covers_the_screen_from_the_menu_on() {
+fn a_hold_covers_the_screen_and_powers_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    assert!(a.scene_covered(), "the power menu did not cover the screen");
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
+    assert!(a.scene_covered(), "the shutdown did not cover the screen");
     covered_until_off(&mut a, App::ready_to_power_off);
-}
-
-#[test]
-fn a_hold_then_restart_does_too() {
-    let d = tmp_root_with_carts(&["Emerald"]);
-    let mut a = app_playing_in(d.path(), "Emerald");
-    a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::A)); // Restart is first
-    covered_until_off(&mut a, App::ready_to_restart);
 }
 
 /// The shelf is a scene too: powering off from it keeps the shelf.
@@ -74,20 +63,15 @@ fn from_the_shelf_as_well() {
     }
     assert!(!a.scene_covered(), "covered on the shelf");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
     covered_until_off(&mut a, App::ready_to_power_off);
 }
 
-/// Backing out of the menu, or waking from a doze, uncovers the screen, so the next cover
-/// reads the screen as it is then rather than keeping a picture from before.
+/// Waking from a doze uncovers the screen, so the next cover reads the screen as it is then
+/// rather than keeping a picture from before.
 #[test]
-fn backing_out_or_waking_uncovers_the_screen_again() {
+fn waking_uncovers_the_screen_again() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
-    a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::B));
-    assert!(!a.scene_covered(), "still covered after B closed the menu");
     a.apply(Action::LidClose);
     a.apply(Action::LidOpen);
     assert!(!a.scene_covered(), "still covered after the lid opened");
@@ -326,8 +310,6 @@ fn the_shelf_reopens_on_the_cart_highlighted_at_power_off() {
     let left_on = a.selected_stem().unwrap().to_string();
     assert_ne!(left_on, "Emerald", "the highlight did not move");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
 
     let state = slot_store::read_slot_state(d.path());
     assert_eq!(state.shelf_cart.as_deref(), Some(left_on.as_str()));

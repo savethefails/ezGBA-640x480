@@ -477,7 +477,7 @@ impl Session {
     /// The screens that have taken the panel away from a cart still seated. The switcher is
     /// not one of them: it has its own phase and `sync_speed` names it separately.
     fn held(&self) -> bool {
-        self.app.power_menu().is_some() || self.app.game_menu_open() || self.app.shutting_down()
+        self.app.game_menu_open() || self.app.shutting_down()
     }
 
     fn dozing(&self) -> bool {

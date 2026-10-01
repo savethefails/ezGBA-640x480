@@ -104,10 +104,6 @@ const PLAY_HOLD_MS: Millis = 500;
 /// rather than the binary rendering one out of band on a GPU that is about to go away.
 const SHUTDOWN_SHOW_MS: Millis = 250;
 
-const POWER_MENU_PITCH: f32 = 44.0;
-/// How much shorter the bar is than the row it marks, top and bottom. Enough that the rows
-/// stay separate things rather than one continuous block when the selection moves.
-const POWER_MENU_BAR_INSET: f32 = 4.0;
 /// How far the row makes way while a cart is open, as `Shelf::draw_row` counts `recede`. It is
 /// set by where the neighbours stand: here they come to rest at -41 and 574, where the mockup
 /// frames the open cart with them. Parted far enough for the recede alone to dim them to a
@@ -442,12 +438,6 @@ pub struct App {
     /// menu's own size. "Powering down" under a restart was the screen contradicting the row
     /// the user had just chosen.
     shutdown_faces: Vec<(TexId, u32, u32)>,
-    /// Open when a held POWER raised the menu, holding the highlighted row. An overlay
-    /// rather than a phase, so cancelling returns to whatever was underneath without the
-    /// phase having to be remembered anywhere.
-    power_menu: Option<usize>,
-    /// One per `PowerChoice::ALL`, in that order, with the size each was rastered at.
-    power_menu_faces: Vec<(TexId, u32, u32)>,
     /// The picker while the cart is open, and while its lid is going back on. The cart it acts
     /// on is whichever the shelf has, read when it opens rather than held here: the shelf cannot
     /// move while it is up, so there is only ever one answer.
@@ -702,8 +692,6 @@ impl App {
             backlight_hold: BacklightHold::Free,
             alert_face: None,
             shutdown_faces: Vec::new(),
-            power_menu: None,
-            power_menu_faces: Vec::new(),
             core_picker: None,
             core_board_face: None,
             core_lid_face: None,
@@ -1630,17 +1618,11 @@ impl App {
         self.boot_still.is_some()
     }
 
-    /// Whether what is on the panel is no longer the game or the shelf itself: the power menu
-    /// is over it, the panel has gone dark for a doze, or the shutdown screen is up. The frame
+    /// Whether what is on the panel is no longer the game or the shelf itself: the panel has
+    /// gone dark for a doze, or the shutdown screen is up. The frame
     /// before this turns true is the one the next boot opens on (see `boot_picture`).
     pub fn scene_covered(&self) -> bool {
-        self.shutting_down()
-            || self.power_menu.is_some()
-            || matches!(self.phase, Phase::Doze { .. })
-    }
-
-    pub fn power_menu(&self) -> Option<usize> {
-        self.power_menu
+        self.shutting_down() || matches!(self.phase, Phase::Doze { .. })
     }
 
     /// The core the chip is in or heading for, and `None` once the picker has gone. Still
@@ -1752,16 +1734,6 @@ impl App {
     /// take them; while the game is playing they are the game's and the app sees only the
     /// gestures that are never the game's.
     pub fn apply(&mut self, action: Action) {
-        // Ahead of everything, including the device's own keys: the menu is a decision the
-        // user is in the middle of making, and a volume press underneath it would be one
-        // more thing happening while they read.
-        if self.power_menu.is_some() {
-            match action {
-                Action::LidClose => return self.doze(),
-                Action::LidOpen => return self.wake(),
-                _ => return self.power_menu_input(action),
-            }
-        }
         // The lid, the light and the sound belong to the device rather than to whatever is
         // on screen, so they are taken before the phase gets a look at the action.
         match action {
@@ -1778,9 +1750,8 @@ impl App {
                 return self.flush_resume();
             }
             Action::PowerTap => return self.power_press(),
-            Action::PowerHold => return self.open_power_menu(),
-            // The release no longer means anything once the menu is what a hold raises:
-            // the choice is the commitment, and it is made with A.
+            Action::PowerHold => return self.power_off_held(),
+            // The shutdown started at the hold; letting go of the button changes nothing.
             Action::PowerOff => return,
             _ => {}
         }
@@ -2729,10 +2700,6 @@ impl App {
         // rcK takes about five seconds on this hardware — it stops the frontend and unloads
         // the GPU module before the kernel is allowed to halt — and five seconds of black
         // panel after holding the button is indistinguishable from a device that has hung.
-        if let Some(index) = self.power_menu {
-            self.draw_power_menu(index, out);
-            return;
-        }
         if self.shutting_down() {
             out.push(Draw::Rect {
                 x: 0.0,
@@ -2741,7 +2708,7 @@ impl App {
                 h: OUT_H as f32,
                 colour: [0.0, 0.0, 0.0, 1.0],
             });
-            // The row the user picked is the row the screen repeats back.
+            // Restarting or powering down, whichever this is.
             let which = if self.restarting {
                 PowerChoice::Restart
             } else {
@@ -3034,10 +3001,6 @@ impl App {
         self.shutdown_faces = faces;
     }
 
-    pub fn set_power_menu_faces(&mut self, faces: Vec<(TexId, u32, u32)>) {
-        self.power_menu_faces = faces;
-    }
-
     /// Recorded against the highlighted cart, since that is the only cart they are ever built for.
     pub fn set_core_board_faces(&mut self, board: TexId, lid: TexId) {
         self.core_board_face = Some(board);
@@ -3095,28 +3058,6 @@ impl App {
 
     pub fn link_sprites_ready(&self) -> bool {
         self.link_sprites.is_some()
-    }
-
-    /// The case's own ground, and the rows on it. No plate behind them: the menu is three
-    /// words and a choice, and a box around those was furniture the screen did not need.
-    ///
-    /// The ground is drawn here rather than in `draw_menu_rows` because it is the only thing
-    /// about this menu that is its own: the core picker draws over a shelf it did not paint.
-    /// See `draw_menu_rows` for why the bar behind the row in hand is the colour it is.
-    fn draw_power_menu(&self, index: usize, out: &mut Vec<Draw>) {
-        out.push(Draw::Rect {
-            x: 0.0,
-            y: 0.0,
-            w: OUT_W as f32,
-            h: OUT_H as f32,
-            colour: slot_ui::opening(),
-        });
-        draw_menu_rows(
-            &self.power_menu_faces,
-            Some(index),
-            centred_top(self.power_menu_faces.len()),
-            out,
-        );
     }
 
     /// The picker, but only once it has started opening: `None` while it is still standing on
@@ -3619,64 +3560,22 @@ impl App {
         }
     }
 
-    /// A held button powers off, through the OS rather than the PMIC. The PMIC's own
-    /// six-second hold cuts the rails in hardware with no sync, no unmount and no driver
-    /// teardown; the software path unloads the GPU module first, which is the difference
-    /// between a machine that stops and one that hangs with the rails up draining the
-    /// battery. Six seconds remains the emergency underneath, and needs no help from here.
+    /// A held POWER powers off: the game is saved, then the ordinary shutdown runs, which takes
+    /// the boot picture, puts up the shutdown screen and powers the device off. No menu asks
+    /// first. A session was already ended by the press that began the hold (`PowerPress`).
     ///
-    /// Not an eject: the cart stays in the slot so the next boot resumes it. The flush is
-    /// a no-op after a doze, which has already written the same file.
-    /// The hold threshold raises the menu and nothing else. Every outcome from here is one
-    /// the user chose rather than one the button committed them to, which is what makes the
-    /// hold safe to discover by accident.
-    fn open_power_menu(&mut self) {
-        if self.power_menu.is_some() {
-            return;
-        }
-        // Same hazard as the switcher: the menu pauses the core too — `Session::sync_speed`
-        // maps `held()`, which the menu is one of, to `Speed::Paused` — one of the exact
-        // manipulations libretro's netpacket contract forbids while a session is live. Unlike
-        // `PowerPress` this button does not end the session for the player; it just declines,
-        // the same shake every other "nothing doing" action in this file answers with.
-        if self.link_active() {
-            return self.refuse();
-        }
-        // Durable before the menu is even on screen: from here the user may hold on to the
-        // PMIC's own six second cutoff, which takes the rails away whatever we wanted.
+    /// Through the OS rather than the PMIC. The PMIC's own six-second hold cuts the rails in
+    /// hardware with no sync, no unmount and no driver teardown; the software path unloads the
+    /// GPU module first, which is the difference between a machine that stops and one that
+    /// hangs with the rails up draining the battery. Six seconds remains the emergency
+    /// underneath, and needs no help from here.
+    ///
+    /// Not an eject: the cart stays in the slot so the next boot resumes it.
+    fn power_off_held(&mut self) {
+        // Durable before anything else: the button is still down, and a hold carried on to the
+        // PMIC's own cutoff takes the rails away whatever comes next.
         self.flush_resume();
-        self.power_menu = Some(0);
-    }
-
-    /// Up and down move, A commits, B leaves. Nothing times out: a menu that closed itself
-    /// would do it exactly when the user looked away to think.
-    fn power_menu_input(&mut self, action: Action) {
-        let Some(index) = self.power_menu else {
-            return;
-        };
-        let last = PowerChoice::ALL.len() - 1;
-        match action {
-            Action::GbaDown(Btn::Up) => self.power_menu = Some(index.saturating_sub(1)),
-            Action::GbaDown(Btn::Down) => self.power_menu = Some((index + 1).min(last)),
-            Action::GbaDown(Btn::B) => self.power_menu = None,
-            Action::GbaDown(Btn::A) => {
-                self.power_menu = None;
-                // Both choices end the game whatever was underneath was drawn over, and only
-                // one of them reaches `begin_power_off`: a restart sets its flag here and
-                // goes straight to the shutdown screen.
-                self.close_game_menu();
-                match PowerChoice::ALL[index] {
-                    PowerChoice::Restart => {
-                        self.remember_shelf();
-                        self.restarting = true;
-                        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
-                        self.set_led(LedState::Off);
-                    }
-                    PowerChoice::PowerOff => self.begin_power_off(),
-                }
-            }
-            _ => {}
-        }
+        self.begin_power_off();
     }
 
     /// SELECT on the shelf offers the highlighted cart's core, opening on the one it already
@@ -4100,12 +3999,6 @@ impl App {
 
     /// One message a frame, which is all the worker ever has for it.
     fn poll_link(&mut self) {
-        // Only while this overlay is the thing on screen. A power menu raised over it pauses
-        // the core, and a session must not begin under one — the worker's message keeps in
-        // its own queue until that menu is gone.
-        if self.power_menu.is_some() {
-            return;
-        }
         let Some(mut starting) = self.starting.take() else {
             return;
         };
@@ -4690,51 +4583,6 @@ fn free_stamp(ring: &StateRing, now: i64) -> String {
         stamp = format_stamp(secs);
     }
     stamp
-}
-
-/// Where a block of `rows` menu rows starts, so it sits in the middle of the panel.
-fn centred_top(rows: usize) -> f32 {
-    (OUT_H as f32 - POWER_MENU_PITCH * rows as f32) / 2.0
-}
-
-/// The rows of a menu, at the menu pitch from `top`, with a bar behind the one in hand and
-/// none at all when nothing is. Only the power menu draws rows this way now — the core picker
-/// draws its own cart art instead, and the in-game menu a sentence and a key legend.
-///
-/// The bar is `edge` — the lightest thing in the theme — because it has to read at a glance.
-/// `recess` was tried first and is the right idea and the wrong value: it and `housing` are
-/// adjacent dark greys by design, which is correct for a slot you look into and far too quiet
-/// for a selection.
-///
-/// A rect rather than a second face per row: the labels are rastered once at boot and never
-/// again, and a device about to lose its GPU is not the place to be uploading textures.
-fn draw_menu_rows(
-    faces: &[(TexId, u32, u32)],
-    index: Option<usize>,
-    top: f32,
-    out: &mut Vec<Draw>,
-) {
-    for (row, (tex, w, h)) in faces.iter().copied().enumerate() {
-        let y = top + POWER_MENU_PITCH * row as f32;
-        let x = ((OUT_W as f32 - w as f32) / 2.0).round();
-        if index == Some(row) {
-            out.push(Draw::Rect {
-                x,
-                y: y + POWER_MENU_BAR_INSET,
-                w: w as f32,
-                h: POWER_MENU_PITCH - 2.0 * POWER_MENU_BAR_INSET,
-                colour: slot_ui::edge(),
-            });
-        }
-        out.push(Draw::Tex {
-            x,
-            y: y + (POWER_MENU_PITCH - h as f32) / 2.0,
-            w: w as f32,
-            h: h as f32,
-            tex,
-            alpha: 1.0,
-        });
-    }
 }
 
 /// Where a card keeps its greeting: numbered PNG frames and one mono 48 kHz PCM track.

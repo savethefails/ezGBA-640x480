@@ -215,8 +215,7 @@ impl Frontend {
         self.session.app_mut().set_alert_face(alert);
         // Uploaded at boot like everything else: a shutdown is the one moment there is no
         // time to rasterise anything, and the GPU is about to be taken away. One line per
-        // choice, in `PowerChoice::ALL` order, at the menu's own size so the screen that
-        // follows a choice is set in the same voice as the row that was chosen.
+        // way the device can go down, in `PowerChoice::ALL` order.
         let lines = PowerChoice::ALL
             .iter()
             .map(|c| {
@@ -228,16 +227,8 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_shutdown_faces(lines);
-        let menu = PowerChoice::ALL
-            .iter()
-            .map(|c| {
-                let f = menu_face(c.text());
-                (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h)
-            })
-            .collect();
-        self.session.app_mut().set_power_menu_faces(menu);
         // The quick menu's rows, every value a row can hold in both inks, its two arrows and its
-        // legend. At boot, like the power menu's rows, so moving through the menu or changing a
+        // legend. At boot, like the shutdown screen's words, so moving through the menu or changing a
         // value never waits on a font. Only Date & Time's value is left to `sync_quick_clock`:
         // it is the one thing on the menu that changes by itself.
         let mut up = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);

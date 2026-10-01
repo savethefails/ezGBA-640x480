@@ -22,9 +22,10 @@ pub const FF_DOUBLE_TAP_MS: Millis = 250;
 /// because neither key is deferred waiting for it: the pair is recognised behind the presses
 /// it is made of, not in front of them.
 pub const MUTE_CHORD_MS: Millis = 200;
-/// Well short of the PMIC's own six second cutoff (`pmu_powkey_off_time` in the device
-/// tree), so slot always gets to power off gracefully before the hardware cuts the rails.
-pub const POWER_HOLD_MS: Millis = 1000;
+/// Long enough that a hold is never a tap that lingered, and still well short of the PMIC's
+/// own six second cutoff (`pmu_powkey_off_time` in the device tree), so slot always gets to
+/// power off gracefully before the hardware cuts the rails.
+pub const POWER_HOLD_MS: Millis = 3000;
 
 /// How long a volume key is held before the level starts running, and how fast it runs after
 /// that. The press itself is the first step; this is the wait before the second, long enough
@@ -71,11 +72,9 @@ pub enum Action {
     /// A short press, delivered on release. Locking on the release rather than the press is
     /// what lets a press become a hold without dozing on the way through.
     PowerTap,
-    /// The hold threshold, while the button is still down. Arms the shutdown and puts it on
-    /// screen; it is `PowerOff` that commits.
+    /// The hold threshold, while the button is still down: the graceful shutdown starts here.
     PowerHold,
-    /// Released after a hold. The graceful shutdown starts here, so the screen `PowerHold`
-    /// raised is on the panel for as long as the button is held.
+    /// Released after a hold. Nothing hangs off it: the shutdown already started at the hold.
     PowerOff,
     LidClose,
     LidOpen,

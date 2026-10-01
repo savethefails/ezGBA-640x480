@@ -13,7 +13,6 @@ use slot::session::Session;
 use slot_gfx::Draw;
 use slot_input::{Action, Btn, Millis, RawEvent, POWER_HOLD_MS};
 use slot_store::{read_slot_state, write_slot_state, Core, Platform, SlotState, StateRing};
-use slot_ui::PowerChoice;
 
 use slot::link_radio::{RadioJob, RadioJobs};
 
@@ -149,43 +148,6 @@ fn the_backlight_follows_brightness_from_boot() {
     assert_eq!(step.load(Ordering::Relaxed), 4);
 }
 
-/// The menu covers whatever was on screen rather than tinting it. It is a decision about the
-/// device, not something happening inside the game, and a half-visible cart behind it reads
-/// as the game still being in charge.
-///
-/// Drawn in the case's own materials — the plate is housing, the keyline is edge, the row in
-/// hand is recess — so a screen that only appears for a couple of seconds still belongs to
-/// the same object as the shelf and the slot.
-#[test]
-fn the_menu_covers_the_screen_in_the_case_materials() {
-    let d = tmp_root_with_carts(&["Emerald"]);
-    let mut a = app_playing_in(d.path(), "Emerald");
-    a.apply(Action::PowerHold);
-
-    let mut out = Vec::new();
-    a.draw(&mut out);
-
-    match out.first() {
-        Some(Draw::Rect { w, h, colour, .. }) => {
-            assert_eq!(
-                *colour,
-                slot_ui::opening(),
-                "the ground is the case's opening"
-            );
-            assert!(*w > 0.0 && *h > 0.0, "and it covers the panel");
-        }
-        other => panic!("the menu drew {other:?} rather than a ground"),
-    }
-    // Only the ground is reachable here: the plate is sized from the uploaded row faces, and
-    // a unit test has no compositor to upload them with. What this does prove is that the
-    // menu replaces the screen rather than sitting over a game still being drawn.
-    assert_eq!(
-        out.len(),
-        1,
-        "nothing of the previous phase survives the menu"
-    );
-}
-
 /// rcK stops the frontend and unloads the GPU module before the kernel is allowed to halt,
 /// which takes about five seconds on this hardware. A panel that simply goes black for five
 /// seconds is one the user reads as hung — this device has already been opened once over
@@ -195,8 +157,6 @@ fn a_power_off_draws_a_shutdown_screen_over_everything() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
 
     let mut out = Vec::new();
     a.draw(&mut out);
@@ -217,76 +177,36 @@ fn a_power_off_draws_a_shutdown_screen_over_everything() {
     );
 }
 
-/// A held POWER offers a choice rather than committing to one. Everything reachable from
-/// here costs the user something — an instant resume, a three second boot, or a shutdown —
-/// so the button raises the question and A answers it.
+/// A held POWER is the shutdown itself: no menu asks first. The game is saved before anything
+/// else, the cart stays in the slot so the next boot resumes it, and the shutdown screen goes up.
 #[test]
-fn a_hold_opens_the_menu_and_commits_nothing() {
+fn a_hold_saves_and_powers_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    assert_eq!(a.power_menu(), Some(0), "the menu opens on Restart");
-    assert!(!a.powering_off() && !a.restarting());
+    assert!(a.powering_off() && !a.restarting());
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
             .read_resume()
             .unwrap()
             .is_some(),
-        "durable before the menu is even read: the user may hold on to the PMIC's own cutoff"
+        "durable before the shutdown: the button is still down and the PMIC's cutoff is ahead"
     );
-}
-
-#[test]
-fn the_menu_moves_and_stops_at_both_ends() {
-    let d = tmp_root_with_carts(&["Emerald"]);
-    let mut a = app_playing_in(d.path(), "Emerald");
-    a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Up));
-    assert_eq!(a.power_menu(), Some(0), "it does not wrap off the top");
-    for _ in 0..PowerChoice::ALL.len() + 1 {
-        a.apply(Action::GbaDown(Btn::Down));
-    }
     assert_eq!(
-        a.power_menu(),
-        Some(PowerChoice::ALL.len() - 1),
-        "nor off the bottom"
+        read_slot_state(d.path()).cart,
+        Some("Emerald".into()),
+        "power off is not an eject"
     );
 }
 
+/// A tap is still the doze, never a power off: the hold is only the hold.
 #[test]
-fn b_leaves_the_menu_without_doing_anything() {
+fn a_tap_dozes_rather_than_powering_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
-    a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::B));
-    assert_eq!(a.power_menu(), None);
-    assert!(!a.powering_off() && !a.restarting());
-    assert!(
-        matches!(a.phase(), Phase::Playing { .. }),
-        "back to the game"
-    );
-}
-
-#[test]
-fn each_row_commits_to_its_own_outcome() {
-    for (down, want) in [(0, "restart"), (1, "off")] {
-        let d = tmp_root_with_carts(&["Emerald"]);
-        let mut a = app_playing_in(d.path(), "Emerald");
-        a.apply(Action::PowerHold);
-        for _ in 0..down {
-            a.apply(Action::GbaDown(Btn::Down));
-        }
-        a.apply(Action::GbaDown(Btn::A));
-        assert_eq!(
-            a.power_menu(),
-            None,
-            "{want}: the menu closes on the choice"
-        );
-        match want {
-            "restart" => assert!(a.restarting() && !a.powering_off()),
-            _ => assert!(a.powering_off() && !a.restarting()),
-        }
-    }
+    a.apply(Action::PowerTap);
+    assert!(matches!(a.phase(), Phase::Doze { .. }));
+    assert!(!a.powering_off());
 }
 
 /// The decision and the moment the machine may stop are different things. Rendering the
@@ -299,8 +219,6 @@ fn the_shutdown_screen_is_up_before_the_machine_may_stop() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
 
     assert!(a.powering_off(), "the choice decides immediately");
     assert!(
@@ -348,29 +266,7 @@ fn a_dozing_device_powers_off_by_itself_rather_than_waiting_for_the_lid() {
     );
 }
 
-/// The menu is an overlay rather than a phase, so the phase stays `Playing` underneath it and
-/// `sync_speed` — which reads only the phase — left the core running flat out behind a screen
-/// that had replaced it. The game was still being heard while the user read a question about
-/// turning the device off. The switcher is the frontend's other overlay over a live game and
-/// it has always paused; this is the same idea, and was simply never wired.
-#[test]
-fn the_power_menu_holds_the_core_still() {
-    let d = tmp_root_with_real_carts(&["Advance Wars", "Emerald"]);
-    let (mut s, _motor) = session_with_platform(d.path());
-    let mut now = 0;
-    play(&mut s, &mut now);
-    assert_eq!(
-        s.observed_speed(),
-        Some(Speed::Normal),
-        "the core should be running, or this test proves nothing"
-    );
-
-    hold_power(&mut s, &mut now);
-    assert_eq!(s.app().power_menu(), Some(0), "the menu never opened");
-    await_paused(&mut s);
-}
-
-/// The same for the screen after the choice. A device with five seconds of rcK ahead of it is
+/// A device with five seconds of rcK ahead of it is
 /// not one that should still be playing the game it has already said goodbye to.
 #[test]
 fn a_committed_shutdown_holds_the_core_still() {
@@ -380,9 +276,7 @@ fn a_committed_shutdown_holds_the_core_still() {
     play(&mut s, &mut now);
 
     hold_power(&mut s, &mut now);
-    s.app_mut().apply(Action::GbaDown(Btn::Down));
-    s.app_mut().apply(Action::GbaDown(Btn::A));
-    assert!(s.app().powering_off(), "Power Off is the second row");
+    assert!(s.app().powering_off(), "the hold did not power off");
     s.update(DT);
     await_paused(&mut s);
 }

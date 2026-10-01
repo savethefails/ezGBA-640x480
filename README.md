@@ -84,11 +84,18 @@ and they're read back from it at startup, so editing the file by hand still work
 
 ## Starting where you left off
 
-When the SP powers off or restarts, slot saves the screen as it was just before: the game at
+The POWER button does two things:
+
+| Press | What happens |
+|---|---|
+| Tap | The screen goes dark (the same as closing the lid). Tap again to carry on. After three minutes dark, the SP saves and powers off by itself. |
+| Hold for 3 seconds | The SP saves your game, takes the picture below and powers off. |
+
+When the SP powers off, slot saves the screen as it was just before: the game at
 that moment, or the shelf. The next time you switch on, that picture is what the SP starts up
 with, marked with a small "Starting" label so it reads as the SP starting up rather than a
 screen that has stopped: low in the middle over a game, above the carts on the shelf. It's the
-frame before the power menu, the dark of a doze or the shutdown screen came up, so nothing
+frame before the screen went dark or the shutdown screen came up, so nothing
 else is drawn over it. The clock and battery in the corner of a shelf picture are as
 they were at power off.
 
@@ -122,7 +129,8 @@ the SP needs to start, so slot writes to it as carefully as it can:
 - It never holds up the power off: anything that goes wrong is logged to `/tmp/slot.log`
   and skipped, and it gives up after five seconds.
 
-If the battery runs flat or you hold POWER until the SP cuts out, slot gets no chance to save,
+If the battery runs flat, or you keep holding POWER past six seconds so the SP's hardware cuts
+the power itself, slot gets no chance to save,
 and the next start shows the last picture it did save.
 
 ## The RG35XXSP's 640×480 screen

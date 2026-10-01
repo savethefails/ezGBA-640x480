@@ -7,7 +7,7 @@ use common::{app_playing_in, app_playing_with, tmp_root_with_carts};
 use slot::app::Phase;
 use slot::persist;
 use slot::persist::Snapshot;
-use slot_input::{Action, Btn};
+use slot_input::Action;
 use slot_power::{Battery, Charge, LedState};
 use slot_store::{read_slot_state, Core, Platform, StateRing};
 
@@ -77,34 +77,26 @@ fn a_power_tap_dozes_and_a_second_one_wakes() {
     assert!(matches!(a.phase(), Phase::Playing { .. }));
 }
 
-/// The flush lands when the menu opens, not when a choice is made. The user may hold on
-/// past the PMIC's own six second cutoff, which takes the rails away whatever the software
-/// wanted — so the state has to be durable before they are given anything to read.
+/// The flush lands with the hold, before the shutdown starts. The button is still down, and a
+/// user who keeps holding reaches the PMIC's own six second cutoff, which takes the rails away
+/// whatever the software wanted.
 ///
-/// Powering off from the menu goes through the OS rather than that hardware cut: the cut
-/// syncs nothing and unloads nothing, and on this board a shutdown that leaves the GPU
-/// module loaded hangs the machine with the rails up.
+/// The power off goes through the OS rather than that hardware cut: the cut syncs nothing and
+/// unloads nothing, and on this board a shutdown that leaves the GPU module loaded hangs the
+/// machine with the rails up.
 #[test]
-fn opening_the_menu_flushes_and_the_choice_powers_off() {
+fn a_hold_flushes_and_powers_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
-
     a.apply(Action::PowerHold);
-    assert!(
-        !a.powering_off(),
-        "the hold asks the question, it does not answer it"
-    );
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
             .read_resume()
             .unwrap()
             .is_some(),
-        "durable before the user has read a single row"
+        "durable before the shutdown"
     );
-
-    a.apply(Action::GbaDown(Btn::Down));
-    a.apply(Action::GbaDown(Btn::A));
-    assert!(a.powering_off(), "Power Off is the second row");
+    assert!(a.powering_off());
     assert_eq!(
         read_slot_state(d.path()).cart,
         Some("Emerald".into()),
@@ -112,16 +104,14 @@ fn opening_the_menu_flushes_and_the_choice_powers_off() {
     );
 }
 
-/// The release stopped meaning anything once the hold started raising a menu: the choice is
-/// the commitment, and it is made with A.
+/// The release after a hold changes nothing: the shutdown started at the hold.
 #[test]
-fn a_release_after_the_hold_does_nothing_on_its_own() {
+fn a_release_after_the_hold_does_not_undo_it() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
     a.apply(Action::PowerOff);
-    assert!(!a.powering_off());
-    assert_eq!(a.power_menu(), Some(0), "and leaves the menu up");
+    assert!(a.powering_off());
 }
 
 /// A dark panel is a grace period, not a state: the machine is still running flat out behind
