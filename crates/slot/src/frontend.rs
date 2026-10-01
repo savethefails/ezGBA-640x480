@@ -408,6 +408,10 @@ impl Frontend {
         if let Some((cart, tex)) = self.session.app_mut().take_repainted() {
             let f = cart_face(&cart);
             compositor.update_texture(tex, f.w, f.h, &f.rgba);
+            // The core picker's lid for this cart was built before it was painted, and is
+            // kept by name: asked for again, it is rebuilt in the new colour.
+            self.core_asked = None;
+            self.core_built = None;
         }
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
         sync_about(self.session.app_mut(), compositor, &mut self.about);
