@@ -1,0 +1,4 @@
+*.gba
+!life.gba
+life.gif
+__pycache__/
