@@ -48,7 +48,9 @@ fn the_frame_before_a_doze_is_the_one_kept_for_the_next_boot() {
         "a frame was read with nothing over the screen"
     );
     f.compose(&mut c);
-    let shelf = c.read_frame();
+    // What is kept is that frame marked as a start: the pill, over the open space on the shelf.
+    let mut shelf = c.read_frame();
+    slot_ui::stamp_starting(&mut shelf, slot_ui::PillAt::Shelf);
 
     // POWER dozes: the panel goes dark. The frame before it is the shelf.
     input.0.push_back(vec![RawEvent::Down(Btn::Power)]);
@@ -115,7 +117,8 @@ fn kept_through(cover: fn(&mut Frontend, &mut Script)) -> Option<(Vec<u8>, Vec<u
         f.advance(&mut input);
     }
     f.compose(&mut c);
-    let before = c.read_frame();
+    let mut before = c.read_frame();
+    slot_ui::stamp_starting(&mut before, slot_ui::PillAt::Shelf);
     cover(&mut f, &mut input);
     f.compose(&mut c);
     // `None` only for a machine with no GPU to compose on: a cover that read nothing fails.

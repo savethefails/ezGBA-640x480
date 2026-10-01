@@ -86,8 +86,10 @@ and they're read back from it at startup, so editing the file by hand still work
 
 When the SP powers off or restarts, slot saves the screen as it was just before: the game at
 that moment, or the shelf. The next time you switch on, that picture is what the SP starts up
-with. It's the frame before the power menu, the dark of a doze or the shutdown screen came up,
-so nothing is drawn over it. The clock and battery in the corner of a shelf picture are as
+with, marked with a small "Starting" label so it reads as the SP starting up rather than a
+screen that has stopped: low in the middle over a game, above the carts on the shelf. It's the
+frame before the power menu, the dark of a doze or the shutdown screen came up, so nothing
+else is drawn over it. The clock and battery in the corner of a shelf picture are as
 they were at power off.
 
 When it's a game, slot keeps the same picture on screen while the game loads, then cuts

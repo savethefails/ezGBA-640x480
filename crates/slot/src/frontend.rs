@@ -432,7 +432,17 @@ impl Frontend {
         // last one with nothing over it. One read on the edge, never one a frame.
         let covered = self.session.app().scene_covered();
         if covered && !self.covered && self.composed {
-            self.scene = Some(compositor.read_frame());
+            // Marked as a start before it is kept: the boot partition and the card's copy both
+            // get this one frame, so the picture the bootloader shows and the one slot carries
+            // on drawing are the same to the pixel, pill and all.
+            let mut frame = compositor.read_frame();
+            let at = if self.session.app().seated_cart().is_some() {
+                slot_ui::PillAt::Game
+            } else {
+                slot_ui::PillAt::Shelf
+            };
+            slot_ui::stamp_starting(&mut frame, at);
+            self.scene = Some(frame);
         }
         self.covered = covered;
         self.composed = true;
