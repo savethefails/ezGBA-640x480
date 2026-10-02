@@ -8,6 +8,7 @@ compiled libretro cores it did not write:
 | `gpsp_libretro`  | https://github.com/libretro/gpsp        | GPL-2.0  | `gpsp-GPL-2.0.txt`        |
 | `mgba_libretro`  | https://github.com/libretro/mgba        | MPL-2.0  | `mgba-MPL-2.0.txt`        |
 | `snes9x_libretro`| https://github.com/libretro/snes9x      | Snes9x (non-commercial) | `snes9x-LICENSE.txt` |
+| `snes9x2005_plus_libretro` | https://github.com/libretro/snes9x2005 | Snes9x (non-commercial), parts GPL-2.0 | `snes9x2005-LICENSE.txt` |
 
 gpSP was originally written by Gilead "Exophase" Kutnick; the libretro core above is the
 actively maintained fork slot's fetch script pulls from. mGBA is by Jeffrey "endrift" Pfau.
@@ -95,6 +96,15 @@ and only with the licence and its copyright notice beside every copy — which i
 built from ezGBA may be sold, bundled into something sold, or used to promote something sold
 with snes9x inside it without the snes9x authors' permission. Its source is public at the
 commit the `.meta` names.
+
+## snes9x2005
+
+snes9x2005_plus is snes9x 1.43 as ported by CATSFC and ndssfc, with blargg's sound chip.
+`cores/snes9x2005/build.sh`, run by `core:snes9x2005`, builds it unpatched from
+libretro/snes9x2005 at `SNES9X2005_COMMIT`. Its `copyright` file, shipped as
+`snes9x2005-LICENSE.txt`, carries snes9x's non-commercial licence, the same terms as above, and
+the GPL-2.0 its CATSFC and ndssfc parts are under. So its source travels with it, as
+`snes9x2005-<commit>.tar.gz`, beside the `.meta` naming the commit.
 
 ## Shaders
 

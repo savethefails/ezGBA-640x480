@@ -204,6 +204,13 @@ SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence all
 shared only for free and non-commercially, with its licence beside it (it ships as
 `System/licenses/snes9x-LICENSE.txt`). ezGBA is free; just don't sell anything with it inside.
 
+**Experiment on this branch:** SNES games run on **snes9x2005_plus** instead, an older and
+lighter snes9x (about twice as fast on the SP) so that a frame of run-ahead fits. Put
+`snes9x2005_plus_libretro.so` in `System/` (from the **slot** workflow's `snes9x2005` artifact,
+with its `licenses/` beside it). Its save states are kept apart from snes9x's, so a game
+suspended on snes9x starts from its last in-game save the first time; battery saves are shared.
+To put one game back on snes9x, add `Game Name = snes9x` to `System/selected_core.ini`.
+
 ## Setup
 
 1. Flash **BaseOS for the RG35XXSP**: `baseos-rg35xxsp-<version>.img.zip` from

@@ -221,7 +221,13 @@ pub fn apply_core_options(
     // invites. The option is the standing arrangement; the callback is the per-frame lever.
     //
     // The key is the core's own name with `_frameskip` after it, which is how both spell it.
-    core.set_option(&format!("{}_frameskip", which.as_str()), "auto");
+    //
+    // snes9x2005 is the one exception: its keys are `snes9x_2005_`, not its file's name.
+    let prefix = match which {
+        Core::Snes9x2005 => "snes9x_2005",
+        other => other.as_str(),
+    };
+    core.set_option(&format!("{prefix}_frameskip"), "auto");
     if which == Core::Mgba {
         // An SGB border makes the picture 256x224, the Game Boy's own 160x144 a small window in
         // the middle of a television frame, which would be drawn at 2x rather than the 3x a Game

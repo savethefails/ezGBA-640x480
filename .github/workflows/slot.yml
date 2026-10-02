@@ -13,6 +13,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - '.github/workflows/slot.yml'
+      - 'cores/snes9x2005/**'
   workflow_dispatch:
 
 permissions:
@@ -61,4 +62,34 @@ jobs:
         with:
           name: ${{ env.NAME }}
           path: target-device/device/slot
+          if-no-files-found: error
+
+  # The snes9x2005_plus core run-ahead is being tried on, which no card has yet: it goes into
+  # System/ beside slot, and its licence and source into System/licenses.
+  snes9x2005:
+    name: System/snes9x2005_plus_libretro.so
+    runs-on: ubuntu-24.04-arm
+    container: rust:1-bullseye
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Name the artifact
+        run: |
+          short="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          echo "NAME=snes9x2005-$(printf '%s' "$GITHUB_REF_NAME" | tr '/' '-')-$short" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          commit="$(sed -n 's/^  SNES9X2005_COMMIT: //p' taskfile.yml)"
+          sh cores/snes9x2005/build.sh build "$commit" target-device/snes9x2005 out/snes9x2005_plus_libretro.so
+          file out/snes9x2005_plus_libretro.so | grep -q aarch64
+          mkdir -p out/licenses
+          mv out/snes9x2005_plus_libretro.so.LICENSE out/licenses/snes9x2005-LICENSE.txt
+          mv out/snes9x2005_plus_libretro.so.meta "out/licenses/snes9x2005-$commit.meta"
+          mv out/snes9x2005_plus_libretro.so.src.tar.gz "out/licenses/snes9x2005-$commit.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: out/
           if-no-files-found: error

@@ -11,6 +11,10 @@ pub enum Core {
     Mgba,
     Gpsp,
     Snes9x,
+    /// snes9x 1.43 by way of CATSFC, with blargg's sound chip: libretro's `snes9x2005_plus`.
+    /// About twice as fast as `Snes9x` on the SP's cores, which is what lets a SNES game afford
+    /// run-ahead. An experiment beside `Snes9x`, not a replacement for it.
+    Snes9x2005,
 }
 
 impl Core {
@@ -18,7 +22,7 @@ impl Core {
     /// `migrate_states` walks this rather than spelling the variant list out a second time,
     /// so a third core added here does not also have to be remembered at every call site
     /// that needs to tell a core's own directory apart from a cart's.
-    pub const ALL: [Core; 3] = [Core::Mgba, Core::Gpsp, Core::Snes9x];
+    pub const ALL: [Core; 4] = [Core::Mgba, Core::Gpsp, Core::Snes9x, Core::Snes9x2005];
 
     /// The two a GBA cart can choose between, which are the picker's rows and chips. Every
     /// other console has exactly one core that runs it, and so nothing to pick.
@@ -29,6 +33,7 @@ impl Core {
             Core::Mgba => "mgba",
             Core::Gpsp => "gpsp",
             Core::Snes9x => "snes9x",
+            Core::Snes9x2005 => "snes9x2005_plus",
         }
     }
 
@@ -45,6 +50,7 @@ impl Core {
             Core::Mgba => "mGBA",
             Core::Gpsp => "gpSP",
             Core::Snes9x => "Snes9x",
+            Core::Snes9x2005 => "Snes9x 2005",
         }
     }
 
@@ -53,6 +59,7 @@ impl Core {
             "mgba" => Some(Core::Mgba),
             "gpsp" => Some(Core::Gpsp),
             "snes9x" => Some(Core::Snes9x),
+            "snes9x2005_plus" => Some(Core::Snes9x2005),
             _ => None,
         }
     }

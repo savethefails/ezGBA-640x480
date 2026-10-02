@@ -18,6 +18,9 @@ vars:
   # snes9x is built from libretro/snes9x at this commit, unpatched, and its LICENSE from the
   # same checkout ships beside it: its terms are non-commercial and ask for exactly that.
   SNES9X_COMMIT: fae2fea08f74180759ef540ee94259213f503480
+  # snes9x2005_plus, the faster SNES core run-ahead is being tried on: libretro/snes9x2005 at
+  # this commit, unpatched. Its source archive and licence ship beside it.
+  SNES9X2005_COMMIT: a79dfe9047e7fec58808aefe48ad2bf499c7af11
 
 tasks:
   default:
@@ -227,6 +230,20 @@ tasks:
       - file vendor/snes9x_libretro.so | grep -q aarch64
       - 'echo "built vendor/snes9x_libretro.so"'
 
+  core:snes9x2005:
+    desc: Build the aarch64 linux snes9x2005_plus core for the device bundle, in the box the device build uses
+    status:
+      - test -f vendor/snes9x2005_plus_libretro.so
+      - test -f vendor/snes9x2005_plus_libretro.so.LICENSE
+      - test -f vendor/snes9x2005_plus_libretro.so.src.tar.gz
+      - test "$(cat vendor/snes9x2005_plus_libretro.so.meta 2>/dev/null)" = "$(sh cores/snes9x2005/build.sh stamp {{.SNES9X2005_COMMIT}})"
+    cmds:
+      - task: device:sh
+        vars:
+          CMD: sh cores/snes9x2005/build.sh build {{.SNES9X2005_COMMIT}} target-device/snes9x2005 vendor/snes9x2005_plus_libretro.so
+      - file vendor/snes9x2005_plus_libretro.so | grep -q aarch64
+      - 'echo "built vendor/snes9x2005_plus_libretro.so"'
+
   core:gpsp:
     desc: >-
       Build the aarch64 linux gpSP core from its pinned source archive, which ships beside it
@@ -346,7 +363,7 @@ tasks:
     # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
     # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
-    deps: [core:device, core:gpsp, core:snes9x, build:device]
+    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, build:device]
     vars:
       OUT: '{{.OUT | default "dist-device"}}'
     cmds:
@@ -366,9 +383,11 @@ tasks:
       - file vendor/mgba_libretro.so | grep -q aarch64
       - file vendor/gpsp_libretro.so | grep -q aarch64
       - file vendor/snes9x_libretro.so | grep -q aarch64
+      - file vendor/snes9x2005_plus_libretro.so | grep -q aarch64
       - cp vendor/mgba_libretro.so {{.OUT}}/System/
       - cp vendor/gpsp_libretro.so {{.OUT}}/System/
       - cp vendor/snes9x_libretro.so {{.OUT}}/System/
+      - cp vendor/snes9x2005_plus_libretro.so {{.OUT}}/System/
       - cp -r licenses {{.OUT}}/System/licenses
       # snes9x's terms: non-commercial use only, and this licence with its copyright notice
       # beside every copy. The .meta names the libretro/snes9x commit it was built from.
@@ -377,6 +396,14 @@ tasks:
         commit="$(grep '^commit=' vendor/snes9x_libretro.so.meta | cut -d= -f2)"
         cp vendor/snes9x_libretro.so.LICENSE "{{.OUT}}/System/licenses/snes9x-LICENSE.txt"
         cp vendor/snes9x_libretro.so.meta "{{.OUT}}/System/licenses/snes9x-${commit}.meta"
+      # snes9x2005: the same non-commercial terms, and GPL-2.0 for its CATSFC parts, so its
+      # source travels with it too.
+      - |
+        set -euo pipefail
+        commit="$(grep '^commit=' vendor/snes9x2005_plus_libretro.so.meta | cut -d= -f2)"
+        cp vendor/snes9x2005_plus_libretro.so.LICENSE "{{.OUT}}/System/licenses/snes9x2005-LICENSE.txt"
+        cp vendor/snes9x2005_plus_libretro.so.meta "{{.OUT}}/System/licenses/snes9x2005-${commit}.meta"
+        cp vendor/snes9x2005_plus_libretro.so.src.tar.gz "{{.OUT}}/System/licenses/snes9x2005-${commit}.tar.gz"
       # GPL-2.0 section 3(a): gpSP's corresponding source travels with the binary. It lands
       # inside licenses/ itself, next to the license text that explains it, named for the
       # commit core:gpsp built so the file identifies its own source with no release page
@@ -409,7 +436,7 @@ tasks:
   deploy:device:
     desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard
     # See the note on dist:device: both cores are real now, so both are pushed.
-    deps: [core:device, core:gpsp, core:snes9x, build:device]
+    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, build:device]
     vars:
       SD: '{{.SD | default "/mnt/sdcard"}}'
     cmds:
@@ -420,6 +447,7 @@ tasks:
       - file vendor/mgba_libretro.so | grep -q aarch64
       - file vendor/gpsp_libretro.so | grep -q aarch64
       - file vendor/snes9x_libretro.so | grep -q aarch64
+      - file vendor/snes9x2005_plus_libretro.so | grep -q aarch64
       # Onto the card the device is already running from, rather than a tree to copy by hand.
       # The binary is replaced under the running process, which is why the reboot below is
       # part of the task and not left to be remembered.
@@ -427,6 +455,7 @@ tasks:
       - adb push vendor/mgba_libretro.so '{{.SD}}/System/mgba_libretro.so'
       - adb push vendor/gpsp_libretro.so '{{.SD}}/System/gpsp_libretro.so'
       - adb push vendor/snes9x_libretro.so '{{.SD}}/System/snes9x_libretro.so'
+      - adb push vendor/snes9x2005_plus_libretro.so '{{.SD}}/System/snes9x2005_plus_libretro.so'
       # Into System/, not onto System/licenses: adb copies a folder inside a destination that
       # already exists, so naming licenses itself nested a fresh copy inside the old one on
       # every deploy after the first and left the notice at the top of the card stale.
