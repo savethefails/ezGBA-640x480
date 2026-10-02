@@ -19,7 +19,7 @@ vars:
   # same checkout ships beside it: its terms are non-commercial and ask for exactly that.
   SNES9X_COMMIT: fae2fea08f74180759ef540ee94259213f503480
   # snes9x2005_plus, the faster SNES core run-ahead is being tried on: libretro/snes9x2005 at
-  # this commit, unpatched. Its source archive and licence ship beside it.
+  # this commit, with cores/snes9x2005/'s patch. Its source archive and licence ship beside it.
   SNES9X2005_COMMIT: a79dfe9047e7fec58808aefe48ad2bf499c7af11
 
 tasks:

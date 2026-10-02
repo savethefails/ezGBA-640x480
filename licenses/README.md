@@ -100,11 +100,12 @@ commit the `.meta` names.
 ## snes9x2005
 
 snes9x2005_plus is snes9x 1.43 as ported by CATSFC and ndssfc, with blargg's sound chip.
-`cores/snes9x2005/build.sh`, run by `core:snes9x2005`, builds it unpatched from
-libretro/snes9x2005 at `SNES9X2005_COMMIT`. Its `copyright` file, shipped as
-`snes9x2005-LICENSE.txt`, carries snes9x's non-commercial licence, the same terms as above, and
-the GPL-2.0 its CATSFC and ndssfc parts are under. So its source travels with it, as
-`snes9x2005-<commit>.tar.gz`, beside the `.meta` naming the commit.
+`cores/snes9x2005/build.sh`, run by `core:snes9x2005`, builds it from libretro/snes9x2005 at
+`SNES9X2005_COMMIT` with one patch, `cores/snes9x2005/runahead-audio.patch`, which keeps its sound
+going across a state load. Its `copyright` file, shipped as `snes9x2005-LICENSE.txt`, carries
+snes9x's non-commercial licence, the same terms as above, and the GPL-2.0 its CATSFC and ndssfc
+parts are under. So its source, patch applied, travels with it as `snes9x2005-<commit>.tar.gz`,
+beside the `.meta` naming the commit and the patch.
 
 ## Shaders
 

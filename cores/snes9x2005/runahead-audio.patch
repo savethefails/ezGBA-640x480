@@ -1,0 +1,126 @@
+diff --git a/source/apu_blargg.c b/source/apu_blargg.c
+index cfa7aae..327f3ea 100644
+--- a/source/apu_blargg.c
++++ b/source/apu_blargg.c
+@@ -3422,6 +3422,103 @@ static void to_apu_from_state (uint8_t **buf, void *var, size_t size)
+ 
+ /* work around optimization bug in android GCC
+    similar to this: http://jeffq.com/blog/over-aggressive-gcc-optimization-can-cause-sigbus-crash-when-using-memcpy-with-the-android-ndk/ */
++/* The sound chip's output side, which a save state does not carry: the samples on their way
++   out (the landing buffer, both extra buffers and the resampler's ring) and where the DSP is
++   writing them. Loading a state resets all of it, which inserts silence and drops the
++   resampler's history: harmless once, but a frontend that runs ahead loads a state every frame,
++   and that is a click every frame. So each save keeps a copy, and a load puts it back, as long
++   as the buffers it points into are still the same ones. */
++static struct
++{
++   bool     valid;
++   int16_t *landing;
++   int32_t  landing_len;
++   int16_t *landing_copy;
++   int32_t  extra_clocks;
++   int16_t *buf_begin;
++   int16_t *buf_end;
++   int16_t *extra_pos;
++   int16_t  extra_buf [EXTRA_SIZE];
++   int16_t *dsp_out;
++   int16_t *dsp_out_end;
++   int16_t *dsp_out_begin;
++   int16_t  dsp_extra [EXTRA_SIZE];
++   uint8_t *rb;
++   int32_t  rb_len;
++   int32_t  rb_start;
++   int32_t  rb_size;
++   uint32_t r_step;
++   uint32_t r_frac;
++   int32_t  r_left [4];
++   int32_t  r_right [4];
++} out_keep;
++
++static void output_keep(void)
++{
++   out_keep.valid = false;
++   if (!landing_buffer || !rb_buffer)
++      return;
++   if (out_keep.landing_len != buffer_size)
++   {
++      free(out_keep.landing_copy);
++      out_keep.landing_copy = (int16_t*)malloc(buffer_size * 2);
++      out_keep.landing_len = out_keep.landing_copy ? buffer_size : 0;
++   }
++   if (out_keep.rb_len != rb_buffer_size)
++   {
++      free(out_keep.rb);
++      out_keep.rb = (uint8_t*)malloc(rb_buffer_size);
++      out_keep.rb_len = out_keep.rb ? rb_buffer_size : 0;
++   }
++   if (!out_keep.landing_copy || !out_keep.rb)
++      return;
++
++   out_keep.landing = landing_buffer;
++   memcpy(out_keep.landing_copy, landing_buffer, buffer_size * 2);
++   out_keep.extra_clocks  = m.extra_clocks;
++   out_keep.buf_begin     = m.buf_begin;
++   out_keep.buf_end       = m.buf_end;
++   out_keep.extra_pos     = m.extra_pos;
++   memcpy(out_keep.extra_buf, m.extra_buf, sizeof(m.extra_buf));
++   out_keep.dsp_out       = dsp_m.out;
++   out_keep.dsp_out_end   = dsp_m.out_end;
++   out_keep.dsp_out_begin = dsp_m.out_begin;
++   memcpy(out_keep.dsp_extra, dsp_m.extra, sizeof(dsp_m.extra));
++   memcpy(out_keep.rb, rb_buffer, rb_buffer_size);
++   out_keep.rb_start = rb_start;
++   out_keep.rb_size  = rb_size;
++   out_keep.r_step   = r_step;
++   out_keep.r_frac   = r_frac;
++   memcpy(out_keep.r_left, r_left, sizeof(r_left));
++   memcpy(out_keep.r_right, r_right, sizeof(r_right));
++   out_keep.valid = true;
++}
++
++static void output_restore(void)
++{
++   if (!out_keep.valid || out_keep.landing != landing_buffer ||
++         out_keep.landing_len != buffer_size || out_keep.rb_len != rb_buffer_size ||
++         out_keep.r_step != r_step)
++      return;
++
++   memcpy(landing_buffer, out_keep.landing_copy, buffer_size * 2);
++   m.extra_clocks  = out_keep.extra_clocks;
++   m.buf_begin     = out_keep.buf_begin;
++   m.buf_end       = out_keep.buf_end;
++   m.extra_pos     = out_keep.extra_pos;
++   memcpy(m.extra_buf, out_keep.extra_buf, sizeof(m.extra_buf));
++   dsp_m.out       = out_keep.dsp_out;
++   dsp_m.out_end   = out_keep.dsp_out_end;
++   dsp_m.out_begin = out_keep.dsp_out_begin;
++   memcpy(dsp_m.extra, out_keep.dsp_extra, sizeof(dsp_m.extra));
++   memcpy(rb_buffer, out_keep.rb, rb_buffer_size);
++   rb_start = out_keep.rb_start;
++   rb_size  = out_keep.rb_size;
++   r_frac   = out_keep.r_frac;
++   memcpy(r_left, out_keep.r_left, sizeof(r_left));
++   memcpy(r_right, out_keep.r_right, sizeof(r_right));
++}
++
+ #if defined(ANDROID) || defined(__QNX__)
+ void __attribute__((optimize(0))) S9xAPUSaveState (uint8_t *block)
+ #else
+@@ -3438,6 +3535,8 @@ void S9xAPUSaveState (uint8_t *block)
+    SET_LE32(ptr, reference_time);
+    ptr += sizeof(int32_t);
+    SET_LE32(ptr, spc_remainder);
++
++   output_keep();
+ }
+ 
+ #if defined(ANDROID) || defined(__QNX__)
+@@ -3456,6 +3555,8 @@ void S9xAPULoadState (const uint8_t *block)
+    reference_time = GET_LE32(ptr);
+    ptr += sizeof(int32_t);
+    spc_remainder = GET_LE32(ptr);
++
++   output_restore();
+ }
+ 
+ #endif
