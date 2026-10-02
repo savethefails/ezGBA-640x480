@@ -6,9 +6,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart, Core,
-    LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing, Theme,
-    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart,
+    ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing,
+    Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -780,6 +780,9 @@ impl App {
             scaler: theme.scaler,
             sharpness: theme.sharpness,
             snes_picture: theme.snes_picture,
+            colour_depth: theme.colour_depth,
+            colour_custom: theme.colour_custom,
+            snes_core: theme.snes_core,
         };
         look.apply();
         slot_ui::set_theme(theme);
@@ -1019,6 +1022,16 @@ impl App {
                 1 => QuickValue::Ahead1,
                 _ => QuickValue::Ahead2,
             }),
+            QuickRow::ColourDepth => Some(match self.look.colour_depth {
+                ColourDepth::Off => QuickValue::Off,
+                ColourDepth::Rich => QuickValue::Rich,
+                ColourDepth::Deep => QuickValue::Deep,
+                ColourDepth::Custom => QuickValue::Custom,
+            }),
+            QuickRow::SnesCore => Some(match self.look.snes_core {
+                Core::Snes9x => QuickValue::Snes9x,
+                _ => QuickValue::Snes9x2005,
+            }),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -1243,6 +1256,11 @@ impl App {
     /// Frames the core runs ahead of the game. See `emu::run_ahead`.
     pub fn runahead(&self) -> u8 {
         self.look.runahead
+    }
+
+    /// The emulator a SNES cart starts on unless `selected_core.ini` names one.
+    pub fn snes_core(&self) -> Core {
+        self.look.snes_core
     }
 
     /// How the seated cart's picture is placed on the panel: the console's own rule, and for a
@@ -1996,6 +2014,34 @@ impl App {
                 ));
                 ("runahead", self.look.runahead.to_string())
             }
+            QuickRow::ColourDepth => {
+                const DEPTHS: [ColourDepth; 4] = [
+                    ColourDepth::Off,
+                    ColourDepth::Rich,
+                    ColourDepth::Deep,
+                    ColourDepth::Custom,
+                ];
+                let at = DEPTHS
+                    .iter()
+                    .position(|d| *d == self.look.colour_depth)
+                    .unwrap_or(0);
+                self.look.colour_depth = DEPTHS[step(at, DEPTHS.len())];
+                ("colour-depth", self.look.colour_depth.word().to_string())
+            }
+            QuickRow::SnesCore => {
+                self.look.snes_core = match self.look.snes_core {
+                    Core::Snes9x => Core::Snes9x2005,
+                    _ => Core::Snes9x,
+                };
+                let word = match self.look.snes_core {
+                    Core::Snes9x => "snes9x",
+                    _ => "snes9x2005",
+                };
+                crate::latency::note(&format!(
+                    "settings: SNES emulator set to {word}, for the next game started"
+                ));
+                ("snes-core", word.to_string())
+            }
             QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
         };
         self.look.apply();
@@ -2022,6 +2068,8 @@ impl App {
             | QuickRow::Scaler
             | QuickRow::Sharpness
             | QuickRow::RunAhead
+            | QuickRow::ColourDepth
+            | QuickRow::SnesCore
             | QuickRow::Brightness => {}
         }
     }
@@ -4638,6 +4686,12 @@ struct Look {
     /// How a SNES picture is placed. Read by `App::fit` as the cart is drawn, since a SNES
     /// picture's place depends on the seated cart rather than on a global the renderer holds.
     snes_picture: SnesPicture,
+    /// The game picture's colour depth, and the card's own values for `Custom`.
+    colour_depth: ColourDepth,
+    colour_custom: [Option<f32>; 3],
+    /// The emulator a SNES cart starts on when `selected_core.ini` does not name one. Not how
+    /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
+    snes_core: Core,
 }
 
 impl Default for Look {
@@ -4650,6 +4704,9 @@ impl Default for Look {
             scaler: Scaling::PixelAa,
             sharpness: 1.0,
             snes_picture: SnesPicture::Sharp,
+            colour_depth: ColourDepth::Off,
+            colour_custom: [None; 3],
+            snes_core: Core::Snes9x2005,
         }
     }
 }
@@ -4679,6 +4736,12 @@ impl Look {
             }
             .with_depth(self.depth),
         );
+        let [gamma, saturation, contrast] = self.colour_depth.values(self.colour_custom);
+        slot_gfx::set_tone(slot_gfx::Tone {
+            gamma,
+            saturation,
+            contrast,
+        });
     }
 }
 

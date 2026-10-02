@@ -1172,3 +1172,51 @@ fn a_snes_frame_takes_whole_rows_and_no_grid() {
     set_grid(Grid::default());
     set_fit(Fit::Gba);
 }
+
+/// Colour depth, as RetroArch's image-adjustment pass does it: a gamma exponent above one
+/// darkens the middle and leaves black and white where they were, saturation moves a colour
+/// away from its brightest channel, and neutral changes nothing at all.
+#[test]
+fn colour_depth_deepens_the_middle_and_leaves_black_and_white_alone() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let shade = |c: &mut slot_gfx::Compositor, rgb: [u8; 3]| {
+        let frame: Vec<u8> =
+            std::iter::repeat_n([rgb[2], rgb[1], rgb[0], 0], (SRC_W * SRC_H) as usize)
+                .flatten()
+                .collect();
+        c.begin_frame();
+        c.upload_game(&frame, GBA);
+        c.draw_game();
+        let out = c.read_frame();
+        let (x, y) = centre_of(120, 80, SRC_W as usize, SRC_H as usize);
+        px(&out, x, y)
+    };
+
+    slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
+    let plain = shade(&mut c, [0x80, 0x60, 0x40]);
+    assert!(close(plain, shaded([0x80, 0x60, 0x40])), "{plain:?}");
+
+    slot_gfx::set_tone(slot_gfx::Tone {
+        gamma: 2.5 / 2.2,
+        saturation: 1.0,
+        contrast: 1.0,
+    });
+    let mid = shade(&mut c, [0x80; 3]);
+    let want = (0.5019608f32.powf(2.5 / 2.2) * 255.0).round() as i32;
+    assert!(close(mid, [want; 3]), "{mid:?}, not {want}");
+    assert!(close(shade(&mut c, [0; 3]), [0; 3]));
+    assert!(close(shade(&mut c, [0xff; 3]), [0xff; 3]));
+
+    slot_gfx::set_tone(slot_gfx::Tone {
+        gamma: 1.0,
+        saturation: 1.5,
+        contrast: 1.0,
+    });
+    // Away from the brightest channel by half again: 0x80 stays, 0x60 and 0x40 fall.
+    let rich = shade(&mut c, [0x80, 0x60, 0x40]);
+    assert!(close(rich, [0x80, 0x50, 0x20]), "{rich:?}");
+
+    slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
+}

@@ -16,17 +16,20 @@ pub enum QuickRow {
     GridDepth,
     Scaler,
     Sharpness,
+    ColourDepth,
     RunAhead,
+    SnesCore,
     About,
     Brightness,
 }
 
 impl QuickRow {
-    /// ezGBA keeps the two rows that open something, the three that set how the game looks and
-    /// the one that sets how soon it answers, which `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
+    /// ezGBA keeps the two rows that open something, the ones that set how the game looks, the
+    /// one that sets how soon it answers and the one that picks the SNES emulator, which
+    /// `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 10] = [
+    pub const ALL: [QuickRow; 12] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::SnesPicture,
@@ -34,7 +37,9 @@ impl QuickRow {
         QuickRow::GridDepth,
         QuickRow::Scaler,
         QuickRow::Sharpness,
+        QuickRow::ColourDepth,
         QuickRow::RunAhead,
+        QuickRow::SnesCore,
         QuickRow::About,
         QuickRow::Brightness,
     ];
@@ -53,7 +58,9 @@ impl QuickRow {
             QuickRow::GridDepth => "Grid Depth",
             QuickRow::Scaler => "Scaler",
             QuickRow::Sharpness => "Sharpness",
+            QuickRow::ColourDepth => "Colour Depth",
             QuickRow::RunAhead => "Run-Ahead",
+            QuickRow::SnesCore => "SNES Emulator",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
         }
@@ -113,10 +120,15 @@ pub enum QuickValue {
     Sharp15,
     Sharp20,
     SnesSharp,
+    Rich,
+    Deep,
+    Custom,
+    Snes9x2005,
+    Snes9x,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 30] = [
+    pub const ALL: [QuickValue; 35] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -147,6 +159,11 @@ impl QuickValue {
         QuickValue::Sharp15,
         QuickValue::Sharp20,
         QuickValue::SnesSharp,
+        QuickValue::Rich,
+        QuickValue::Deep,
+        QuickValue::Custom,
+        QuickValue::Snes9x2005,
+        QuickValue::Snes9x,
     ];
 
     /// The Sharpness row's steps, in the order the arrows walk them.
@@ -192,6 +209,11 @@ impl QuickValue {
             QuickValue::Sharp15 => "1.5",
             QuickValue::Sharp20 => "2.0",
             QuickValue::SnesSharp => "Sharp",
+            QuickValue::Rich => "Rich",
+            QuickValue::Deep => "Deep",
+            QuickValue::Custom => "Custom",
+            QuickValue::Snes9x2005 => "Snes9x 2005",
+            QuickValue::Snes9x => "Snes9x",
         }
     }
 
@@ -232,10 +254,18 @@ impl QuickValue {
     }
 }
 
-/// A size up from the power menu's rows: 30 px type on 40 px rows. They were 52 when the menu
-/// had three; ten at 52 run into the legend, and 40 is the tallest that holds them above it.
-/// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar.
-pub const QUICK_PITCH: f32 = 40.0;
+/// A size up from the power menu's rows: 30 px type on rows as tall as the space above the
+/// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34.
+/// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar
+/// at either.
+pub const QUICK_PITCH: f32 = {
+    let fits = ((LEGEND_Y - LEGEND_AIR) / QuickRow::ALL.len() as f32) as i32 as f32;
+    if fits < 40.0 {
+        fits
+    } else {
+        40.0
+    }
+};
 /// The first row's top, with all of them centred in the space above the legend: derived from
 /// `QuickRow::ALL`, so a row added or removed moves the whole menu rather than hanging one off
 /// the bottom.

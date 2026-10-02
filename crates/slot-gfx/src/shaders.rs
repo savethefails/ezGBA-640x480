@@ -140,6 +140,8 @@ uniform float u_sharp;
 uniform vec2 u_gap;
 uniform float u_keep;
 uniform float u_even;
+// Gamma exponent, saturation and contrast: `surface::Tone`.
+uniform vec3 u_tone;
 varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
@@ -263,6 +265,12 @@ void main() {
         picture = texture2D(u_game, u_uv.xy + texel / u_src).rgb;
     } else {
         picture = pixel_aa_gamma(v_uv * source, source / u_out);
+    }
+    if (u_tone != vec3(1.0)) {
+        float top = max(picture.r, max(picture.g, picture.b));
+        picture = clamp(mix(vec3(top), picture, u_tone.y), 0.0, 1.0);
+        picture = clamp((picture - 0.5) * u_tone.z + 0.5, 0.0, 1.0);
+        picture = pow(picture, vec3(u_tone.x));
     }
     vec3 mask = mix(vec3(1.0), texture2D(u_mask, v_uv * u_src).rgb, u_grille);
     vec3 rgb = picture * mask;

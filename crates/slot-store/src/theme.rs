@@ -48,6 +48,54 @@ pub struct Theme {
     pub snes_picture: SnesPicture,
     /// `boot-picture last` or `boot-picture off`. See `BootPicture`.
     pub boot_picture: BootPicture,
+    /// `colour-depth off`, `rich`, `deep` or `custom`. See `ColourDepth`.
+    pub colour_depth: ColourDepth,
+    /// `colour-gamma 1.14`, `colour-saturation 1.1` and `colour-contrast 1.05`: what
+    /// `colour-depth custom` draws with. Each is 1.0 when the card does not say.
+    pub colour_custom: [Option<f32>; 3],
+    /// `snes-core snes9x2005` or `snes-core snes9x`: which emulator runs a SNES cart that
+    /// `selected_core.ini` does not name. snes9x2005 is the default, being fast enough for
+    /// run-ahead.
+    pub snes_core: crate::Core,
+}
+
+/// How much depth the game picture is given, after the image-adjustment settings RG35XXSP
+/// players share for RetroArch. Each is a gamma exponent, a saturation and a contrast; see
+/// `ColourDepth::values`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum ColourDepth {
+    /// The picture as the core drew it.
+    #[default]
+    Off,
+    /// Middle tones a little deeper (Monitor Gamma 2.0 against a target of 2.2) and colour a
+    /// touch fuller.
+    Rich,
+    /// Target Gamma 2.5, Saturation 1.10, Contrast 1.05.
+    Deep,
+    /// The card's own `colour-gamma`, `colour-saturation` and `colour-contrast`.
+    Custom,
+}
+
+impl ColourDepth {
+    /// Gamma exponent, saturation and contrast. `custom` is what the card's lines say, each 1.0
+    /// where it says nothing.
+    pub fn values(self, custom: [Option<f32>; 3]) -> [f32; 3] {
+        match self {
+            ColourDepth::Off => [1.0, 1.0, 1.0],
+            ColourDepth::Rich => [2.2 / 2.0, 1.05, 1.0],
+            ColourDepth::Deep => [2.5 / 2.2, 1.10, 1.05],
+            ColourDepth::Custom => custom.map(|v| v.unwrap_or(1.0)),
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            ColourDepth::Off => "off",
+            ColourDepth::Rich => "rich",
+            ColourDepth::Deep => "deep",
+            ColourDepth::Custom => "custom",
+        }
+    }
 }
 
 /// What the bootloader shows while the device starts.
@@ -115,6 +163,9 @@ impl Default for Theme {
             runahead: None,
             snes_picture: SnesPicture::Sharp,
             boot_picture: BootPicture::Last,
+            colour_depth: ColourDepth::Off,
+            colour_custom: [None; 3],
+            snes_core: crate::Core::Snes9x2005,
         }
     }
 }
@@ -160,6 +211,24 @@ impl Theme {
                 ("snes-picture", "4:3") => theme.snes_picture = SnesPicture::FourThree,
                 ("boot-picture", "last") => theme.boot_picture = BootPicture::Last,
                 ("boot-picture", "off") => theme.boot_picture = BootPicture::Off,
+                ("colour-depth", "off") => theme.colour_depth = ColourDepth::Off,
+                ("colour-depth", "rich") => theme.colour_depth = ColourDepth::Rich,
+                ("colour-depth", "deep") => theme.colour_depth = ColourDepth::Deep,
+                ("colour-depth", "custom") => theme.colour_depth = ColourDepth::Custom,
+                ("snes-core", "snes9x") => theme.snes_core = crate::Core::Snes9x,
+                ("snes-core", "snes9x2005" | "snes9x2005_plus") => {
+                    theme.snes_core = crate::Core::Snes9x2005
+                }
+                ("colour-gamma" | "colour-saturation" | "colour-contrast", v) => {
+                    if let Some(x) = v.parse::<f32>().ok().filter(|x| (0.5..=2.0).contains(x)) {
+                        let at = match name.as_str() {
+                            "colour-gamma" => 0,
+                            "colour-saturation" => 1,
+                            _ => 2,
+                        };
+                        theme.colour_custom[at] = Some(x);
+                    }
+                }
                 ("runahead", "off") => theme.runahead = Some(0),
                 ("runahead", v) => {
                     if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {

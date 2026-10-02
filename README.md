@@ -61,7 +61,9 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | **Grid Depth** | How dark the grid's lines are, from 10% to 100% in steps of 10. |
 | **Scaler** | `Pixel AA` (the default) or `Shimmerless`: how game pixels are scaled up. |
 | **Sharpness** | How hard Pixel AA's pixel edges are: `0.5`, `1.0` (the default, and the only one with no shimmer when the screen scrolls), `1.5` or `2.0`. |
+| **Colour Depth** | `Off` (the default), `Rich`, `Deep` or `Custom`: deeper middle tones and fuller colour, after the image-adjustment settings RG35XXSP players use in RetroArch. See below. |
 | **Run-Ahead** | `Off`, `1 Frame` (the default) or `2 Frames`. See below. |
+| **SNES Emulator** | `Snes9x 2005` (the default, fast enough for run-ahead) or `Snes9x` (slower, more accurate). For the next SNES game started. |
 | **About** | Credits (A opens it). |
 
 All of these settings but Date & Time are saved to `System/theme.txt`, so the card remembers them,
@@ -80,6 +82,11 @@ and they're read back from it at startup, so editing the file by hand still work
 | `grid strict` | The same grid, but brightness is never reduced: on white and fully saturated colours the grid fades out instead. |
 | `grid lcd` | The grid as a real backlit LCD draws it: the lines darken every colour by the same amount and nothing is brightened to make up for it, so every colour keeps its place against every other and nothing washes out. The picture is dimmer (about a third at the default depth); turn the brightness up with R2 to make up for it. |
 | `grid-depth 40` | How dark the grid lines are, from `5` (barely there) to `100` (black at their middle). `40` is the default. Try `60` if you can't see the grid at arm's length. With `grid lcd`, deeper also means a dimmer picture. |
+| `colour-depth deep` | The Colour Depth row. `rich` deepens the middle tones as RetroArch's Monitor Gamma 2.0 does and adds a touch of colour; `deep` is Target Gamma 2.5, Saturation 1.10, Contrast 1.05. Black and white stay where they are. |
+| `colour-gamma 1.14` | With `colour-depth custom`: how much darker the middle tones get, as RetroArch's Target Gamma ÷ Monitor Gamma (`1` changes nothing, `2.5 ÷ 2.2` is `1.14`). From `0.5` to `2`. |
+| `colour-saturation 1.1` | With `colour-depth custom`: colour, from `0.5` to `2`. `1` changes nothing. |
+| `colour-contrast 1.05` | With `colour-depth custom`: contrast about mid grey, from `0.5` to `2`. `1` changes nothing. |
+| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `System/selected_core.ini` wins over it. |
 | `boot-picture off` | Start up with BaseOS's own logo instead of the last screen (see below). `boot-picture last` is the default. |
 
 ## Starting where you left off
@@ -204,12 +211,13 @@ SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence all
 shared only for free and non-commercially, with its licence beside it (it ships as
 `System/licenses/snes9x-LICENSE.txt`). ezGBA is free; just don't sell anything with it inside.
 
-**Experiment on this branch:** SNES games run on **snes9x2005_plus** instead, an older and
-lighter snes9x (about twice as fast on the SP) so that a frame of run-ahead fits. Put
-`snes9x2005_plus_libretro.so` in `System/` (from the **slot** workflow's `snes9x2005` artifact,
-with its `licenses/` beside it). Its save states are kept apart from snes9x's, so a game
-suspended on snes9x starts from its last in-game save the first time; battery saves are shared.
-To put one game back on snes9x, add `Game Name = snes9x` to `System/selected_core.ini`.
+SNES games can also run on **snes9x2005_plus**, an older and lighter snes9x (about three
+times as fast on the SP) so that run-ahead fits, and that is the default: choose between the
+two with SNES Emulator in the menu. Put `snes9x2005_plus_libretro.so` in `System/` (from the
+**slot** workflow's `snes9x2005` artifact, with its `licenses/` beside it). Each emulator keeps
+its own save states, so a game suspended on one starts from its last in-game save on the other;
+battery saves are shared. To keep one game on one emulator whatever the menu says, add
+`Game Name = snes9x` (or `snes9x2005_plus`) to `System/selected_core.ini`.
 
 ## Setup
 

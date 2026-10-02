@@ -182,6 +182,52 @@ pub fn grid() -> Grid {
     }
 }
 
+/// Colour depth on the game picture: RetroArch's `image-adjustment` pass, the part of it the
+/// RG35XXSP's players reach for, in its order. Saturation first, scaled the way that pass scales
+/// it (HSV saturation, so each colour moves away from its own brightest channel and the brightest
+/// stays put), then contrast about mid grey, then gamma, as `target ÷ monitor` gamma: above 1
+/// darkens the middle tones and leaves black and white where they were.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Tone {
+    pub gamma: f32,
+    pub saturation: f32,
+    pub contrast: f32,
+}
+
+impl Tone {
+    /// The picture as the core drew it.
+    pub const NEUTRAL: Tone = Tone {
+        gamma: 1.0,
+        saturation: 1.0,
+        contrast: 1.0,
+    };
+}
+
+impl Default for Tone {
+    fn default() -> Self {
+        Tone::NEUTRAL
+    }
+}
+
+static TONE_GAMMA: AtomicU32 = AtomicU32::new(0x3f80_0000);
+static TONE_SATURATION: AtomicU32 = AtomicU32::new(0x3f80_0000);
+static TONE_CONTRAST: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+pub fn set_tone(tone: Tone) {
+    TONE_GAMMA.store(tone.gamma.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
+    TONE_SATURATION.store(tone.saturation.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+    TONE_CONTRAST.store(tone.contrast.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
+}
+
+pub fn tone() -> Tone {
+    let f = |a: &AtomicU32| f32::from_bits(a.load(Ordering::Relaxed));
+    Tone {
+        gamma: f(&TONE_GAMMA),
+        saturation: f(&TONE_SATURATION),
+        contrast: f(&TONE_CONTRAST),
+    }
+}
+
 /// How a console's picture is placed on the panel. The console decides, not the picture: a
 /// GBA follows the card's `picture` setting, a Game Boy is drawn at a whole multiple, a SNES at
 /// the 4:3 its games were made for.

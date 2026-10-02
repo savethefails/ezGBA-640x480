@@ -100,7 +100,9 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Grid Depth",
             "Scaler",
             "Sharpness",
+            "Colour Depth",
             "Run-Ahead",
+            "SNES Emulator",
             "About",
             "Brightness"
         ]
@@ -143,7 +145,12 @@ fn the_values_read_as_the_menu_prints_them() {
             "1.0",
             "1.5",
             "2.0",
-            "Sharp"
+            "Sharp",
+            "Rich",
+            "Deep",
+            "Custom",
+            "Snes9x 2005",
+            "Snes9x"
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);

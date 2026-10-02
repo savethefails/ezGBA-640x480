@@ -121,7 +121,9 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::GridDepth,
         QuickRow::Scaler,
         QuickRow::Sharpness,
+        QuickRow::ColourDepth,
         QuickRow::RunAhead,
+        QuickRow::SnesCore,
         QuickRow::About,
         QuickRow::About,
     ] {
@@ -297,7 +299,7 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 9] = [
+const SELECTABLE: [QuickRow; 11] = [
     QuickRow::DateTime,
     QuickRow::Picture,
     QuickRow::SnesPicture,
@@ -305,7 +307,9 @@ const SELECTABLE: [QuickRow; 9] = [
     QuickRow::GridDepth,
     QuickRow::Scaler,
     QuickRow::Sharpness,
+    QuickRow::ColourDepth,
     QuickRow::RunAhead,
+    QuickRow::SnesCore,
     QuickRow::About,
 ];
 
@@ -647,4 +651,43 @@ fn the_snes_picture_row_chooses_whole_rows_or_4_3() {
         fit_for(Platform::Snes, VideoMode::Actual, SnesPicture::FourThree),
         slot_gfx::Fit::Aspect(4.0 / 3.0)
     );
+}
+
+/// Colour Depth walks its four settings, writes each to the card, and hands the renderer the
+/// numbers it names; SNES Emulator flips between the two cores and writes that too.
+#[test]
+fn colour_depth_and_the_snes_emulator_are_kept_on_the_card() {
+    let (d, mut a, _) = on_carousel();
+    a.apply(Action::QuickMenu);
+    while a.quick_menu() != Some(QuickRow::ColourDepth) {
+        press(&mut a, Btn::Down);
+    }
+    assert_eq!(a.quick_value(QuickRow::ColourDepth), Some(QuickValue::Off));
+    assert_eq!(slot_gfx::tone(), slot_gfx::Tone::NEUTRAL);
+    press(&mut a, Btn::Right);
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::ColourDepth), Some(QuickValue::Deep));
+    let tone = slot_gfx::tone();
+    assert!((tone.gamma - 2.5 / 2.2).abs() < 1e-6);
+    assert_eq!((tone.saturation, tone.contrast), (1.10, 1.05));
+    assert_eq!(
+        slot_store::Theme::read(d.path()).colour_depth,
+        slot_store::ColourDepth::Deep
+    );
+
+    while a.quick_menu() != Some(QuickRow::SnesCore) {
+        press(&mut a, Btn::Down);
+    }
+    assert_eq!(
+        a.quick_value(QuickRow::SnesCore),
+        Some(QuickValue::Snes9x2005)
+    );
+    assert_eq!(a.snes_core(), slot_store::Core::Snes9x2005);
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::SnesCore), Some(QuickValue::Snes9x));
+    assert_eq!(
+        slot_store::Theme::read(d.path()).snes_core,
+        slot_store::Core::Snes9x
+    );
+    slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
 }

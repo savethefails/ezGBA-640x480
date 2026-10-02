@@ -644,11 +644,11 @@ impl Session {
         let core = match platform {
             Platform::Gba => slot_store::core_for(&self.root, stem),
             Platform::Gb | Platform::Gbc => Core::Mgba,
-            // snes9x2005 unless the cart's line asks for snes9x: the faster core is what lets
-            // run-ahead fit in a SNES frame on the SP. A GBA core named there is ignored.
+            // The cart's own line if it names a SNES core, else the quick menu's SNES Emulator.
+            // A GBA core named there is ignored, as on a Game Boy cart.
             Platform::Snes => match slot_store::core_for(&self.root, stem) {
-                Core::Snes9x => Core::Snes9x,
-                _ => Core::Snes9x2005,
+                c @ (Core::Snes9x | Core::Snes9x2005) => c,
+                _ => self.app.snes_core(),
             },
         };
         self.app.set_core(core);

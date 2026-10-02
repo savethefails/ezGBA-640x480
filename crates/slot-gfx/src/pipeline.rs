@@ -38,6 +38,7 @@ pub struct GamePass {
     u_gap: gl::types::GLint,
     u_keep: gl::types::GLint,
     u_even: gl::types::GLint,
+    u_tone: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -73,6 +74,7 @@ impl GamePass {
             u_gap,
             u_keep,
             u_even,
+            u_tone,
         );
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
@@ -96,6 +98,7 @@ impl GamePass {
             u_gap = crate::gl::uniform_location(prog, "u_gap");
             u_keep = crate::gl::uniform_location(prog, "u_keep");
             u_even = crate::gl::uniform_location(prog, "u_even");
+            u_tone = crate::gl::uniform_location(prog, "u_tone");
         }
         Ok(GamePass {
             prog,
@@ -112,6 +115,7 @@ impl GamePass {
             u_gap,
             u_keep,
             u_even,
+            u_tone,
             grille: true,
             power: 1.0,
             size: (SRC_W, SRC_H),
@@ -219,6 +223,8 @@ impl GamePass {
             gl::Uniform2f(self.u_gap, grid.gap[0], grid.gap[1]);
             gl::Uniform1f(self.u_keep, grid.keep);
             gl::Uniform1f(self.u_even, if grid.even { 1.0 } else { 0.0 });
+            let tone = crate::surface::tone();
+            gl::Uniform3f(self.u_tone, tone.gamma, tone.saturation, tone.contrast);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);
