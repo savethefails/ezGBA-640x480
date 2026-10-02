@@ -584,7 +584,9 @@ impl Session {
         }
         let stem = match self.app.phase() {
             Phase::Shelf => {
-                self.emu = None;
+                if self.emu.take().is_some() {
+                    crate::latency::note("game: back on the shelf");
+                }
                 return;
             }
             Phase::Inserting { cart, .. } => cart.clone(),
@@ -685,6 +687,10 @@ impl Session {
         emu.set_volume(self.app.output_volume());
         self.app.set_snapshot(Box::new(emu.snapshot()));
         self.emu = Some(emu);
+        crate::latency::note(&format!(
+            "game: {stem} started, run-ahead {}",
+            self.app.runahead()
+        ));
     }
 
     /// Loads the seated game again with `serial`, carrying on from where it is. Durable first,

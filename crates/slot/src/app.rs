@@ -1990,6 +1990,10 @@ impl App {
             }
             QuickRow::RunAhead => {
                 self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
+                crate::latency::note(&format!(
+                    "settings: run-ahead set to {}, for the next game started",
+                    self.look.runahead
+                ));
                 ("runahead", self.look.runahead.to_string())
             }
             QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
