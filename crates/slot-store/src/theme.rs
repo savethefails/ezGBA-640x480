@@ -173,7 +173,7 @@ impl Default for Theme {
 impl Theme {
     /// Best effort. A missing file is the default theme, not an error.
     pub fn read(root: &Path) -> Self {
-        match std::fs::read_to_string(root.join("System").join(THEME_FILE)) {
+        match std::fs::read_to_string(root.join(crate::CONFIG_DIR).join(THEME_FILE)) {
             Ok(text) => Self::parse(&text),
             Err(_) => Theme::default(),
         }
@@ -270,7 +270,7 @@ impl Theme {
 /// gets one with just that line. Written whole and renamed into place, so a card pulled
 /// mid-write keeps the old file rather than half of the new one.
 pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Result<()> {
-    let dir = root.join("System");
+    let dir = root.join(crate::CONFIG_DIR);
     let path = dir.join(THEME_FILE);
     let old = std::fs::read_to_string(&path).unwrap_or_default();
     let line = format!("{name} {value}");

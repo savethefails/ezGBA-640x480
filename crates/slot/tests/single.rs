@@ -45,7 +45,7 @@ fn one_cart_ejects_to_the_settings_unless_the_menu_is_off() {
     );
 
     let d = tmp_root_with_carts(&["Emerald"]);
-    std::fs::write(d.path().join("System/theme.txt"), "menu off\n").unwrap();
+    std::fs::write(d.path().join("Config/theme.txt"), "menu off\n").unwrap();
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::Eject);
     assert!(

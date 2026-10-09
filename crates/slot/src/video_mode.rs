@@ -25,7 +25,7 @@ use slot_store::{ini, Platform, SnesPicture};
 /// `GBC/Tetris.gbc` share a line. Deliberately: it is a two-value cosmetic preference that
 /// cannot lose anybody's data, and the worst it can do is open a Colour cart stretched because
 /// its same-named sibling was.
-pub const VIDEO_MODE_FILE: &str = "System/video_mode.ini";
+pub const VIDEO_MODE_FILE: &str = "Config/video_mode.ini";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum VideoMode {

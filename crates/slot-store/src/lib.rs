@@ -1,4 +1,5 @@
 mod atomic;
+mod config;
 mod core;
 pub mod gb;
 mod gba;
@@ -12,6 +13,7 @@ mod stamp;
 mod theme;
 
 pub use atomic::atomic_write;
+pub use config::{move_config, CONFIG_DIR};
 pub use core::{core_for, read_selected_cores, write_selected_core, Core, SELECTED_CORE_FILE};
 pub use gba::{header_clean, header_code, header_title};
 pub use migrate::{migrate_platforms, migrate_states, MigrationReport};

@@ -144,7 +144,7 @@ impl Default for SlotState {
 }
 
 fn state_path(root: &Path) -> PathBuf {
-    root.join("System").join("slot.state")
+    root.join(crate::CONFIG_DIR).join("slot.state")
 }
 
 pub fn read_slot_state(root: &Path) -> SlotState {
@@ -175,7 +175,12 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.shelf_platform.map_or(String::new(), platform_key),
         s.wallpaper.as_deref().unwrap_or(""),
     );
-    atomic_write(&state_path(root), text.as_bytes())
+    let path = state_path(root);
+    // `Config/` is new to cards from before it, and is not worth a lost cart over.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    atomic_write(&path, text.as_bytes())
 }
 
 /// The lines every build has written are all or nothing. A file missing one of those, or

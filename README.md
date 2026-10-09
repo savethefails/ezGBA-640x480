@@ -41,7 +41,7 @@ ezGBA is built on [slot.](https://github.com/BrandonKowalski/slot). Here's what 
 - **One tap of MENU saves and ejects.** slot. needs MENU held for about a second.
 - **The game's box art floats above its cart.** Scroll to a game and see its cover, so you
   can find games by picture.
-- **Your own colors.** Give each console its own background color in `System/theme.txt`.
+- **Your own colors.** Give each console its own background color in `Config/theme.txt`.
 - **12-hour clock.** Shows `4:39 PM`, not `16:39`.
 - **A tiny settings menu.** Just Date & Time and About. Nothing in it can mess anything up.
 
@@ -66,10 +66,10 @@ Tap **MENU** on the shelf for the settings. Up and Down pick a row; Left and Rig
 | **SNES Emulator** | `Snes9x 2005` (the default, fast enough for run-ahead) or `Snes9x` (slower, more accurate). For the next SNES game started. |
 | **About** | Credits (A opens it). |
 
-All of these settings but Date & Time are saved to `System/theme.txt`, so the card remembers them,
+All of these settings but Date & Time are saved to `Config/theme.txt`, so the card remembers them,
 and they're read back from it at startup, so editing the file by hand still works.
 
-`System/theme.txt` holds a few more options that aren't in the menu:
+`Config/theme.txt` holds a few more options that aren't in the menu:
 
 | Line | What it does |
 |---|---|
@@ -86,7 +86,7 @@ and they're read back from it at startup, so editing the file by hand still work
 | `colour-gamma 1.14` | With `colour-depth custom`: how much darker the middle tones get, as RetroArch's Target Gamma ÷ Monitor Gamma (`1` changes nothing, `2.5 ÷ 2.2` is `1.14`). From `0.5` to `2`. |
 | `colour-saturation 1.1` | With `colour-depth custom`: colour, from `0.5` to `2`. `1` changes nothing. |
 | `colour-contrast 1.05` | With `colour-depth custom`: contrast about mid grey, from `0.5` to `2`. `1` changes nothing. |
-| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `System/selected_core.ini` wins over it. |
+| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `Config/selected_core.ini` wins over it. |
 | `boot-picture off` | Start up with BaseOS's own logo instead of the last screen (see below). `boot-picture last` is the default. |
 
 ## Starting where you left off
@@ -130,7 +130,7 @@ the SP needs to start, so slot writes to it as carefully as it can:
 - It finds the partition by name, on the card the system booted from, and only on BaseOS.
   If it can't tell which partition is the right one, it does nothing.
 - Before the first time, it copies BaseOS's logo to `System/bootlogo-baseos.bmp` on your card.
-  `boot-picture off` in `System/theme.txt` puts it back at the next power off and stops the
+  `boot-picture off` in `Config/theme.txt` puts it back at the next power off and stops the
   screenshots. Keep that file: without it the original logo can only come back by
   reflashing BaseOS.
 - It never holds up the power off: anything that goes wrong is logged to `/tmp/slot.log`
@@ -147,7 +147,7 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
 - **The shelf, menus, clock and About label are laid out for 640×480**, pixel for pixel.
 - **The game fills the whole screen.** The GBA is a little wider than 4:3, so games look
   about 11% narrower than on a real GBA. To keep the GBA's exact shape instead, add
-  `picture 3:2` to `System/theme.txt`: the game is then 640×427, with thin black bars above
+  `picture 3:2` to `Config/theme.txt`: the game is then 640×427, with thin black bars above
   and below.
 - **Sharp pixels, no shimmer.** 240 doesn't go into 640 a whole number of times, so each game
   pixel is 2 or 3 screen pixels wide. The picture is scaled with Pixel AA, the RetroArch
@@ -155,7 +155,7 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   mixing them as light rather than as numbers, so edges keep their weight and scrolling
   doesn't shimmer. Down the screen, 4:3 is exactly 3 rows per game pixel, so nothing is
   blended at all.
-- **An optional LCD grid made for this screen.** `grid on` in `System/theme.txt` draws evenly
+- **An optional LCD grid made for this screen.** `grid on` in `Config/theme.txt` draws evenly
   spaced lines between the pixels, with each pixel brightened to make up for them. It's
   off unless you turn it on.
 - **Game Boy and Game Boy Color games are exactly 3×**: 480×432, every pixel three screen
@@ -164,7 +164,7 @@ Everything is drawn for 640×480 directly, not made for another screen and shrun
   512×448 hi-res mode): 640×448, with a thin bar above and below. Stretched to the full 480,
   rows would come out 2 or 3 screen rows tall, and a one-pixel outline on a letter could thin
   out or blend away; this way every line is kept. It's within 7% of the 4:3 TV shape. Set
-  SNES Picture to `4:3` in the menu, or `snes-picture 4:3` in `System/theme.txt`, for the
+  SNES Picture to `4:3` in the menu, or `snes-picture 4:3` in `Config/theme.txt`, for the
   whole screen instead. SNES games take no LCD grid, since a TV has none.
 
 ## Responsive controls
@@ -177,7 +177,7 @@ takes both down:
   see is where the game will be a frame later, so a frame of the game's own lag is gone. It
   costs one extra frame of emulation and a save and load, every frame. If a game is too heavy
   for that, ezGBA switches run-ahead off for it by itself and plays it normally. Set it in the
-  menu, or with `runahead 0`, `1` or `2` in `System/theme.txt`. Two frames removes more lag
+  menu, or with `runahead 0`, `1` or `2` in `Config/theme.txt`. Two frames removes more lag
   but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
   always off in a link session.
 - **In step with the screen.** The emulator runs each frame right after the buttons are read
@@ -217,7 +217,7 @@ two with SNES Emulator in the menu. Put `snes9x2005_plus_libretro.so` in `System
 **slot** workflow's `snes9x2005` artifact, with its `licenses/` beside it). Each emulator keeps
 its own save states, so a game suspended on one starts from its last in-game save on the other;
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
-`Game Name = snes9x` (or `snes9x2005_plus`) to `System/selected_core.ini`.
+`Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.ini`.
 
 ## Setup
 
@@ -244,8 +244,10 @@ battery saves are shared. To keep one game on one emulator whatever the menu say
 On a card that's already set up, only `System/slot` changes between builds. The **slot**
 workflow builds just that file on every push to this repo, in a couple of minutes. Open the
 latest **slot** run under Actions, download the artifact at the bottom, unzip it, and copy
-`slot` into the card's `System` folder, replacing the old one. Your saves, `theme.txt` and
-settings are left alone.
+`slot` into the card's `System` folder, replacing the old one. Your saves and settings are left
+alone: settings live in `Config/`, so even replacing the whole `System` folder doesn't touch
+them. A card from an older build keeps its settings in `System/`; they move to `Config/` by
+themselves on the first boot of this one.
 
 The **release** workflow builds the whole card, with all three emulators, for setting up a new
 card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as

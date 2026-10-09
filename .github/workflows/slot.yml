@@ -57,7 +57,7 @@ jobs:
         run: file target-device/device/slot | grep -q aarch64
 
       # The bare file, not a System folder around it: copied as a folder, a Mac's Replace would
-      # delete the System folder on the card first, cores, theme.txt and slot.state with it.
+      # delete the System folder on the card first, and the cores with it.
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.NAME }}

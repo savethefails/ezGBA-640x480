@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-pub const SELECTED_CORE_FILE: &str = "System/selected_core.ini";
+pub const SELECTED_CORE_FILE: &str = "Config/selected_core.ini";
 
 /// Which emulator runs a cart. mGBA is the whole product's default; gpSP exists for the
 /// serial hardware mGBA's libretro build does not carry.

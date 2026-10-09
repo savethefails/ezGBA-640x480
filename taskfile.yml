@@ -155,7 +155,7 @@ tasks:
       ROOT: '{{.ROOT | default "./sdcard"}}'
     cmds:
       - ./target/debug/slot --init-root {{.ROOT}}
-      - 'echo "content root ready at {{.ROOT}}: roms in Games/GBA, Games/GB or Games/GBC, labels in the matching Labels/GBA, Labels/GB or Labels/GBC, gba_bios.bin in BIOS, pngs in Wallpapers, palette in System/theme.txt"'
+      - 'echo "content root ready at {{.ROOT}}: roms in Games/GBA, Games/GB or Games/GBC, labels in the matching Labels/GBA, Labels/GB or Labels/GBC, gba_bios.bin in BIOS, pngs in Wallpapers, palette in Config/theme.txt"'
 
   run:
     desc: >-
@@ -361,7 +361,7 @@ tasks:
   dist:device:
     desc: Build the SD2 tree for an H700 device, OUT defaults to ./dist-device
     # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
-    # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
+    # Core, so a card naming gpsp in Config/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
     deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, build:device]
     vars:
