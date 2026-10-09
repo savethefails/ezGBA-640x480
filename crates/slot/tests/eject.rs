@@ -137,7 +137,11 @@ fn write_sav_writes_a_shorter_save() {
 fn write_sav_writes_a_shorter_save_over_an_srm() {
     let d = tmp_root_with_carts(&["Emerald"]);
     std::fs::create_dir_all(d.path().join("Saves/GBA")).unwrap();
-    std::fs::write(d.path().join("Saves/GBA/Emerald.srm"), vec![0xEEu8; 131_072]).unwrap();
+    std::fs::write(
+        d.path().join("Saves/GBA/Emerald.srm"),
+        vec![0xEEu8; 131_072],
+    )
+    .unwrap();
 
     let small = vec![0x11u8; 8_192];
     assert!(slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &small).unwrap());
