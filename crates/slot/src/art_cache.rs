@@ -1,11 +1,12 @@
-//! Label and backdrop art kept on the card already scaled, so a boot or a turn of the shelf
-//! reads raw pixels back instead of decoding a PNG and box-filtering it down every time.
+//! Label art and box art kept on the card already scaled, so a boot or a turn of the shelf
+//! reads raw pixels back instead of decoding a PNG and resampling it every time.
 //!
-//! Each entry is the RGBA at the size it is drawn, behind a 24-byte header: the source's
-//! length and modification time, then the width and height it was scaled to. An entry whose
-//! source has since changed, or that was scaled for a different size, is stale and is
-//! rebuilt from the source. A source the decoder refused is remembered as a header with a
-//! 0 x 0 size, so it is not decoded again on every boot either.
+//! Each entry is the RGBA at the size it is drawn, behind a 32-byte header: the source's length
+//! and modification time, the size it was asked to fit, and the size it came out at (box art
+//! keeps its own shape, so that is the source's business, not the caller's). An entry whose
+//! source has since changed, or that was fitted to a different size, is stale and is rebuilt
+//! from the source. A source the decoder refused is remembered as a header with a 0 x 0 size,
+//! so it is not decoded again on every boot either.
 //!
 //! The cache is only ever a copy: deleting `System/Cache` costs one slow boot and nothing else.
 
@@ -13,30 +14,35 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use slot_store::Cart;
-use slot_ui::{cover, label_size, OUT_H, OUT_W};
+use slot_ui::{contain, cover, label_size};
 
 const DIR: &str = "System/Cache";
-const HEAD: usize = 24;
+const HEAD: usize = 32;
+
+/// Scaled art and the size it came out at.
+pub type Art = (Vec<u8>, u32, u32);
 
 /// `cart`'s label art at `label_size`, or `None` for a cart with no label (or one that cannot
 /// be read), which then gets the generated label.
 pub fn label_art(root: &Path, cart: &Cart) -> Option<Vec<u8>> {
     let (w, h) = label_size(cart);
+    let scale = |src: &Path| cover(src, w, h).map(|rgba| (rgba, w, h));
     cached(
         cart.label.as_deref()?,
         &cache_path(root, "Labels", cart),
-        w,
-        h,
+        (w, h),
+        scale,
     )
+    .map(|(rgba, _, _)| rgba)
 }
 
-/// `cart`'s backdrop, scaled to cover the whole screen.
-pub fn backdrop_art(root: &Path, cart: &Cart) -> Option<Vec<u8>> {
+/// `cart`'s box art, fitted inside `bound` with its own shape kept.
+pub fn box_art(root: &Path, cart: &Cart, bound: (u32, u32)) -> Option<Art> {
     cached(
-        cart.backdrop.as_deref()?,
-        &cache_path(root, "Backdrops", cart),
-        OUT_W,
-        OUT_H,
+        cart.box_art.as_deref()?,
+        &cache_path(root, "Images", cart),
+        bound,
+        |src| contain(src, bound.0, bound.1),
     )
 }
 
@@ -47,19 +53,26 @@ pub fn cache_path(root: &Path, kind: &str, cart: &Cart) -> PathBuf {
         .join(format!("{}.rgba", cart.stem))
 }
 
-fn cached(src: &Path, entry: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
+fn cached(
+    src: &Path,
+    entry: &Path,
+    bound: (u32, u32),
+    scale: impl FnOnce(&Path) -> Option<Art>,
+) -> Option<Art> {
     let stamp = stamp(src)?;
-    if let Some(art) = read(entry, stamp, w, h) {
+    if let Some(art) = read(entry, stamp, bound) {
         return art;
     }
-    let art = cover(src, w, h);
-    let (cw, ch) = if art.is_some() { (w, h) } else { (0, 0) };
-    let mut bytes = Vec::with_capacity(HEAD + art.as_ref().map_or(0, Vec::len));
+    let art = scale(src);
+    let (w, h) = art.as_ref().map_or((0, 0), |(_, w, h)| (*w, *h));
+    let body = art.as_ref().map_or(&[][..], |(rgba, _, _)| rgba.as_slice());
+    let mut bytes = Vec::with_capacity(HEAD + body.len());
     bytes.extend_from_slice(&stamp.0.to_le_bytes());
     bytes.extend_from_slice(&stamp.1.to_le_bytes());
-    bytes.extend_from_slice(&cw.to_le_bytes());
-    bytes.extend_from_slice(&ch.to_le_bytes());
-    bytes.extend_from_slice(art.as_deref().unwrap_or_default());
+    for half in [bound.0, bound.1, w, h] {
+        bytes.extend_from_slice(&half.to_le_bytes());
+    }
+    bytes.extend_from_slice(body);
     if let Err(e) = write(entry, &bytes) {
         eprintln!("slot: art cache: {}: {e}", entry.display());
     }
@@ -89,27 +102,23 @@ fn stamp(src: &Path) -> Option<(u64, u64)> {
 
 /// `Some(Some(art))` for a fresh entry, `Some(None)` for a fresh record of a source the decoder
 /// refused, `None` for an entry that is missing or stale.
-fn read(entry: &Path, stamp: (u64, u64), w: u32, h: u32) -> Option<Option<Vec<u8>>> {
+fn read(entry: &Path, stamp: (u64, u64), bound: (u32, u32)) -> Option<Option<Art>> {
     let mut bytes = std::fs::read(entry).ok()?;
     if bytes.len() < HEAD {
         return None;
     }
     let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap_or_default());
     let half = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap_or_default());
-    if (word(0), word(8)) != stamp {
+    if (word(0), word(8)) != stamp || (half(16), half(20)) != bound {
         return None;
     }
-    let body = match (half(16), half(20)) {
-        (0, 0) => 0,
-        size if size == (w, h) => (w * h * 4) as usize,
-        _ => return None,
-    };
-    if bytes.len() != HEAD + body {
+    let (w, h) = (half(24), half(28));
+    if w > bound.0 || h > bound.1 || bytes.len() != HEAD + (w * h * 4) as usize {
         return None;
     }
-    if body == 0 {
+    if w == 0 || h == 0 {
         return Some(None);
     }
     bytes.drain(..HEAD);
-    Some(Some(bytes))
+    Some(Some((bytes, w, h)))
 }

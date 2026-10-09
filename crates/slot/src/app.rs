@@ -12,8 +12,8 @@ use slot_store::{
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, ClockPicker, Draw,
-    FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
+    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, ClockPicker,
+    Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
     QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast,
     BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
     SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
@@ -130,12 +130,11 @@ const LID_SHADOW_ALPHA: f32 = 0.8;
 
 /// How far the row is pushed down from its old dead-centre rest position, everywhere
 /// the row is drawn: the idle shelf, the core picker, and the insert/eject travel all
-/// pass this same constant. A full-height backdrop and a full-height row used to share
-/// the same middle of the screen, which put the row directly over whatever a box art
-/// backdrop shows there - usually its own title. Passing it everywhere rather than only
-/// on the shelf is what stops the row snapping to a different height the instant a cart
-/// goes in or comes back out.
-const SHELF_ROW_LOWER: f32 = 100.0;
+/// pass this same constant. Lowered, it leaves the top of the screen to the selected cart's
+/// box art (see `box_art`), which is fitted to the space this leaves. Passing it everywhere
+/// rather than only on the shelf is what stops the row snapping to a different height the
+/// instant a cart goes in or comes back out.
+pub const SHELF_ROW_LOWER: f32 = 100.0;
 /// The longest the cart stands on the shelf waiting for its faces before it opens anyway, so a
 /// face that never comes cannot freeze the picker. A fast scroll can leave the worker still
 /// finishing the cart it was already building before it starts on this one, so the cap has to
@@ -1200,18 +1199,18 @@ impl App {
         }
     }
 
-    /// The carts whose backdrops should be ready, selection first: it and `backdrops::AHEAD`
-    /// either side of it on the active shelf, those that have a backdrop at all.
-    pub fn backdrop_wants(&self) -> Vec<crate::backdrops::Key> {
+    /// The carts whose box art should be ready, selection first: it and `box_art::AHEAD` either
+    /// side of it on the active shelf, those that have box art at all.
+    pub fn box_art_wants(&self) -> Vec<crate::box_art::Key> {
         let Some((_, shelf)) = self.shelves.get(self.shelf_at) else {
             return Vec::new();
         };
         let mut wants = Vec::new();
-        for step in 0..=crate::backdrops::AHEAD {
+        for step in 0..=crate::box_art::AHEAD {
             for off in [step, -step] {
                 if let Some(i) = shelf.cart_at_offset(off) {
                     let key = (self.shelf_at, i);
-                    if shelf.carts[i].backdrop.is_some() && !wants.contains(&key) {
+                    if shelf.carts[i].box_art.is_some() && !wants.contains(&key) {
                         wants.push(key);
                     }
                 }
@@ -1220,39 +1219,57 @@ impl App {
         wants
     }
 
-    pub fn backdrop_cart(&self, (shelf, i): crate::backdrops::Key) -> Option<&Cart> {
+    pub fn box_art_cart(&self, (shelf, i): crate::box_art::Key) -> Option<&Cart> {
         self.shelves.get(shelf)?.1.carts.get(i)
     }
 
-    pub fn backdrop_loaded(&self, (shelf, i): crate::backdrops::Key) -> bool {
+    pub fn box_art_loaded(&self, (shelf, i): crate::box_art::Key) -> bool {
         self.shelves
             .get(shelf)
-            .is_some_and(|(_, s)| s.backdrop(i).is_some())
+            .is_some_and(|(_, s)| s.box_art(i).is_some())
     }
 
-    /// Hands a cart its backdrop, and back any it had.
-    pub fn set_backdrop(&mut self, (shelf, i): crate::backdrops::Key, tex: TexId) -> Option<TexId> {
-        self.shelves.get_mut(shelf)?.1.set_backdrop(i, tex)
+    /// Hands a cart its box art, and back the texture it had, if any.
+    pub fn set_box_art(&mut self, (shelf, i): crate::box_art::Key, art: BoxArt) -> Option<TexId> {
+        self.shelves.get_mut(shelf)?.1.set_box_art(i, art)
     }
 
-    /// Takes back every backdrop not in `keep`, for reuse.
-    pub fn shed_backdrops(&mut self, keep: &[crate::backdrops::Key]) -> Vec<TexId> {
+    /// Takes back every box art texture not in `keep`, for reuse.
+    pub fn shed_box_art(&mut self, keep: &[crate::box_art::Key]) -> Vec<TexId> {
         let mut shed = Vec::new();
         for (at, (_, shelf)) in self.shelves.iter_mut().enumerate() {
             for i in 0..shelf.carts.len() {
                 if !keep.contains(&(at, i)) {
-                    shed.extend(shelf.take_backdrop(i));
+                    shed.extend(shelf.take_box_art(i));
                 }
             }
         }
         shed
     }
 
-    /// The backdrop for whichever cart the active shelf has selected, if it has one of its
-    /// own. `None` falls back to the ordinary random wallpaper, which is what a shelf with
-    /// no shelves at all (an empty card) also gets.
-    pub fn current_backdrop(&self) -> Option<TexId> {
-        self.shelves.get(self.shelf_at)?.1.current_backdrop()
+    /// The selected cart's box art, floating in the space over the row, at `alpha`. Nothing
+    /// when it has none or it is not loaded yet.
+    fn draw_box_art(&self, alpha: f32, out: &mut Vec<Draw>) {
+        let Some((_, shelf)) = self.shelves.get(self.shelf_at) else {
+            return;
+        };
+        let (Some((tex, w, h)), Some(cart)) =
+            (shelf.current_box_art(), shelf.carts.get(shelf.index))
+        else {
+            return;
+        };
+        if alpha <= 0.0 {
+            return;
+        }
+        let (x, y) = crate::box_art::place(cart, w, h);
+        out.push(Draw::Tex {
+            x,
+            y,
+            w: w as f32,
+            h: h as f32,
+            tex,
+            alpha,
+        });
     }
 
     /// Handed over when the core is spawned, which is on the way into the slot.
@@ -2854,7 +2871,12 @@ impl App {
             }
             .draw(out),
             Phase::Shelf => {
-                draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                draw_backdrop(self.wallpaper, out);
+                // Out of the way of the lid, which lifts into the same space.
+                let open = self
+                    .core_picker_shown()
+                    .map_or(0.0, |picker| ease(picker.openness(self.now())));
+                self.draw_box_art(1.0 - open, out);
                 match (self.core_picker_shown(), self.selected_stem()) {
                     // The highlighted cart is the picker's to draw while its lid is off, and the
                     // rest of the row makes way for it the way it does for a cart going in.
@@ -2904,7 +2926,9 @@ impl App {
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
                 if !resumed {
-                    draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                    draw_backdrop(self.wallpaper, out);
+                    // Gone by the time the cart is in, the way the row recedes.
+                    self.draw_box_art(1.0 - self.seat(), out);
                     self.shelf()
                         .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);
                 }
@@ -2915,7 +2939,8 @@ impl App {
             // other way. Darkening on the way out as well as on the way in was the screen
             // playing the same movement twice rather than reversing it.
             Phase::Ejecting { cart, .. } => {
-                draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                draw_backdrop(self.wallpaper, out);
+                self.draw_box_art(1.0 - self.seat(), out);
                 self.shelf()
                     .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);
                 self.chrome(cart, self.seat(), out);

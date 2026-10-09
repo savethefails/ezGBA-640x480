@@ -53,15 +53,48 @@ const REPEAT_DELAY_MS: Millis = 400;
 /// stop on one.
 const REPEAT_MS: Millis = 110;
 
+/// Box art keeps this far from the top of the screen and from the sides.
+const BOX_ART_MARGIN: f32 = 8.0;
+const BOX_ART_SIDE: f32 = 16.0;
+/// And this far above the top of the selected cart, so the two read as separate objects.
+const BOX_ART_GAP: f32 = 10.0;
+
+/// The space box art has over a selected cart of `platform` on a row lowered by `lower`: from
+/// just under the top of the screen to just over the cart, the width of the screen less its
+/// sides, as `(x, y, w, h)`. A Game Boy pak stands taller than a GBA cart, so it leaves less.
+pub fn box_art_space(platform: Platform, lower: f32) -> (f32, f32, f32, f32) {
+    let (_, ch) = cart_box(platform);
+    let cart_top = rest_y(ch as f32) + lower;
+    let h = (cart_top - BOX_ART_GAP - BOX_ART_MARGIN).max(1.0);
+    (
+        BOX_ART_SIDE,
+        BOX_ART_MARGIN,
+        OUT_W as f32 - 2.0 * BOX_ART_SIDE,
+        h,
+    )
+}
+
+/// Art of `w` by `h`, scaled to fit `space`, centred in it, as `(x, y)`.
+pub fn box_art_at(space: (f32, f32, f32, f32), w: u32, h: u32) -> (f32, f32) {
+    let (x, y, sw, sh) = space;
+    (
+        (x + (sw - w as f32) / 2.0).round(),
+        (y + (sh - h as f32) / 2.0).round(),
+    )
+}
+
+/// A cart's box art on the GPU, and the size it was scaled to.
+pub type BoxArt = (TexId, u32, u32);
+
 pub struct Shelf {
     pub carts: Vec<Cart>,
     pub index: usize,
     pub scroll: f32,
     faces: Vec<TexId>,
-    /// One background per cart, in the same order as `carts`. `None` where a cart has no
-    /// dedicated backdrop of its own, which falls back to the ordinary random one, and for one
-    /// that has but is not loaded: only those around the selection are.
-    backdrops: Vec<Option<TexId>>,
+    /// One picture per cart, in the same order as `carts`, with the size it was scaled to.
+    /// `None` where a cart has no box art, and for one that has but is not loaded: only those
+    /// around the selection are.
+    box_art: Vec<Option<BoxArt>>,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture per *mould* rather
     /// than one for the row: a row can hold GBA carts or Game Boy paks, the two Game Pak shells
     /// differ at their top corners, and all three are different objects. Backing of the wrong
@@ -89,7 +122,7 @@ impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
             shells: carts.iter().map(gb_shell_of).collect(),
-            backdrops: vec![None; carts.len()],
+            box_art: vec![None; carts.len()],
             carts,
             index: 0,
             scroll: 0.0,
@@ -140,22 +173,28 @@ impl Shelf {
         self.faces = faces;
     }
 
-    /// Hands cart `i` its backdrop, and back the one it had, if any.
-    pub fn set_backdrop(&mut self, i: usize, tex: TexId) -> Option<TexId> {
-        self.backdrops.get_mut(i).and_then(|b| b.replace(tex))
+    /// Hands cart `i` its box art, and back the texture it had, if any.
+    pub fn set_box_art(&mut self, i: usize, art: BoxArt) -> Option<TexId> {
+        self.box_art
+            .get_mut(i)
+            .and_then(|b| b.replace(art))
+            .map(|(tex, _, _)| tex)
     }
 
-    pub fn take_backdrop(&mut self, i: usize) -> Option<TexId> {
-        self.backdrops.get_mut(i).and_then(Option::take)
+    pub fn take_box_art(&mut self, i: usize) -> Option<TexId> {
+        self.box_art
+            .get_mut(i)
+            .and_then(Option::take)
+            .map(|(tex, _, _)| tex)
     }
 
-    pub fn backdrop(&self, i: usize) -> Option<TexId> {
-        self.backdrops.get(i).copied().flatten()
+    pub fn box_art(&self, i: usize) -> Option<BoxArt> {
+        self.box_art.get(i).copied().flatten()
     }
 
-    /// The backdrop for whichever cart is currently selected, if it has one of its own.
-    pub fn current_backdrop(&self) -> Option<TexId> {
-        self.backdrops.get(self.index).copied().flatten()
+    /// The box art for whichever cart is currently selected, if it is loaded.
+    pub fn current_box_art(&self) -> Option<BoxArt> {
+        self.box_art(self.index)
     }
 
     /// In `hints` order.

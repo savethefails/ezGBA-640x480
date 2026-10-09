@@ -22,7 +22,7 @@ use slot_ui::{
 
 use crate::app::{App, LinkRow, Phase};
 use crate::art_cache::label_art;
-use crate::backdrops::Backdrops;
+use crate::box_art::BoxArtLoader;
 use crate::build_info::Build;
 use crate::face_builder::FaceBuilder;
 use crate::link_art_builder::LinkArtBuilder;
@@ -64,8 +64,8 @@ pub struct Frontend {
     title_tex: Option<TexId>,
     /// Builds the open cart's faces off the frame loop.
     faces: FaceBuilder,
-    /// Loads the backdrops around the selection off the frame loop.
-    backdrops: Backdrops,
+    /// Loads the box art around the selection off the frame loop.
+    box_art: BoxArtLoader,
     /// Builds the link screen's artwork off the frame loop, once, at boot.
     link_art: LinkArtBuilder,
     /// Whether the link art has been uploaded and handed to `App` already.
@@ -136,7 +136,7 @@ struct Switcher {
 impl Frontend {
     pub fn boot(platform: Box<dyn Platform>) -> Self {
         let now = Instant::now();
-        let backdrops = Backdrops::spawn(platform.root().to_path_buf());
+        let box_art = BoxArtLoader::spawn(platform.root().to_path_buf());
         let mut session = Session::boot(platform.root().to_path_buf());
         session
             .app_mut()
@@ -149,7 +149,7 @@ impl Frontend {
             polaroid_texes: Vec::new(),
             title_tex: None,
             faces: FaceBuilder::spawn(),
-            backdrops,
+            box_art,
             link_art: LinkArtBuilder::spawn(),
             link_art_done: false,
             core_asked: None,
@@ -195,7 +195,7 @@ impl Frontend {
                 self.session.app_mut().set_boot_still(tex);
             }
         }
-        self.backdrops
+        self.box_art
             .sync_selected(self.session.app_mut(), compositor);
         let icons = Icon::ALL
             .iter()
@@ -372,10 +372,6 @@ impl Frontend {
         self.upload_wallpaper(compositor);
     }
 
-    /// One decode per cart with its own `Backdrops` picture, at boot alongside every other
-    /// face. A cart with no picture of its own, no readable one, or one the decoder will
-    /// not take gets `None` here and falls back to the random wallpaper at draw time -
-    /// exactly the fallback a card with no `Backdrops` folder at all gets for every cart.
     /// One decode, at boot. A card with no `Wallpapers`, no readable picture in it, or a
     /// picture the decoder will not take, gets the plain ground it had before.
     fn upload_wallpaper(&mut self, compositor: &mut Compositor) {
@@ -446,7 +442,7 @@ impl Frontend {
             compositor.upload_game(&frame, frame.size());
             crate::latency::drawn();
         }
-        self.backdrops.sync(self.session.app_mut(), compositor);
+        self.box_art.sync(self.session.app_mut(), compositor);
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
         sync_about(self.session.app_mut(), compositor, &mut self.about);
         sync_greeting(self.session.app_mut(), compositor, &mut self.greeting);

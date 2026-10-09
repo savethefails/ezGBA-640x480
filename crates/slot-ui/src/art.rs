@@ -27,6 +27,58 @@ pub fn cover(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Decodes `path` and returns RGBA scaled to fit inside `max_w` by `max_h` with its own shape
+/// kept, and the size it came out at. Box art is every shape there is (a GBA box is about
+/// square, a SNES one wide, a title screen 4:3) and none of it may be cropped or squashed.
+/// Shrunk by averaging, grown by blending neighbours: art smaller than the space is common
+/// enough that blocks would be the usual look rather than the exception.
+pub fn contain(path: &Path, max_w: u32, max_h: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let (src, sw, sh) = decode(path)?;
+    if sw == 0 || sh == 0 || max_w == 0 || max_h == 0 {
+        return None;
+    }
+    let scale = (max_w as f32 / sw as f32).min(max_h as f32 / sh as f32);
+    let w = ((sw as f32 * scale).round() as u32).clamp(1, max_w);
+    let h = ((sh as f32 * scale).round() as u32).clamp(1, max_h);
+    let (fx, fy) = (sw as f32 / w as f32, sh as f32 / h as f32);
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let px = if fx >= 1.0 && fy >= 1.0 {
+                let (x0, y0) = (x as f32 * fx, y as f32 * fy);
+                box_average(&src, sw, sh, x0, y0, x0 + fx, y0 + fy)
+            } else {
+                bilinear(
+                    &src,
+                    sw,
+                    sh,
+                    (x as f32 + 0.5) * fx - 0.5,
+                    (y as f32 + 0.5) * fy - 0.5,
+                )
+            };
+            out[((y * w + x) * 4) as usize..][..4].copy_from_slice(&px);
+        }
+    }
+    Some((out, w, h))
+}
+
+/// The source sampled between pixels at `(x, y)`, edges held.
+fn bilinear(src: &[u8], sw: u32, sh: u32, x: f32, y: f32) -> [u8; 4] {
+    let x = x.clamp(0.0, (sw - 1) as f32);
+    let y = y.clamp(0.0, (sh - 1) as f32);
+    let (xa, ya) = (x.floor() as u32, y.floor() as u32);
+    let (xb, yb) = ((xa + 1).min(sw - 1), (ya + 1).min(sh - 1));
+    let (tx, ty) = (x - xa as f32, y - ya as f32);
+    let at = |x: u32, y: u32, c: usize| src[((y * sw + x) * 4) as usize + c] as f32;
+    let mut out = [0u8; 4];
+    for (c, v) in out.iter_mut().enumerate() {
+        let top = at(xa, ya, c) * (1.0 - tx) + at(xb, ya, c) * tx;
+        let bottom = at(xa, yb, c) * (1.0 - tx) + at(xb, yb, c) * tx;
+        *v = (top * (1.0 - ty) + bottom * ty).round() as u8;
+    }
+    out
+}
+
 /// Averages the source footprint of one destination pixel. Collapses to a single sample when
 /// upscaling, so it doubles as nearest neighbour there.
 fn box_average(src: &[u8], sw: u32, sh: u32, x0: f32, y0: f32, x1: f32, y1: f32) -> [u8; 4] {

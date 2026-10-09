@@ -8,7 +8,7 @@ Made for kids, and for grown-ups who just want a simple GBA.
 This fork is laid out for the **RG35XXSP** and its 640×480 screen.
 
 <p align="center">
-  <img src="media/shelf-advance-wars.png" width="45%" alt="The shelf: Advance Wars selected, its box art filling the screen above the carts">
+  <img src="media/shelf-advance-wars.png" width="45%" alt="The shelf: Advance Wars selected, its box art above the carts">
   <img src="media/shelf-wario-land.png" width="45%" alt="The shelf: Wario Land 4 selected">
 </p>
 
@@ -39,8 +39,8 @@ ezGBA is built on [slot.](https://github.com/BrandonKowalski/slot). Here's what 
 - **L2/R2 control brightness.** In slot. they rewind and fast-forward the game, which is
   easy to press by accident mid-game.
 - **One tap of MENU saves and ejects.** slot. needs MENU held for about a second.
-- **The game's box art fills the screen.** Scroll to a game and see its cover, so you can
-  find games by picture.
+- **The game's box art floats above its cart.** Scroll to a game and see its cover, so you
+  can find games by picture.
 - **Your own colors.** Give each console its own background color in `System/theme.txt`.
 - **12-hour clock.** Shows `4:39 PM`, not `16:39`.
 - **A tiny settings menu.** Just Date & Time and About. Nothing in it can mess anything up.
@@ -205,7 +205,7 @@ It can't see the game's own frames of lag, or the wait before the button scan.
 Put `.sfc` or `.smc` files in `Games/SNES/`. Every game, whatever it's for, stands on the one
 shelf in order of its name, each in its own console's cartridge. Every button is the
 SNES's own, X and Y included, and L2/R2 are still brightness. Box art and labels work as they
-do for the GBA, from `Backdrops/SNES/` and `Labels/SNES/`.
+do for the GBA, from `Images/SNES/` and `Labels/SNES/`.
 
 SNES games run on **snes9x**. Unlike the two GBA emulators, snes9x's licence allows it to be
 shared only for free and non-commercially, with its licence beside it (it ships as
@@ -230,10 +230,11 @@ battery saves are shared. To keep one game on one emulator whatever the menu say
 3. Unzip it and copy the **contents** of the folder inside onto the card: onto the second
    SD card if you use two, or onto the card's `BASEOS` drive if you use one.
 4. **Add box art (optional).** Box art isn't included, since it belongs to the publishers.
-   Put a 640×480 PNG in `Backdrops/GBA/`, named the same as the game, for example
-   `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
-   so the carts don't cover it. Art made for the 720×480 RG SP still works: it is centred
-   and loses 40 pixels off each side.
+   Put a PNG in `Images/GBA/` (or `Images/GB/`, `Images/GBC/`, `Images/SNES/`), named the
+   same as the game, for example `Images/GBA/Pokemon - FireRed Version (USA).png`. Any size
+   and shape works: a scraped box front (Screenscraper's "Box - 2D", say), a title screen, or
+   anything else. It is scaled to fit the space above the selected cart without being cropped
+   or stretched, so a GBA box comes out about 255 pixels tall.
    The first boot after adding art is a little slower: ezGBA keeps a ready-scaled copy of
    each picture in `System/Cache`, so later boots and scrolling don't have to decode it again.
    Deleting that folder is safe; it is rebuilt.

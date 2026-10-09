@@ -13,7 +13,7 @@ fn shelf_with(n: usize) -> Shelf {
                 stem: format!("Game {i}"),
                 rom: format!("Games/GBA/Game {i}.gba").into(),
                 label: None,
-                backdrop: None,
+                box_art: None,
                 code: String::new(),
                 title: format!("GAME {i}"),
             })
@@ -790,7 +790,7 @@ fn gb_shelf_with(n: usize) -> Shelf {
                 stem: format!("Pak {i}"),
                 rom: format!("Games/GB/Pak {i}.gb").into(),
                 label: None,
-                backdrop: None,
+                box_art: None,
                 code: String::new(),
                 title: format!("PAK {i}"),
             })
@@ -880,7 +880,7 @@ fn a_colour_pak_and_a_grey_one_are_backed_by_their_own_shells() {
                 stem: (*stem).into(),
                 rom: path,
                 label: None,
-                backdrop: None,
+                box_art: None,
                 code: String::new(),
                 title: (*stem).to_uppercase(),
             }
@@ -961,7 +961,7 @@ fn a_cart_pushed_onto_the_row_draws_rather_than_stopping_the_device() {
         stem: "Pushed".into(),
         rom: "Games/GB/Pushed.gb".into(),
         label: None,
-        backdrop: None,
+        box_art: None,
         code: String::new(),
         title: "PUSHED".into(),
     });

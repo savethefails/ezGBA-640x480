@@ -16,7 +16,7 @@ fn render_board() {
         stem: "Pokemon - Emerald Version (USA, Europe)".into(),
         rom: "Games/GBA/Emerald.gba".into(),
         label: None,
-        backdrop: None,
+        box_art: None,
         code: "BPEE".into(),
         title: "POKEMON EMER".into(),
     });

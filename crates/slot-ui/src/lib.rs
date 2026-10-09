@@ -1,5 +1,5 @@
 mod art;
-pub use art::cover;
+pub use art::{contain, cover};
 mod backdrop;
 mod barcode;
 mod battery;
@@ -69,7 +69,7 @@ pub use quick_menu::{
     QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 pub use refusal::Refusal;
-pub use shelf::{foot_y, rest_y, Shelf};
+pub use shelf::{box_art_at, box_art_space, foot_y, rest_y, BoxArt, Shelf};
 pub use shell::{
     gba_shell_for, lookup_order_is_exact_then_family_then_default, shell_for, table_keys, Finish,
     Shell, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, GB_CLEAR_SHELL,

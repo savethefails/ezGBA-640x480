@@ -30,7 +30,7 @@ fn shelf_with(n: usize) -> Shelf {
                 stem: format!("Game {i}"),
                 rom: format!("Games/GBA/Game {i}.gba").into(),
                 label: None,
-                backdrop: None,
+                box_art: None,
                 code: String::new(),
                 title: format!("GAME {i}"),
             })
