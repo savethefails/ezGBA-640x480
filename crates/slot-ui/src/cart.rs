@@ -88,13 +88,16 @@ pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNE
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
 /// The North American label, which wraps over the cart's top edge: seen square on it starts at
-/// the very top and runs down to 79%, with the moulded lip below it. 9% to 91% across.
+/// the very top. Across the centre column, 10.8% to 89.2%, and down to half way, above the
+/// recessed grip: 188 x 86, the real label's 2.2:1 and very nearly the GBA label's size. The
+/// wings are narrower than the real cart's to make room for it, on purpose: the label is what a
+/// shelf of carts is read by, and a full label scan then fits without losing its sides.
 pub const fn us_snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
     (
-        (w * 90 + 500) / 1000,
+        (w * 108 + 500) / 1000,
         0,
-        (w * 910 + 500) / 1000,
-        (h * 790 + 500) / 1000,
+        (w * 892 + 500) / 1000,
+        (h * 500 + 500) / 1000,
     )
 }
 
@@ -287,11 +290,11 @@ fn spec(shape: Mould) -> Spec {
             max_h: (US_SNES_LABEL_H - 2 * PAD) as f32,
             rim: SNES_RIM,
             board: Board {
-                x: (0.1, 0.9),
+                x: (0.15, 0.85),
                 top: 0.1,
-                pins: (0.12, 0.88),
-                contacts_from: 0.9,
-                traces_from: 0.82,
+                pins: (0.17, 0.83),
+                contacts_from: 0.92,
+                traces_from: 0.85,
             },
             wraps: true,
         },
@@ -388,7 +391,8 @@ pub fn cart_face_with(cart: &Cart, art: Option<Vec<u8>>) -> CartFace {
     let mut face = shell_face(&s, &shell);
     let label = match art {
         Some(rgba) => rgba,
-        None => generated_label(&s, &label_text(cart), matches!(mould, Mould::Snes(_))),
+        None if matches!(mould, Mould::Snes(_)) => generated_snes_label(&s, &label_text(cart)),
+        None => generated_label(&s, &label_text(cart)),
     };
     mould_detail(&s, &mut face);
     recess_label(&s, &mut face, &shell);
@@ -722,56 +726,143 @@ fn wrap_label(s: &Spec, face: &mut CartFace) {
     }
 }
 
-/// A SNES label's printed band across its top, about a tenth of its height: on a real label
-/// the band is the publisher's colour, and here it is the label's own colour darkened, so it
-/// still tells two generated labels apart.
-const BAND: f32 = 0.11;
-
-fn generated_label(s: &Spec, title: &str, band: bool) -> Vec<u8> {
+fn generated_label(s: &Spec, title: &str) -> Vec<u8> {
     let (_, _, lw, lh) = s.label;
     let bg = label_colour(title);
     let mut rgba = Vec::with_capacity((lw * lh * 4) as usize);
     for _ in 0..lw * lh {
         rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
     }
-    // Below the wrap, so the band is on the face and not over the edge.
-    let band_top = if s.wraps { WRAP_ROWS } else { 0 };
-    let band_h = if band {
-        (lh as f32 * BAND).round() as u32
-    } else {
-        0
-    };
-    if band_h > 0 {
-        let dark = bg.map(|c| (c as f32 * 0.55) as u8);
-        for y in band_top..(band_top + band_h).min(lh) {
-            for x in 0..lw {
-                let d = ((y * lw + x) * 4) as usize;
-                rgba[d..d + 3].copy_from_slice(&dark);
-            }
-        }
-    }
 
     if let Some(font) = text::label_font() {
-        // The title is set in what the band leaves, so the two never overlap.
-        let used = band_top + band_h;
-        let room = lh - used;
         let layout = text::fit_box(
             font,
             title,
             (lw - 2 * PAD) as f32,
-            if band_h > 0 {
-                s.max_h.min(room.saturating_sub(2 * PAD) as f32)
-            } else {
-                s.max_h
-            },
+            s.max_h,
             MAX_LINES,
             s.max_px,
             MIN_PX,
         );
-        let start = (used * lw * 4) as usize;
-        text::draw_centred(&mut rgba[start..], lw, room, &layout, ink(bg));
+        text::draw_centred(&mut rgba, lw, lh, &layout, ink(bg));
     }
     rgba
+}
+
+const SNES_BLACK: [u8; 3] = [0x14, 0x13, 0x16];
+const SNES_RED: [u8; 3] = [0xd0, 0x22, 0x2c];
+const SNES_GREY: [u8; 3] = [0x4a, 0x48, 0x50];
+const SNES_PURPLE: [u8; 3] = [0x8a, 0x5c, 0xb8];
+
+/// A SNES label for a cart with no art, laid out the way a real one is: black, the game's
+/// picture in the middle (here its colour and its title), a narrow column to the left with a
+/// small badge and a purple arrow, and one to the right with the publisher's coloured bar
+/// across its top, the console's emblem and "SUPER NINTENDO" in red at its foot. Reminiscent,
+/// not a copy: the marks are blocks and strokes, and only the title is lettering.
+fn generated_snes_label(s: &Spec, title: &str) -> Vec<u8> {
+    let (_, _, lw, lh) = s.label;
+    let mut rgba = Vec::with_capacity((lw * lh * 4) as usize);
+    for _ in 0..lw * lh {
+        rgba.extend_from_slice(&[SNES_BLACK[0], SNES_BLACK[1], SNES_BLACK[2], 255]);
+    }
+    let mut fill = |x0: u32, y0: u32, x1: u32, y1: u32, c: [u8; 3]| {
+        for y in y0.min(lh)..y1.min(lh) {
+            for x in x0.min(lw)..x1.min(lw) {
+                let d = ((y * lw + x) * 4) as usize;
+                rgba[d..d + 3].copy_from_slice(&c);
+            }
+        }
+    };
+    let at = |f: f32, of: u32| (f * of as f32).round() as u32;
+    // Below the wrap, so nothing that matters is on the part that turns away over the edge.
+    let top = if s.wraps { WRAP_ROWS } else { at(0.04, lh) };
+    let bottom = lh - at(0.05, lh);
+
+    // The picture: most of the label, left of centre.
+    let (px0, px1) = (at(0.12, lw), at(0.70, lw));
+    let bg = label_colour(title);
+    fill(px0, top, px1, bottom, bg);
+
+    // Left column: a white badge and the purple arrow under it.
+    let (l0, l1) = (at(0.02, lw), at(0.10, lw));
+    fill(l0, top + 2, l1, top + 2 + at(0.07, lh), [0xe8, 0xe6, 0xe2]);
+    let arrow_y = top + at(0.16, lh);
+    for row in 0..4u32 {
+        let half = 3u32.saturating_sub(row);
+        let cx = (l0 + l1) / 2;
+        fill(
+            cx - half,
+            arrow_y + row,
+            cx + half + 1,
+            arrow_y + row + 1,
+            SNES_PURPLE,
+        );
+    }
+
+    // Right column: the publisher's bar, the emblem, the console's name in red.
+    let (r0, r1) = (at(0.73, lw), at(0.97, lw));
+    fill(r0, top, r1, top + at(0.06, lh), SNES_RED);
+    let (e0, e1) = (top + at(0.30, lh), top + at(0.58, lh));
+    let mut y = e0;
+    while y < e1 {
+        fill(r0 + at(0.05, lw), y, r1 - at(0.02, lw), y + 1, SNES_GREY);
+        y += 3;
+    }
+    let name_h = at(0.12, lh).max(4);
+    let name_y = bottom - name_h;
+    if let Some(font) = text::label_font() {
+        let w = r1 - r0;
+        let layout = text::fit_box(
+            font,
+            "SUPER NINTENDO",
+            w as f32,
+            name_h as f32,
+            1,
+            name_h as f32,
+            3.0,
+        );
+        ink_into(&mut rgba, lw, (r0, name_y), (w, name_h), &layout, SNES_RED);
+
+        // The title, in the picture.
+        let (pw, ph) = (px1 - px0, bottom - top);
+        let layout = text::fit_box(
+            font,
+            title,
+            (pw - 2 * 6) as f32,
+            (ph - 2 * 6) as f32,
+            MAX_LINES,
+            s.max_px,
+            MIN_PX.min(8.0),
+        );
+        ink_into(&mut rgba, lw, (px0, top), (pw, ph), &layout, ink(bg));
+    }
+    rgba
+}
+
+/// `layout` centred in the `size` box at `at` of an opaque `w` wide image, in `colour`.
+fn ink_into(
+    rgba: &mut [u8],
+    w: u32,
+    at: (u32, u32),
+    size: (u32, u32),
+    layout: &text::Layout,
+    colour: [u8; 3],
+) {
+    for (i, a) in text::coverage(size.0, size.1, layout)
+        .into_iter()
+        .enumerate()
+    {
+        if a == 0 {
+            continue;
+        }
+        let (x, y) = (i as u32 % size.0, i as u32 / size.0);
+        let d = (((at.1 + y) * w + at.0 + x) * 4) as usize;
+        let a = a as u32;
+        for c in 0..3 {
+            rgba[d + c] =
+                ((colour[c] as u32 * a + rgba[d + c] as u32 * (255 - a) + 127) / 255) as u8;
+        }
+    }
 }
 
 /// Hue rotation alone puts yellow and blue at very different luminance, so the ink flips

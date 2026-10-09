@@ -85,6 +85,15 @@ fn main() {
                 choice(Outline::Rounded, [0xd9, 0xdb, 0xd8], ShellFinish::Clear),
             ),
         ],
+        // A label scan, when one is given as the second argument.
+        std::env::args()
+            .nth(2)
+            .map(|label| {
+                let mut c = cart(Platform::Snes, "Super Mario Kart", None);
+                c.label = Some(PathBuf::from(label));
+                vec![c]
+            })
+            .unwrap_or_default(),
     ];
     let gap = 12u32;
     let faces: Vec<Vec<_>> = rows

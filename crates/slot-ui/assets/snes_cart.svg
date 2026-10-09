@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 172">
-  <!-- The North American SNES Game Pak seen square on, label to the front: the boxy shell,
-       squared off where the Super Famicom's is rounded, with only a small chamfer at the top
-       corners and a small radius at the bottom ones. Drawn in the same 240 x 172 box ezGBA has
+  <!-- The North American SNES Game Pak seen square on, label to the front: reminiscent of the
+       real cart rather than measured off it. A centre column carrying the label stands a little
+       taller than the grooved wings either side of it. Drawn in the same 240 x 172 box ezGBA has
        always used for a SNES cart; see `sfc_cart.svg` for the Japanese and PAL shell. -->
-  <path d="M5 0 H235 L240 5 V165 Q240 172 233 172 H7 Q0 172 0 165 V5 Z" fill="#fff"/>
+  <path d="M3 6 H22 V2 Q22 0 24 0 H216 Q218 0 218 2 V6 H237 Q240 6 240 9 V169 Q240 172 237 172 H3 Q0 172 0 169 V9 Q0 6 3 6 Z" fill="#fff"/>
 </svg>

@@ -220,7 +220,7 @@ battery saves are shared. To keep one game on one emulator whatever the menu say
 `Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.ini`.
 
 A SNES game is drawn in the cartridge its region came in, read from the game itself: North
-American games in the boxy, darker grey cart with its label wrapped over the top edge, and
+American games in the grey cart with grooved wings and a big label wrapped over the top, and
 Japanese and PAL games in the rounded, lighter grey Super Famicom cart. Killer Instinct is black.
 
 ## Cartridge shells

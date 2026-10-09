@@ -95,8 +95,8 @@ const GB_OVERSEAS_TITLES: &[(&str, Shell)] = &[
 const CRYSTAL: Shell = shell([0x86, 0xb9, 0xbf], Finish::Glitter);
 const KIRBY: Shell = shell([0xec, 0x94, 0xb4], Finish::Translucent);
 
-/// The North American SNES Game Pak: a mid grey, darker than the console it went into.
-pub const SNES_SHELL: Shell = shell([0x7b, 0x7a, 0x80], Finish::Solid);
+/// The North American SNES Game Pak: a mid grey with a little violet in it.
+pub const SNES_SHELL: Shell = shell([0x8a, 0x87, 0x8e], Finish::Solid);
 
 /// The Super Famicom and PAL Game Pak, the lighter grey of the Super Famicom itself.
 pub const SFC_SHELL: Shell = shell([0xab, 0xaa, 0xad], Finish::Solid);
