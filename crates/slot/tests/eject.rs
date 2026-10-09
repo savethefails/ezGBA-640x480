@@ -113,84 +113,37 @@ fn an_unchanged_battery_save_is_not_rewritten() {
     );
 }
 
-/// I5: `load_save_ram` can accept bytes it should have refused — a libretro core copies
-/// `len.min(data.len())` into its save-ram region and returns `Ok` regardless of whether the
-/// two lengths actually matched. If a cart's two cores disagree on `RETRO_MEMORY_SAVE_RAM`'s
-/// size, switching cores would otherwise truncate the player's save on the very next write,
-/// silently: the core accepted what it was given, so nothing upstream of `write_sav` has any
-/// reason to doubt it. This is the backstop `write_sav` itself carries: a shorter save than
-/// what is already on the card is refused and logged rather than trusted.
+/// A save shorter than the one on the card is written. Games really do shrink theirs: Golden
+/// Sun's on mGBA is smaller than the size the core first reports, and refusing it lost every
+/// save the game made.
 #[test]
-fn write_sav_refuses_to_shrink_an_existing_save() {
+fn write_sav_writes_a_shorter_save() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let big = vec![0xEEu8; 4096];
     let small = vec![0x11u8; 512];
     slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &big).unwrap();
 
-    let wrote = slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &small)
-        .expect("a shrink is refused, not an error");
-    assert!(
-        !wrote,
-        "write_sav must report that it did not write a shrink"
-    );
+    let wrote = slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &small).unwrap();
+    assert!(wrote, "a shorter save was refused");
     assert_eq!(
         std::fs::read(d.path().join("Saves/GBA/Emerald.sav")).unwrap(),
-        big,
-        "the larger, real save was overwritten by a shorter one"
-    );
-
-    // A growth, by contrast, is exactly what a legitimate re-save looks like and must go
-    // through — the guard is specifically for shrinking, not for change.
-    let bigger = vec![0x22u8; 8192];
-    let wrote = slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &bigger).unwrap();
-    assert!(wrote, "a longer save must not be refused");
-    assert_eq!(
-        std::fs::read(d.path().join("Saves/GBA/Emerald.sav")).unwrap(),
-        bigger
+        small
     );
 }
 
-/// The `.srm`-only twin of the test above. `read_sav` accepts `Saves/<stem>.srm` as well as
-/// `.sav` — RetroArch's name for the same battery bytes — but the shrink guard used to stat
-/// `.sav` alone. A card carrying nothing but an `.srm` therefore had no guard at all: a core
-/// with a smaller save-ram region would write a small `.sav` straight past it, and that `.sav`
-/// then shadows the larger `.srm` on every read after (`.sav` wins when both exist), which
-/// makes the loss permanent on the very first write. `write_sav` now compares against whatever
-/// `read_sav` would actually return, `.srm` included.
+/// The same over a card carrying only RetroArch's `.srm`: the new `.sav` is written and is
+/// what is read back.
 #[test]
-fn write_sav_refuses_to_shrink_an_existing_srm() {
+fn write_sav_writes_a_shorter_save_over_an_srm() {
     let d = tmp_root_with_carts(&["Emerald"]);
-    let big = vec![0xEEu8; 131_072];
     std::fs::create_dir_all(d.path().join("Saves/GBA")).unwrap();
-    std::fs::write(d.path().join("Saves/GBA/Emerald.srm"), &big).unwrap();
+    std::fs::write(d.path().join("Saves/GBA/Emerald.srm"), vec![0xEEu8; 131_072]).unwrap();
 
     let small = vec![0x11u8; 8_192];
-    let wrote = slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &small)
-        .expect("a shrink is refused, not an error");
-    assert!(
-        !wrote,
-        "write_sav must report that it did not write a shrink against an srm baseline"
-    );
-    assert!(
-        !d.path().join("Saves/GBA/Emerald.sav").exists(),
-        "a refused shrink must not create a .sav that would shadow the larger .srm"
-    );
+    assert!(slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &small).unwrap());
     assert_eq!(
         slot::persist::read_sav(d.path(), Platform::Gba, "Emerald").as_deref(),
-        Some(&big[..]),
-        "the real save carried on the srm must survive"
-    );
-
-    // The healthy path must still work against an srm baseline: a legitimate growth writes.
-    let bigger = vec![0x22u8; 200_000];
-    let wrote = slot::persist::write_sav(d.path(), Platform::Gba, "Emerald", &bigger).unwrap();
-    assert!(
-        wrote,
-        "a longer save must not be refused against an srm baseline"
-    );
-    assert_eq!(
-        std::fs::read(d.path().join("Saves/GBA/Emerald.sav")).unwrap(),
-        bigger
+        Some(&small[..])
     );
 }
 

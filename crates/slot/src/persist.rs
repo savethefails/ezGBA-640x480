@@ -88,35 +88,14 @@ pub fn eject(
 /// The core hands back the whole save ram whether or not the game touched it, so an
 /// unchanged one is a rewrite of up to 128 KB of card for nothing.
 ///
-/// Also refuses to shrink an existing save. `load_save_ram` can accept bytes it should have
-/// refused: a libretro core that exposes a save-ram region copies `len.min(data.len())` bytes
-/// into it and returns `Ok` regardless, so a cart whose two cores disagree on
-/// `RETRO_MEMORY_SAVE_RAM`'s size truncates silently rather than failing loudly — the class of
-/// bug `resume_trusted`/`save_ram_trusted` cannot see, because as far as the core is concerned
-/// it accepted what it was given. This is the backstop for that: whatever produced a shorter
-/// save than what is already on the card, refuse it and say so, rather than trust that a
-/// smaller battery save is ever a real one.
-///
-/// The comparison goes through `read_sav`, not a stat of `sav_path` alone: `read_sav` also
-/// accepts `Saves/<platform>/<stem>.srm` (RetroArch's name for the same battery bytes, see its
-/// own doc comment below), and a card carrying only an `.srm` still has a real save on it.
-/// Stat-ing `.sav` directly would find nothing there, wave a smaller write through unguarded,
-/// and that new `.sav` would then shadow the larger `.srm` on every read after — this is the
-/// exact loss shape the guard above exists to stop, just reached from the one path it could
-/// not see.
+/// A shorter save than the one on the card is written like any other. It used to be refused
+/// as a sign of truncation, but real games shrink theirs: Golden Sun's on mGBA is smaller than
+/// the size the core first reports, so the guard refused every one of its saves and the game
+/// never kept its progress.
 pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std::io::Result<bool> {
     let path = sav_path(root, platform, stem);
     if let Some(old) = read_sav(root, platform, stem) {
         if old == sav {
-            return Ok(false);
-        }
-        if sav.len() < old.len() {
-            eprintln!(
-                "slot: save ram: refusing to shrink {} from {} to {} bytes",
-                path.display(),
-                old.len(),
-                sav.len()
-            );
             return Ok(false);
         }
     }

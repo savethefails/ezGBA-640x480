@@ -221,8 +221,7 @@ fn at(percent: u8, charge: Charge) -> Battery {
 }
 
 /// The collision, closed. Before platform folders these were one file, and a 128 KB GBA save
-/// truncated into a Game Boy game's SRAM was *accepted* by the core — then the shrink guard
-/// stopped that game ever saving again, silently.
+/// truncated into a Game Boy game's SRAM was *accepted* by the core.
 #[test]
 fn one_stem_on_two_platforms_writes_two_saves() {
     let d = tempfile::tempdir().unwrap();
