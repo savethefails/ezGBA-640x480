@@ -1,11 +1,12 @@
 use slot_store::gb::Class;
-use slot_store::{Cart, Platform};
+use slot_store::snes::Region;
+use slot_store::{Cart, Outline, Platform};
 
 use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
 use crate::silhouette::{
     cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
-    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell,
+    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell, SnesShell,
 };
 use crate::text;
 
@@ -70,7 +71,8 @@ pub const GB_LABEL_H: u32 = gb_label_panel(GB_CART_W, GB_CART_H).3 - GB_LABEL_Y;
 pub const SNES_CART_W: u32 = 240;
 pub const SNES_CART_H: u32 = 172;
 
-/// The label on the front, below the grip ridges: 10% to 90% across and 30% to 93% down.
+/// The Super Famicom and PAL label, on the front below the grip ridges: 10% to 90% across and
+/// 30% to 93% down.
 pub const fn snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
     (
         (w * 100 + 500) / 1000,
@@ -84,6 +86,21 @@ pub const SNES_LABEL_X: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).0;
 pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
 pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
+
+/// The North American label, which wraps over the cart's top edge: seen square on it starts at
+/// the very top and runs down to 79%, with the moulded lip below it. 9% to 91% across.
+pub const fn us_snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
+    (
+        (w * 90 + 500) / 1000,
+        0,
+        (w * 910 + 500) / 1000,
+        (h * 790 + 500) / 1000,
+    )
+}
+
+pub const US_SNES_LABEL_X: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).0;
+pub const US_SNES_LABEL_W: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).2 - US_SNES_LABEL_X;
+pub const US_SNES_LABEL_H: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).3;
 
 const PAD: u32 = 10;
 const MAX_LINES: usize = 3;
@@ -99,6 +116,7 @@ const GB_MAX_PX: f32 = (GB_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 /// The SNES label is 1.76:1, between the other two, so it is handed both bounds as the Game Boy
 /// one is.
 const SNES_MAX_PX: f32 = (SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
+const US_SNES_MAX_PX: f32 = (US_SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 const MIN_PX: f32 = 10.0;
 
 /// How far the translucent edge reaches in. Zero at this depth exactly, so a pixel any
@@ -135,6 +153,24 @@ struct Spec {
     /// on a bigger object, so the pak — nearly twice the cart's height — carries a wider one to
     /// read as the same depth of plastic.
     rim: u32,
+    /// The circuit board inside, which a clear shell shows.
+    board: Board,
+    /// The label wraps over the top edge rather than stopping short of it, so its top rows are
+    /// where it turns away from the light.
+    wraps: bool,
+}
+
+/// Where the board sits inside the shell, as fractions of the face. Its top is the label's, so
+/// it shows below the label and nowhere above: a real board sits behind the label and stops
+/// short of the shoulder, where only plastic is.
+struct Board {
+    x: (f32, f32),
+    top: f32,
+    /// The edge connector's span across, and how far down its gold fingers and their traces
+    /// start.
+    pins: (f32, f32),
+    contacts_from: f32,
+    traces_from: f32,
 }
 
 /// Which shell a cart was moulded in, which is what the art is drawn from. Deliberately not a
@@ -144,9 +180,10 @@ struct Spec {
 /// DMG-compatible — the extension is a dumping convention and the flag is the cart — so a
 /// `.gb` whose flag is 0xc0 gets the rounded shell and a `.gbc` whose flag is 0x80 gets the
 /// notched one. Asking the folder would draw a misfiled cart as something Nintendo never made.
-enum Shape {
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Mould {
     Gba,
-    Snes,
+    Snes(SnesShell),
     Gb(GbShell),
 }
 
@@ -157,28 +194,51 @@ enum Shape {
 pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
     match cart.platform {
         Platform::Gba | Platform::Snes => None,
-        Platform::Gb | Platform::Gbc => Some(match slot_store::gb::class(&cart.rom) {
-            Class::ColourOnly => GbShell::Rounded,
-            Class::Original | Class::DualMode => GbShell::Notched,
+        Platform::Gb | Platform::Gbc => Some(match cart.shell.map(|c| c.outline) {
+            Some(Outline::Notched) => GbShell::Notched,
+            Some(Outline::Rounded) => GbShell::Rounded,
+            _ => match slot_store::gb::class(&cart.rom) {
+                Class::ColourOnly => GbShell::Rounded,
+                Class::Original | Class::DualMode => GbShell::Notched,
+            },
         }),
     }
 }
 
-fn shape_of(cart: &Cart) -> Shape {
-    if cart.platform == Platform::Snes {
-        return Shape::Snes;
+/// Which SNES shell this cart came out of, or `None` for a cart of another console. A choice
+/// in `cart_shell.ini` wins; otherwise the header's region says, and a rom whose header does
+/// not check out is drawn in the North American shell. Opens the rom, so like `gb_shell_of` it
+/// is asked once a row and once a face, never on a frame.
+pub fn snes_shell_of(cart: &Cart) -> Option<SnesShell> {
+    if cart.platform != Platform::Snes {
+        return None;
+    }
+    Some(match cart.shell.map(|c| c.outline) {
+        Some(Outline::Boxy) => SnesShell::Boxy,
+        Some(Outline::Rounded) => SnesShell::Rounded,
+        _ => match slot_store::snes::header(&cart.rom).map(|h| h.region) {
+            Some(Region::Japan | Region::Pal) => SnesShell::Rounded,
+            Some(Region::NorthAmerica) | None => SnesShell::Boxy,
+        },
+    })
+}
+
+/// The mould a cart is drawn from, which is what its outline, moulding and backing come from.
+pub fn mould_of(cart: &Cart) -> Mould {
+    if let Some(shell) = snes_shell_of(cart) {
+        return Mould::Snes(shell);
     }
     match gb_shell_of(cart) {
-        None => Shape::Gba,
-        Some(shell) => Shape::Gb(shell),
+        None => Mould::Gba,
+        Some(shell) => Mould::Gb(shell),
     }
 }
 
 /// Anything that is a property of the plastic goes here. Anything that is a property of the
 /// game printed on it does not.
-fn spec(shape: Shape) -> Spec {
+fn spec(shape: Mould) -> Spec {
     match shape {
-        Shape::Gba => Spec {
+        Mould::Gba => Spec {
             w: CART_W,
             h: CART_H,
             label: (LABEL_X, LABEL_Y, LABEL_W, LABEL_H),
@@ -188,19 +248,54 @@ fn spec(shape: Shape) -> Spec {
             max_px: MAX_PX,
             max_h: f32::INFINITY,
             rim: RIM,
+            board: Board {
+                x: (0.135, 0.875),
+                top: LABEL_Y as f32 / CART_H as f32,
+                pins: (0.17, 0.84),
+                contacts_from: 0.843,
+                traces_from: 0.749,
+            },
+            wraps: false,
         },
-        Shape::Snes => Spec {
+        Mould::Snes(SnesShell::Rounded) => Spec {
             w: SNES_CART_W,
             h: SNES_CART_H,
             label: (SNES_LABEL_X, SNES_LABEL_Y, SNES_LABEL_W, SNES_LABEL_H),
-            mask: snes_cart_mask(),
-            depth: snes_cart_depth(),
-            detail: snes_detail_mask(),
+            mask: snes_cart_mask(SnesShell::Rounded),
+            depth: snes_cart_depth(SnesShell::Rounded),
+            detail: snes_detail_mask(SnesShell::Rounded),
             max_px: SNES_MAX_PX,
             max_h: (SNES_LABEL_H - 2 * PAD) as f32,
             rim: SNES_RIM,
+            board: Board {
+                x: (0.1, 0.9),
+                top: SNES_LABEL_Y as f32 / SNES_CART_H as f32,
+                pins: (0.12, 0.88),
+                contacts_from: 0.9,
+                traces_from: 0.82,
+            },
+            wraps: false,
         },
-        Shape::Gb(shell) => Spec {
+        Mould::Snes(SnesShell::Boxy) => Spec {
+            w: SNES_CART_W,
+            h: SNES_CART_H,
+            label: (US_SNES_LABEL_X, 0, US_SNES_LABEL_W, US_SNES_LABEL_H),
+            mask: snes_cart_mask(SnesShell::Boxy),
+            depth: snes_cart_depth(SnesShell::Boxy),
+            detail: snes_detail_mask(SnesShell::Boxy),
+            max_px: US_SNES_MAX_PX,
+            max_h: (US_SNES_LABEL_H - 2 * PAD) as f32,
+            rim: SNES_RIM,
+            board: Board {
+                x: (0.1, 0.9),
+                top: 0.1,
+                pins: (0.12, 0.88),
+                contacts_from: 0.9,
+                traces_from: 0.82,
+            },
+            wraps: true,
+        },
+        Mould::Gb(shell) => Spec {
             w: GB_CART_W,
             h: GB_CART_H,
             label: (GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W, GB_LABEL_H),
@@ -210,20 +305,28 @@ fn spec(shape: Shape) -> Spec {
             max_px: GB_MAX_PX,
             max_h: (GB_LABEL_H - 2 * PAD) as f32,
             rim: GB_RIM,
+            board: Board {
+                x: (0.075, 0.925),
+                top: 0.07,
+                pins: (0.1, 0.9),
+                contacts_from: 0.905,
+                traces_from: 0.84,
+            },
+            wraps: false,
         },
     }
 }
 
 /// The box a cart of this platform is drawn in. A Game Boy Game Pak is the same width as a GBA
 /// cart and 1.87x as tall, so anything that lays carts out has to ask rather than assume. The
-/// question is a `Platform` and not a `Shape` because the answer does not depend on the shell:
+/// question is a `Platform` and not a `Mould` because the answer does not depend on the shell:
 /// both Game Pak moulds are 65.5 x 57 mm and are drawn in the same box, and only what is cut
 /// out of the corners differs. A layout does not have to open a rom to place a cart.
 pub fn cart_box(platform: Platform) -> (u32, u32) {
     let s = spec(match platform {
-        Platform::Gba => Shape::Gba,
-        Platform::Gb | Platform::Gbc => Shape::Gb(GbShell::Notched),
-        Platform::Snes => Shape::Snes,
+        Platform::Gba => Mould::Gba,
+        Platform::Gb | Platform::Gbc => Mould::Gb(GbShell::Notched),
+        Platform::Snes => Mould::Snes(SnesShell::Boxy),
     });
     (s.w, s.h)
 }
@@ -250,9 +353,9 @@ pub fn gb_cart_shadow(shell: GbShell) -> CartFace {
     shadow(GB_CART_W, GB_CART_H, gb_cart_mask(shell))
 }
 
-/// The SNES Game Pak's outline in black, for the same reason the other two have theirs.
-pub fn snes_cart_shadow() -> CartFace {
-    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask())
+/// A SNES Game Pak's outline in black, one per shell for the same reason the Game Boy's are.
+pub fn snes_cart_shadow(shell: SnesShell) -> CartFace {
+    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask(shell))
 }
 
 fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {
@@ -272,23 +375,27 @@ pub fn cart_face(cart: &Cart) -> CartFace {
 /// The size label art is scaled to for `cart`'s mould, so a caller can scale it (or keep it
 /// scaled) for `cart_face_with`.
 pub fn label_size(cart: &Cart) -> (u32, u32) {
-    let (_, _, lw, lh) = spec(shape_of(cart)).label;
+    let (_, _, lw, lh) = spec(mould_of(cart)).label;
     (lw, lh)
 }
 
 /// `cart_face` with the label art already scaled to `label_size`, or `None` for the
 /// generated label.
 pub fn cart_face_with(cart: &Cart, art: Option<Vec<u8>>) -> CartFace {
-    let s = spec(shape_of(cart));
+    let mould = mould_of(cart);
+    let s = spec(mould);
     let shell = shell_for(cart);
     let mut face = shell_face(&s, &shell);
     let label = match art {
         Some(rgba) => rgba,
-        None => generated_label(&s, &label_text(cart)),
+        None => generated_label(&s, &label_text(cart), matches!(mould, Mould::Snes(_))),
     };
-    mould_detail(&s, &mut face, &shell);
+    mould_detail(&s, &mut face);
     recess_label(&s, &mut face, &shell);
     paste_label(&s, &mut face, &label);
+    if s.wraps {
+        wrap_label(&s, &mut face);
+    }
     clip_to_silhouette(&s, &mut face);
     face
 }
@@ -387,11 +494,20 @@ pub fn label_tags(stem: &str) -> Vec<String> {
 
 fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
     let mut rgba = Vec::with_capacity((s.w * s.h * 4) as usize);
-    let edge = rim_colour(shell.colour);
-    for depth in s.depth {
+    let edge = rim_colour(through(shell.colour, shell.colour));
+    for (i, depth) in s.depth.iter().enumerate() {
+        let (x, y) = (i as u32 % s.w, i as u32 / s.w);
         let c = match shell.finish {
             Finish::Solid => shell.colour,
-            Finish::Translucent => lerp(edge, shell.colour, (*depth as u32).min(s.rim), s.rim),
+            Finish::Translucent | Finish::Glitter => {
+                let body = through(shell.colour, inside(s, x, y).unwrap_or(shell.colour));
+                let c = lerp(edge, body, (*depth as u32).min(s.rim), s.rim);
+                if shell.finish == Finish::Glitter && fleck(x, y) {
+                    lerp(c, [0xff; 3], 100, 255)
+                } else {
+                    c
+                }
+            }
         };
         rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
@@ -400,6 +516,57 @@ fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
         w: s.w,
         h: s.h,
     }
+}
+
+/// How much of a clear shell's colour is its own surface rather than what is behind it, out of
+/// 255: enough that the plastic still reads as its colour over the board.
+const SURFACE: u32 = 150;
+
+const BOARD: [u8; 3] = [0x2c, 0x96, 0x52];
+const TRACE: [u8; 3] = [0x5a, 0xb4, 0x74];
+const GOLD: [u8; 3] = [0xe6, 0xb4, 0x46];
+
+/// Clear `plastic` with `behind` seen through it: the light behind filtered by the plastic's
+/// colour, mixed with the light off the plastic's own surface.
+fn through(plastic: [u8; 3], behind: [u8; 3]) -> [u8; 3] {
+    let filter =
+        |a: [u8; 3], b: [u8; 3]| [0, 1, 2].map(|c| (a[c] as u32 * b[c] as u32 / 255) as u8);
+    lerp(
+        filter(plastic, behind),
+        filter(plastic, plastic),
+        SURFACE,
+        255,
+    )
+}
+
+/// What is inside the shell at `(x, y)`: board, a trace, a gold contact, or `None` for the
+/// empty shell where no board is.
+fn inside(s: &Spec, x: u32, y: u32) -> Option<[u8; 3]> {
+    let b = &s.board;
+    let (fx, fy) = (x as f32 / s.w as f32, y as f32 / s.h as f32);
+    if !(b.x.0..b.x.1).contains(&fx) || fy < b.top {
+        return None;
+    }
+    let (c0, c1) = b.pins;
+    let pitch = (c1 - c0) / 32.0;
+    let on_contact = (c0..c1).contains(&fx) && ((fx - c0) % pitch) < pitch * 0.6;
+    if on_contact && fy >= b.contacts_from {
+        return Some(GOLD);
+    }
+    if on_contact && ((fx - c0) % pitch) < pitch * 0.2 && fy >= b.traces_from {
+        Some(TRACE)
+    } else {
+        Some(BOARD)
+    }
+}
+
+/// Glitter's flecks: about one pixel in a hundred, scattered the same way on every boot.
+fn fleck(x: u32, y: u32) -> bool {
+    let mut h = x.wrapping_mul(0x9e37_79b9) ^ y.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    h.is_multiple_of(100)
 }
 
 /// Light through the plastic reads as a lighter, less saturated edge. Desaturating as well
@@ -435,9 +602,10 @@ const BEVEL: u32 = 3;
 /// so a darker shell shades darker; a highlight is light arriving on top of the surface, so it
 /// lifts a dark shell about as far as a pale one. Multiplying the light as well would leave the
 /// black pak's moulding invisible, which is the case that needed it most.
-fn mould_detail(s: &Spec, face: &mut CartFace, shell: &Shell) {
-    let dark = shell.colour.map(|c| (c as f32 * 0.62) as u8);
-    let lit = shell.colour.map(|c| c + ((255 - c) as f32 * 0.24) as u8);
+/// Each pixel is shaded from what is under it rather than from the shell's flat colour, so the
+/// moulding on a clear shell darkens and lifts the board seen through it as well as the
+/// plastic, the way a real ridge in clear plastic does.
+fn mould_detail(s: &Spec, face: &mut CartFace) {
     let mix = |px: &mut [u8], to: [u8; 3], a: u32| {
         for c in 0..3 {
             px[c] = ((to[c] as u32 * a + px[c] as u32 * (255 - a) + 127) / 255) as u8;
@@ -445,11 +613,16 @@ fn mould_detail(s: &Spec, face: &mut CartFace, shell: &Shell) {
     };
     let sides = s.detail.shadow.iter().zip(&s.detail.highlight);
     for (px, (shade, light)) in face.rgba.chunks_exact_mut(4).zip(sides) {
+        let under = [px[0], px[1], px[2]];
         if *shade > 0 {
-            mix(px, dark, *shade as u32);
+            mix(px, under.map(|c| (c as f32 * 0.62) as u8), *shade as u32);
         }
         if *light > 0 {
-            mix(px, lit, *light as u32);
+            mix(
+                px,
+                under.map(|c| c + ((255 - c) as f32 * 0.24) as u8),
+                *light as u32,
+            );
         }
     }
 }
@@ -467,13 +640,25 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
 
     let (lx, ly, lw, lh) = s.label;
     let (w, h) = (s.w, s.h);
-    let (x0, y0) = (lx - BEVEL, ly - BEVEL);
+    // Saturating at the top: a label that wraps over the top edge has no wall above it.
+    let (x0, y0) = (lx - BEVEL, ly.saturating_sub(BEVEL));
     let (x1, y1) = (lx + lw + BEVEL, ly + lh + BEVEL);
-    let mut put = |x: u32, y: u32, c: [u8; 3]| {
+    // A clear shell's wall is the same clear plastic turned toward or away from the light, so
+    // it shades what is already there rather than painting the shell's flat colour over it.
+    let clear = shell.finish != Finish::Solid;
+    let mut put = |x: u32, y: u32, upper: bool| {
         if x >= w || y >= h {
             return;
         }
         let d = ((y * w + x) * 4) as usize;
+        let c = if clear {
+            let under = [face.rgba[d], face.rgba[d + 1], face.rgba[d + 2]];
+            shade(under, if upper { 0.7 } else { 1.18 })
+        } else if upper {
+            dark
+        } else {
+            lit
+        };
         face.rgba[d] = c[0];
         face.rgba[d + 1] = c[1];
         face.rgba[d + 2] = c[2];
@@ -491,7 +676,7 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
             let from_right = x1.saturating_sub(x + 1);
             let upper = from_top.min(from_left);
             let lower = from_bottom.min(from_right);
-            put(x, y, if upper <= lower { dark } else { lit });
+            put(x, y, upper <= lower);
         }
     }
 }
@@ -517,25 +702,74 @@ fn paste_label(s: &Spec, face: &mut CartFace, label: &[u8]) {
     }
 }
 
-fn generated_label(s: &Spec, title: &str) -> Vec<u8> {
+/// How far down a wrapped label turns away from the light, and how dark it gets at the top.
+const WRAP_ROWS: u32 = 7;
+const WRAP_DARK: f32 = 0.62;
+
+/// A label that wraps over the top edge bends away from the face there, so its top rows fall
+/// into shade by degrees, darkest where it meets the edge.
+fn wrap_label(s: &Spec, face: &mut CartFace) {
+    let (lx, ly, lw, _) = s.label;
+    for row in 0..WRAP_ROWS {
+        let f = WRAP_DARK + (1.0 - WRAP_DARK) * row as f32 / WRAP_ROWS as f32;
+        let y = ly + row;
+        for x in lx..lx + lw {
+            let d = ((y * s.w + x) * 4) as usize;
+            for c in 0..3 {
+                face.rgba[d + c] = (face.rgba[d + c] as f32 * f) as u8;
+            }
+        }
+    }
+}
+
+/// A SNES label's printed band across its top, about a tenth of its height: on a real label
+/// the band is the publisher's colour, and here it is the label's own colour darkened, so it
+/// still tells two generated labels apart.
+const BAND: f32 = 0.11;
+
+fn generated_label(s: &Spec, title: &str, band: bool) -> Vec<u8> {
     let (_, _, lw, lh) = s.label;
     let bg = label_colour(title);
     let mut rgba = Vec::with_capacity((lw * lh * 4) as usize);
     for _ in 0..lw * lh {
         rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
     }
+    // Below the wrap, so the band is on the face and not over the edge.
+    let band_top = if s.wraps { WRAP_ROWS } else { 0 };
+    let band_h = if band {
+        (lh as f32 * BAND).round() as u32
+    } else {
+        0
+    };
+    if band_h > 0 {
+        let dark = bg.map(|c| (c as f32 * 0.55) as u8);
+        for y in band_top..(band_top + band_h).min(lh) {
+            for x in 0..lw {
+                let d = ((y * lw + x) * 4) as usize;
+                rgba[d..d + 3].copy_from_slice(&dark);
+            }
+        }
+    }
 
     if let Some(font) = text::label_font() {
+        // The title is set in what the band leaves, so the two never overlap.
+        let used = band_top + band_h;
+        let room = lh - used;
         let layout = text::fit_box(
             font,
             title,
             (lw - 2 * PAD) as f32,
-            s.max_h,
+            if band_h > 0 {
+                s.max_h.min(room.saturating_sub(2 * PAD) as f32)
+            } else {
+                s.max_h
+            },
             MAX_LINES,
             s.max_px,
             MIN_PX,
         );
-        text::draw_centred(&mut rgba, lw, lh, &layout, ink(bg));
+        let start = (used * lw * 4) as usize;
+        text::draw_centred(&mut rgba[start..], lw, room, &layout, ink(bg));
     }
     rgba
 }

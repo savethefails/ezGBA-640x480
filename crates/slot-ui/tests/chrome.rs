@@ -16,6 +16,7 @@ fn cart() -> Cart {
         rom: "Games/GBA/Emerald.gba".into(),
         label: None,
         box_art: None,
+        shell: None,
         code: String::new(),
         title: "POKEMON EMER".into(),
     }
@@ -31,6 +32,7 @@ fn pak() -> Cart {
         rom: "Games/GB/Tetris.gb".into(),
         label: None,
         box_art: None,
+        shell: None,
         code: String::new(),
         title: "TETRIS".into(),
     }
@@ -44,6 +46,7 @@ fn snes() -> Cart {
         rom: "Games/SNES/Super Metroid.sfc".into(),
         label: None,
         box_art: None,
+        shell: None,
         code: String::new(),
         title: String::new(),
     }

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 172">
+  <!-- The Super Famicom Game Pak, which PAL carts share, seen square on: the rounded shell,
+       its top corners swept in a wide curve where the North American one is boxy. Drawn in the
+       same 240 x 172 box as `snes_cart.svg`, so both stand on the shelf at one size. -->
+  <path d="M24 0 H216 Q240 0 240 24 V164 Q240 172 232 172 H8 Q0 172 0 164 V24 Q0 0 24 0 Z" fill="#fff"/>
+</svg>

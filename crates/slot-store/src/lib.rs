@@ -1,4 +1,5 @@
 mod atomic;
+pub mod cart_shell;
 mod config;
 mod core;
 pub mod gb;
@@ -9,10 +10,12 @@ mod platform;
 mod ring;
 mod scan;
 mod slot_state;
+pub mod snes;
 mod stamp;
 mod theme;
 
 pub use atomic::atomic_write;
+pub use cart_shell::{Outline, ShellChoice, ShellFinish, CART_SHELL_FILE, LABELS_SHELL_FILE};
 pub use config::{move_config, CONFIG_DIR};
 pub use core::{core_for, read_selected_cores, write_selected_core, Core, SELECTED_CORE_FILE};
 pub use gba::{header_clean, header_code, header_title};

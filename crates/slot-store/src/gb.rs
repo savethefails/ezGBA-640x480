@@ -13,6 +13,55 @@ const TITLE_LEN: usize = 11;
 /// are three different cartridges, in three different plastics, and two different shells.
 const CGB_OFF: u64 = 0x143;
 
+/// The manufacturer code later carts carry in the last four bytes of the old title field, and
+/// the destination code: 0x00 is Japan, anything else overseas.
+const CODE_OFF: usize = 0x13f;
+const DEST_OFF: usize = 0x14a;
+pub const HEADER_LEN: usize = 0x150;
+
+/// What the shell table keys on, read in one go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Header {
+    pub title: String,
+    /// The four character game code, or empty on a cart from before there was one: those bytes
+    /// are then the end of the title, and only all capitals and digits reads as a code.
+    pub code: String,
+    pub cgb: u8,
+    pub japan: bool,
+}
+
+impl Header {
+    pub fn parse(bytes: &[u8]) -> Option<Header> {
+        let bytes = bytes.get(..HEADER_LEN)?;
+        let title = &bytes[TITLE_OFF as usize..][..TITLE_LEN];
+        let end = title.iter().position(|b| *b == 0).unwrap_or(TITLE_LEN);
+        let code = &bytes[CODE_OFF..CODE_OFF + 4];
+        let is_code = code
+            .iter()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+        Some(Header {
+            title: String::from_utf8_lossy(&title[..end]).trim().to_string(),
+            code: if is_code {
+                String::from_utf8_lossy(code).into_owned()
+            } else {
+                String::new()
+            },
+            cgb: bytes[CGB_OFF as usize],
+            japan: bytes[DEST_OFF] == 0,
+        })
+    }
+
+    pub fn class(&self) -> Class {
+        class_of(Some(self.cgb))
+    }
+}
+
+pub fn header(rom: &Path) -> Option<Header> {
+    let mut buf = [0u8; HEADER_LEN];
+    read_at(rom, 0, &mut buf)?;
+    Header::parse(&buf)
+}
+
 /// The header title, or `None` when the field is empty — which is not a malformed ROM. Ours is:
 /// `Tetris Chromatic.gbc` fills none of it. The shelf names a cart from its filename anyway.
 pub fn title(rom: &Path) -> Option<String> {
@@ -51,7 +100,11 @@ pub enum Class {
 /// have a header — is an original pak. That is the safe way to be wrong: a mislabelled cart is
 /// drawn as the commonest object rather than as a cart that never existed.
 pub fn class(rom: &Path) -> Class {
-    match cgb_flag(rom) {
+    class_of(cgb_flag(rom))
+}
+
+fn class_of(flag: Option<u8>) -> Class {
+    match flag {
         Some(0xc0) => Class::ColourOnly,
         Some(0x80) => Class::DualMode,
         _ => Class::Original,

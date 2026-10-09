@@ -28,10 +28,14 @@ use std::path::Path;
 /// deliberate blank, a typo — is a question about the value's type, and this layer does not
 /// know the type.
 pub fn read(root: &Path, file: &str) -> HashMap<String, String> {
+    std::fs::read_to_string(root.join(file))
+        .map(|text| parse(&text))
+        .unwrap_or_default()
+}
+
+/// `read`, for text already in hand.
+pub fn parse(text: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let Ok(text) = std::fs::read_to_string(root.join(file)) else {
-        return out;
-    };
     for line in text.lines() {
         let Some((key, value)) = entry(line) else {
             continue;

@@ -347,9 +347,11 @@ impl Frontend {
         let rounded = gb_cart_shadow(GbShell::Rounded);
         let rounded = compositor.create_texture(rounded.w, rounded.h, &rounded.rgba);
         self.session.app_mut().set_gb_cart_shadows(notched, rounded);
-        let snes = snes_cart_shadow();
-        let snes = compositor.create_texture(snes.w, snes.h, &snes.rgba);
-        self.session.app_mut().set_snes_cart_shadow(snes);
+        let boxy = snes_cart_shadow(slot_ui::SnesShell::Boxy);
+        let boxy = compositor.create_texture(boxy.w, boxy.h, &boxy.rgba);
+        let sfc = snes_cart_shadow(slot_ui::SnesShell::Rounded);
+        let sfc = compositor.create_texture(sfc.w, sfc.h, &sfc.rgba);
+        self.session.app_mut().set_snes_cart_shadows(boxy, sfc);
         // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
         // reserved slot rather than over the fill. The housing tint was only ever needed to
         // hide the bolt inside the fill it sat on; out here it sits where every other HUD

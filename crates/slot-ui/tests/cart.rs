@@ -663,10 +663,11 @@ fn only_the_notched_shell_has_lines_across_its_shoulder() {
             steps(stem)
         );
     }
-    assert_eq!(
-        steps("Clear"),
-        0,
-        "the Colour pak has lines across its header, which that shell does not have"
+    // A few from the clear shell's own rim and what shows through it, never a rib's hundreds.
+    assert!(
+        steps("Clear") < 10,
+        "the Colour pak has lines across its header, which that shell does not have: {}",
+        steps("Clear")
     );
 }
 

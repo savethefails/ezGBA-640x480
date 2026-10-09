@@ -22,6 +22,9 @@ pub struct Cart {
     /// The four character header game code, empty when the rom has none. A Game Boy cart has
     /// no equivalent field, so this is always empty for `Platform::Gb` and `Platform::Gbc`.
     pub code: String,
+    /// The shell the player chose for this cart in `cart_shell.ini`, or `None` for the one the
+    /// built-in table picks. See `cart_shell`.
+    pub shell: Option<crate::ShellChoice>,
 }
 
 #[derive(Debug)]
@@ -57,6 +60,11 @@ impl From<std::io::Error> for StoreError {
 /// so a folder that will not open costs the player that folder and nothing else. Same for a
 /// single directory entry that will not stat: it costs that one cart.
 pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
+    let read = |file: &str| std::fs::read_to_string(root.join(file)).unwrap_or_default();
+    let shells = crate::cart_shell::layered(
+        &read(crate::CART_SHELL_FILE),
+        &read(crate::LABELS_SHELL_FILE),
+    );
     let mut carts = Vec::new();
     for platform in Platform::ALL {
         let dir = root.join("Games").join(platform.dir_name());
@@ -110,6 +118,7 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 code,
                 label: label.is_file().then_some(label),
                 box_art: box_art.is_file().then_some(box_art),
+                shell: shells.get(&crate::cart_shell::key(stem)).copied(),
                 rom,
             });
         }

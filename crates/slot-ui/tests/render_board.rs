@@ -17,6 +17,7 @@ fn render_board() {
         rom: "Games/GBA/Emerald.gba".into(),
         label: None,
         box_art: None,
+        shell: None,
         code: "BPEE".into(),
         title: "POKEMON EMER".into(),
     });
