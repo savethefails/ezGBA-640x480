@@ -1,12 +1,11 @@
 use slot_store::gb::Class;
-use slot_store::snes::Region;
 use slot_store::{Cart, Outline, Platform};
 
 use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
 use crate::silhouette::{
     cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
-    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell, SnesShell,
+    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell,
 };
 use crate::text;
 
@@ -71,28 +70,12 @@ pub const GB_LABEL_H: u32 = gb_label_panel(GB_CART_W, GB_CART_H).3 - GB_LABEL_Y;
 pub const SNES_CART_W: u32 = 240;
 pub const SNES_CART_H: u32 = 172;
 
-/// The Super Famicom and PAL label, on the front below the grip ridges: 10% to 90% across and
-/// 30% to 93% down.
+/// The label, which wraps over the cart's top edge: seen square on it starts at the very top.
+/// Across the centre column, 10.8% to 89.2%, and down to half way, above the recessed grip:
+/// 188 x 86, the real label's 2.2:1 and very nearly the GBA label's size. The wings are
+/// narrower than the real cart's to make room for it, on purpose: the label is what a shelf of
+/// carts is read by, and a full label scan then fits without losing its sides.
 pub const fn snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
-    (
-        (w * 100 + 500) / 1000,
-        (h * 300 + 500) / 1000,
-        (w * 900 + 500) / 1000,
-        (h * 930 + 500) / 1000,
-    )
-}
-
-pub const SNES_LABEL_X: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).0;
-pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
-pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
-pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
-
-/// The North American label, which wraps over the cart's top edge: seen square on it starts at
-/// the very top. Across the centre column, 10.8% to 89.2%, and down to half way, above the
-/// recessed grip: 188 x 86, the real label's 2.2:1 and very nearly the GBA label's size. The
-/// wings are narrower than the real cart's to make room for it, on purpose: the label is what a
-/// shelf of carts is read by, and a full label scan then fits without losing its sides.
-pub const fn us_snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
     (
         (w * 108 + 500) / 1000,
         0,
@@ -101,9 +84,10 @@ pub const fn us_snes_label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
     )
 }
 
-pub const US_SNES_LABEL_X: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).0;
-pub const US_SNES_LABEL_W: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).2 - US_SNES_LABEL_X;
-pub const US_SNES_LABEL_H: u32 = us_snes_label_panel(SNES_CART_W, SNES_CART_H).3;
+pub const SNES_LABEL_X: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).0;
+pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
+pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
+pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
 const PAD: u32 = 10;
 const MAX_LINES: usize = 3;
@@ -119,7 +103,6 @@ const GB_MAX_PX: f32 = (GB_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 /// The SNES label is 1.76:1, between the other two, so it is handed both bounds as the Game Boy
 /// one is.
 const SNES_MAX_PX: f32 = (SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
-const US_SNES_MAX_PX: f32 = (US_SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 const MIN_PX: f32 = 10.0;
 
 /// How far the translucent edge reaches in. Zero at this depth exactly, so a pixel any
@@ -186,7 +169,7 @@ struct Board {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mould {
     Gba,
-    Snes(SnesShell),
+    Snes,
     Gb(GbShell),
 }
 
@@ -208,28 +191,10 @@ pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
     }
 }
 
-/// Which SNES shell this cart came out of, or `None` for a cart of another console. A choice
-/// in `cart_shell.ini` wins; otherwise the header's region says, and a rom whose header does
-/// not check out is drawn in the North American shell. Opens the rom, so like `gb_shell_of` it
-/// is asked once a row and once a face, never on a frame.
-pub fn snes_shell_of(cart: &Cart) -> Option<SnesShell> {
-    if cart.platform != Platform::Snes {
-        return None;
-    }
-    Some(match cart.shell.map(|c| c.outline) {
-        Some(Outline::Boxy) => SnesShell::Boxy,
-        Some(Outline::Rounded) => SnesShell::Rounded,
-        _ => match slot_store::snes::header(&cart.rom).map(|h| h.region) {
-            Some(Region::Japan | Region::Pal) => SnesShell::Rounded,
-            Some(Region::NorthAmerica) | None => SnesShell::Boxy,
-        },
-    })
-}
-
 /// The mould a cart is drawn from, which is what its outline, moulding and backing come from.
 pub fn mould_of(cart: &Cart) -> Mould {
-    if let Some(shell) = snes_shell_of(cart) {
-        return Mould::Snes(shell);
+    if cart.platform == Platform::Snes {
+        return Mould::Snes;
     }
     match gb_shell_of(cart) {
         None => Mould::Gba,
@@ -260,34 +225,15 @@ fn spec(shape: Mould) -> Spec {
             },
             wraps: false,
         },
-        Mould::Snes(SnesShell::Rounded) => Spec {
+        Mould::Snes => Spec {
             w: SNES_CART_W,
             h: SNES_CART_H,
             label: (SNES_LABEL_X, SNES_LABEL_Y, SNES_LABEL_W, SNES_LABEL_H),
-            mask: snes_cart_mask(SnesShell::Rounded),
-            depth: snes_cart_depth(SnesShell::Rounded),
-            detail: snes_detail_mask(SnesShell::Rounded),
+            mask: snes_cart_mask(),
+            depth: snes_cart_depth(),
+            detail: snes_detail_mask(),
             max_px: SNES_MAX_PX,
             max_h: (SNES_LABEL_H - 2 * PAD) as f32,
-            rim: SNES_RIM,
-            board: Board {
-                x: (0.1, 0.9),
-                top: SNES_LABEL_Y as f32 / SNES_CART_H as f32,
-                pins: (0.12, 0.88),
-                contacts_from: 0.9,
-                traces_from: 0.82,
-            },
-            wraps: false,
-        },
-        Mould::Snes(SnesShell::Boxy) => Spec {
-            w: SNES_CART_W,
-            h: SNES_CART_H,
-            label: (US_SNES_LABEL_X, 0, US_SNES_LABEL_W, US_SNES_LABEL_H),
-            mask: snes_cart_mask(SnesShell::Boxy),
-            depth: snes_cart_depth(SnesShell::Boxy),
-            detail: snes_detail_mask(SnesShell::Boxy),
-            max_px: US_SNES_MAX_PX,
-            max_h: (US_SNES_LABEL_H - 2 * PAD) as f32,
             rim: SNES_RIM,
             board: Board {
                 x: (0.15, 0.85),
@@ -329,7 +275,7 @@ pub fn cart_box(platform: Platform) -> (u32, u32) {
     let s = spec(match platform {
         Platform::Gba => Mould::Gba,
         Platform::Gb | Platform::Gbc => Mould::Gb(GbShell::Notched),
-        Platform::Snes => Mould::Snes(SnesShell::Boxy),
+        Platform::Snes => Mould::Snes,
     });
     (s.w, s.h)
 }
@@ -356,9 +302,9 @@ pub fn gb_cart_shadow(shell: GbShell) -> CartFace {
     shadow(GB_CART_W, GB_CART_H, gb_cart_mask(shell))
 }
 
-/// A SNES Game Pak's outline in black, one per shell for the same reason the Game Boy's are.
-pub fn snes_cart_shadow(shell: SnesShell) -> CartFace {
-    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask(shell))
+/// The SNES Game Pak's outline in black, for the same reason the other carts have theirs.
+pub fn snes_cart_shadow() -> CartFace {
+    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask())
 }
 
 fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {
@@ -391,7 +337,7 @@ pub fn cart_face_with(cart: &Cart, art: Option<Vec<u8>>) -> CartFace {
     let mut face = shell_face(&s, &shell);
     let label = match art {
         Some(rgba) => rgba,
-        None if matches!(mould, Mould::Snes(_)) => generated_snes_label(&s, &label_text(cart)),
+        None if mould == Mould::Snes => generated_snes_label(&s, &label_text(cart)),
         None => generated_label(&s, &label_text(cart)),
     };
     mould_detail(&s, &mut face);

@@ -219,9 +219,8 @@ its own save states, so a game suspended on one starts from its last in-game sav
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
 `Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.ini`.
 
-A SNES game is drawn in the cartridge its region came in, read from the game itself: North
-American games in the grey cart with grooved wings and a big label wrapped over the top, and
-Japanese and PAL games in the rounded, lighter grey Super Famicom cart. Killer Instinct is black.
+Every SNES game is drawn in the North American cart: grey, with grooved wings and a big label
+wrapped over the top. Killer Instinct is black.
 
 ## Cartridge shells
 
@@ -236,13 +235,13 @@ To pick a cart's shell yourself, add a line to `Config/cart_shell.ini`:
 ```
 Pokemon Emerald (USA) = auto 249c60 clear
 Tetris = notched 5a6e9c solid
-Super Metroid (Japan, USA) = boxy 7b7a80 solid
+Super Metroid (Japan, USA) = auto 8a878e solid
 ```
 
 The name is the game's file name without its extension. Then the cartridge shape, a colour as
 six hex digits, and `solid`, `clear` or `glitter`. The shape is `auto` (what the game says),
-`notched` or `rounded` for a Game Boy cart, or `boxy` (North American) or `rounded` (Super
-Famicom and PAL) for a SNES one. A `cart_shell.ini` in `Labels/` works the same way and wins
+`notched` or `rounded` for a Game Boy cart (GBA and SNES carts have one shape each, so use
+`auto`). A `cart_shell.ini` in `Labels/` works the same way and wins
 over yours, so a label pack can carry the shells that go with its labels; a line there that
 says just `auto` puts a cart back to its usual shell.
 

@@ -1,8 +1,7 @@
 use slot_store::scan;
 use slot_ui::{
     cart_face, gba_shell_for, lookup_order_is_exact_then_family_then_default, mould_of, shell_for,
-    table_keys, Finish, Mould, SnesShell, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, SFC_SHELL,
-    SNES_SHELL,
+    table_keys, Finish, Mould, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, SNES_SHELL,
 };
 use tempfile::TempDir;
 
@@ -272,30 +271,18 @@ fn snes_cart(stem: &str, title: &str, region: u8) -> (TempDir, slot_store::Cart)
     (d, cart)
 }
 
-/// North American carts are the boxy shell in its mid grey; Japan's and PAL's are the rounded
-/// Super Famicom shell in the lighter one. Read off the header's destination code.
+/// Every SNES cart is the North American one, in its grey, whatever region the game is from.
 #[test]
-fn a_snes_carts_region_picks_its_shell() {
-    let (_d, us) = snes_cart("Super Mario World", "SUPER MARIOWORLD", 0x01);
-    assert_eq!(mould_of(&us), Mould::Snes(SnesShell::Boxy));
-    assert_eq!(shell_for(&us), SNES_SHELL);
-    for (region, what) in [(0x00, "Japan"), (0x02, "Europe")] {
+fn every_snes_cart_is_the_north_american_one() {
+    for region in [0x00, 0x01, 0x02] {
         let (_d, cart) = snes_cart("Super Mario World", "SUPER MARIOWORLD", region);
-        assert_eq!(mould_of(&cart), Mould::Snes(SnesShell::Rounded), "{what}");
-        assert_eq!(shell_for(&cart), SFC_SHELL, "{what}");
+        assert_eq!(mould_of(&cart), Mould::Snes, "{region}");
+        assert_eq!(shell_for(&cart), SNES_SHELL, "{region}");
     }
-    assert!(
-        SFC_SHELL
-            .colour
-            .iter()
-            .zip(SNES_SHELL.colour)
-            .all(|(a, b)| *a > b),
-        "the Super Famicom's grey is the lighter one"
-    );
 }
 
 #[test]
-fn killer_instinct_is_black_on_both_shells() {
+fn killer_instinct_is_black() {
     for region in [0x01, 0x02] {
         let (_d, cart) = snes_cart("Killer Instinct", "KILLER INSTINCT", region);
         let s = shell_for(&cart);
@@ -308,53 +295,42 @@ fn killer_instinct_is_black_on_both_shells() {
     }
 }
 
-/// A dump with no header that checks out is drawn as ezGBA always drew a SNES cart.
+/// A dump with no header that checks out is the usual grey cart.
 #[test]
-fn a_snes_rom_with_no_header_is_the_north_american_cart() {
+fn a_snes_rom_with_no_header_is_the_grey_cart() {
     let d = tempfile::tempdir().expect("tempdir");
     let games = d.path().join("Games/SNES");
     std::fs::create_dir_all(&games).expect("games dir");
     std::fs::write(games.join("Homebrew.sfc"), vec![0xffu8; 0x8000]).expect("rom");
     let cart = &scan(d.path()).expect("scan")[0];
-    assert_eq!(mould_of(cart), Mould::Snes(SnesShell::Boxy));
+    assert_eq!(mould_of(cart), Mould::Snes);
     assert_eq!(shell_for(cart), SNES_SHELL);
 }
 
-/// The two shells share a box on the shelf but not an outline: the rounded one's top corners
-/// are swept well in from where the boxy one's are.
+/// The centre column stands taller than the wings, and the label runs up to the top edge.
 #[test]
-fn the_snes_shells_differ_at_the_top_corners_and_share_a_size() {
-    let (_d, us) = snes_cart("A", "A", 0x01);
-    let (_e, jp) = snes_cart("A", "A", 0x00);
-    let (us, jp) = (cart_face(&us), cart_face(&jp));
-    assert_eq!((us.w, us.h), (jp.w, jp.h));
-    let alpha = |f: &slot_ui::CartFace, x: u32, y: u32| f.rgba[((y * f.w + x) * 4 + 3) as usize];
-    assert_eq!(alpha(&us, 6, 6), 255, "the boxy shell is square there");
-    assert_eq!(alpha(&us, 1, 1), 0, "the boxy shell has its small chamfer");
-    assert_eq!(alpha(&jp, 3, 3), 0, "the rounded shell is swept away there");
-    assert_eq!(alpha(&jp, 2, 30), 255, "and full height below the sweep");
+fn the_snes_cart_has_its_centre_column_and_a_label_to_the_top() {
+    let (_d, cart) = snes_cart("A", "A", 0x01);
+    let f = cart_face(&cart);
+    let alpha = |x: u32, y: u32| f.rgba[((y * f.w + x) * 4 + 3) as usize];
+    assert_eq!(alpha(10, 2), 0, "the wing stands as tall as the column");
+    assert_eq!(alpha(f.w / 2, 0), 255, "the column does not reach the top");
+    assert_eq!(alpha(10, 10), 255, "the wing is missing");
 }
 
-/// `cart_shell.ini` can pick either SNES shell; a Game Boy word reads as the rom's own.
+/// `cart_shell.ini` still colours a SNES cart; a mould word means nothing to it.
 #[test]
-fn cart_shell_ini_picks_a_snes_mould() {
+fn cart_shell_ini_colours_a_snes_cart() {
     let d = tempfile::tempdir().expect("tempdir");
     snes_rom(d.path(), "Chrono Trigger", "CHRONO TRIGGER", 0x01);
     std::fs::create_dir_all(d.path().join("Config")).expect("config");
     std::fs::write(
         d.path().join("Config/cart_shell.ini"),
-        "Chrono Trigger = rounded abaaad solid\n",
+        "Chrono Trigger = rounded 102030 solid\n",
     )
     .expect("ini");
     let cart = &scan(d.path()).expect("scan")[0];
-    assert_eq!(mould_of(cart), Mould::Snes(SnesShell::Rounded));
-    std::fs::write(
-        d.path().join("Config/cart_shell.ini"),
-        "Chrono Trigger = notched 102030 solid\n",
-    )
-    .expect("ini");
-    let cart = &scan(d.path()).expect("scan")[0];
-    assert_eq!(mould_of(cart), Mould::Snes(SnesShell::Boxy));
+    assert_eq!(mould_of(cart), Mould::Snes);
     assert_eq!(shell_for(cart).colour, [0x10, 0x20, 0x30]);
 }
 

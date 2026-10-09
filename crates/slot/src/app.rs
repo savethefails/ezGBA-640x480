@@ -1081,12 +1081,10 @@ impl App {
         }
     }
 
-    /// The SNES Game Pak's outline in black, one per shell, handed to every shelf as the Game
-    /// Boy's are.
-    pub fn set_snes_cart_shadows(&mut self, boxy: TexId, rounded: TexId) {
+    /// The SNES Game Pak's outline in black, handed to every shelf as the other two are.
+    pub fn set_snes_cart_shadow(&mut self, face: TexId) {
         for (_, shelf) in &mut self.shelves {
-            shelf.set_snes_shadow(slot_ui::SnesShell::Boxy, boxy);
-            shelf.set_snes_shadow(slot_ui::SnesShell::Rounded, rounded);
+            shelf.set_snes_shadow(face);
         }
     }
 

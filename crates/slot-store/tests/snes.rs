@@ -1,4 +1,4 @@
-use slot_store::snes::{header, Region};
+use slot_store::snes::header;
 
 /// A rom of `len` bytes with a header that checks out at `at`, after `copier` bytes of copier
 /// header.
@@ -25,21 +25,18 @@ fn read(bytes: Vec<u8>) -> Option<slot_store::snes::Header> {
 fn a_lorom_header_is_read() {
     let h = read(rom(0x10000, 0x7fc0, 0, "SUPER MARIOWORLD", 0x01)).expect("header");
     assert_eq!(h.title, "SUPER MARIOWORLD");
-    assert_eq!(h.region, Region::NorthAmerica);
 }
 
 #[test]
 fn a_hirom_header_is_read() {
     let h = read(rom(0x10000, 0xffc0, 0, "KILLER INSTINCT", 0x02)).expect("header");
     assert_eq!(h.title, "KILLER INSTINCT");
-    assert_eq!(h.region, Region::Pal);
 }
 
 #[test]
 fn a_copier_header_in_front_is_skipped() {
     let h = read(rom(0x10000, 0x7fc0, 512, "ZELDA", 0x00)).expect("header");
     assert_eq!(h.title, "ZELDA");
-    assert_eq!(h.region, Region::Japan);
 }
 
 /// What a checksum and its complement are for: bytes at the header's place that do not agree

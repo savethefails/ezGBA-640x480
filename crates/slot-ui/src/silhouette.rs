@@ -10,8 +10,6 @@ const GB_DETAIL_SVG: &str = include_str!("../assets/gb_cart_detail.svg");
 const GBC_DETAIL_SVG: &str = include_str!("../assets/gbc_cart_detail.svg");
 const SNES_CART_SVG: &str = include_str!("../assets/snes_cart.svg");
 const SNES_DETAIL_SVG: &str = include_str!("../assets/snes_cart_detail.svg");
-const SFC_CART_SVG: &str = include_str!("../assets/sfc_cart.svg");
-const SFC_DETAIL_SVG: &str = include_str!("../assets/sfc_cart_detail.svg");
 
 /// Moulded lettering, one greyscale mask a cart, at the size of the cart's own canvas: white is
 /// the raised letters. Slot's, which it rasterised from Gill Sans and Futura; cut to ezGBA's
@@ -31,17 +29,6 @@ pub enum GbShell {
     /// Classes A and B: the power-switch notch cut out of the top right corner.
     Notched,
     /// Class C: no notch, and the top corners rounded rather than stepped.
-    Rounded,
-}
-
-/// Which of the two SNES Game Pak shells a cart came out of: one for North America, and one
-/// for Japan that Europe and Australia shared. Same size on the shelf, different plastic.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum SnesShell {
-    /// North America's: boxy, the label wrapped over its top edge, a mid grey.
-    Boxy,
-    /// The Super Famicom's, and PAL's: top corners swept round, grip ridges above the label,
-    /// the lighter grey.
     Rounded,
 }
 
@@ -245,45 +232,24 @@ fn decode_mask(png: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     (grey && (info.width, info.height) == (w, h)).then(|| buf[..(w * h) as usize].to_vec())
 }
 
-/// A SNES Game Pak's outline, depth and moulding, one of each a shell.
-pub(crate) fn snes_cart_mask(shell: SnesShell) -> &'static [u8] {
-    static BOXY: OnceLock<Vec<u8>> = OnceLock::new();
-    static ROUNDED: OnceLock<Vec<u8>> = OnceLock::new();
-    let (lock, svg) = match shell {
-        SnesShell::Boxy => (&BOXY, SNES_CART_SVG),
-        SnesShell::Rounded => (&ROUNDED, SFC_CART_SVG),
-    };
-    lock.get_or_init(|| {
-        rasterise_svg(svg, SNES_CART_W, SNES_CART_H)
+/// The SNES Game Pak's outline, depth and moulding: one shell, so one of each.
+pub(crate) fn snes_cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_svg(SNES_CART_SVG, SNES_CART_W, SNES_CART_H)
             .unwrap_or_else(|| vec![255; (SNES_CART_W * SNES_CART_H) as usize])
     })
 }
 
-pub(crate) fn snes_cart_depth(shell: SnesShell) -> &'static [u8] {
-    static BOXY: OnceLock<Vec<u8>> = OnceLock::new();
-    static ROUNDED: OnceLock<Vec<u8>> = OnceLock::new();
-    let lock = match shell {
-        SnesShell::Boxy => &BOXY,
-        SnesShell::Rounded => &ROUNDED,
-    };
-    lock.get_or_init(|| {
-        depth_map(
-            snes_cart_mask(shell),
-            SNES_CART_W as usize,
-            SNES_CART_H as usize,
-        )
-    })
+pub(crate) fn snes_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(snes_cart_mask(), SNES_CART_W as usize, SNES_CART_H as usize))
 }
 
-pub(crate) fn snes_detail_mask(shell: SnesShell) -> &'static Detail {
-    static BOXY: OnceLock<Detail> = OnceLock::new();
-    static ROUNDED: OnceLock<Detail> = OnceLock::new();
-    let (lock, svg) = match shell {
-        SnesShell::Boxy => (&BOXY, SNES_DETAIL_SVG),
-        SnesShell::Rounded => (&ROUNDED, SFC_DETAIL_SVG),
-    };
-    lock.get_or_init(|| {
-        rasterise_detail(svg, SNES_CART_W, SNES_CART_H)
+pub(crate) fn snes_detail_mask() -> &'static Detail {
+    static MASK: OnceLock<Detail> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail(SNES_DETAIL_SVG, SNES_CART_W, SNES_CART_H)
             .unwrap_or_else(|| Detail::blank(SNES_CART_W, SNES_CART_H))
     })
 }

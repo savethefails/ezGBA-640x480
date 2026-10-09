@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use slot_store::gb::Class;
-use slot_store::snes::Region;
 use slot_store::{Cart, Platform, ShellFinish};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -98,17 +97,14 @@ const KIRBY: Shell = shell([0xec, 0x94, 0xb4], Finish::Translucent);
 /// The North American SNES Game Pak: a mid grey with a little violet in it.
 pub const SNES_SHELL: Shell = shell([0x8a, 0x87, 0x8e], Finish::Solid);
 
-/// The Super Famicom and PAL Game Pak, the lighter grey of the Super Famicom itself.
-pub const SFC_SHELL: Shell = shell([0xab, 0xaa, 0xad], Finish::Solid);
-
-/// SNES carts outside their region's grey, keyed on the header's title. Killer Instinct shipped
+/// SNES carts outside the usual grey, keyed on the header's title. Killer Instinct shipped
 /// in black, in North America and in Europe.
 const SNES_TITLES: &[(&str, Shell)] =
     &[("KILLER INSTINCT", shell([0x2c, 0x2b, 0x2e], Finish::Solid))];
 
 /// A shell chosen in `cart_shell.ini` wins; otherwise, what plastic this cart shipped in: by
 /// game code for GBA; for a Game Boy pak by its code or title, then its CGB flag; for a SNES
-/// pak by its title, then its region. The folder is not asked, since `.gb` and `.gbc`
+/// pak by its title. The folder is not asked, since `.gb` and `.gbc`
 /// extensions routinely disagree with the flag.
 pub fn shell_for(cart: &Cart) -> Shell {
     if let Some(choice) = cart.shell {
@@ -154,19 +150,10 @@ fn flag_shell(class: Class) -> Shell {
     }
 }
 
-/// A rom with no header that checks out is drawn as the North American cart, which is what
-/// ezGBA drew for every SNES cart before it read the header at all.
 fn snes_shell_for(rom: &Path) -> Shell {
-    let Some(h) = slot_store::snes::header(rom) else {
-        return SNES_SHELL;
-    };
-    if let Some((_, s)) = SNES_TITLES.iter().find(|(t, _)| *t == h.title) {
-        return *s;
-    }
-    match h.region {
-        Region::NorthAmerica => SNES_SHELL,
-        Region::Japan | Region::Pal => SFC_SHELL,
-    }
+    slot_store::snes::header(rom)
+        .and_then(|h| SNES_TITLES.iter().find(|(t, _)| *t == h.title))
+        .map_or(SNES_SHELL, |(_, s)| *s)
 }
 
 pub fn table_keys() -> Vec<&'static str> {

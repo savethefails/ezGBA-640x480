@@ -71,18 +71,13 @@ fn main() {
             cart(Platform::Snes, "Super Mario World", None),
             cart(
                 Platform::Snes,
-                "Super Mario World (Japan)",
-                choice(Outline::Rounded, [0xab, 0xaa, 0xad], ShellFinish::Solid),
-            ),
-            cart(
-                Platform::Snes,
                 "Killer Instinct",
-                choice(Outline::Boxy, [0x2c, 0x2b, 0x2e], ShellFinish::Solid),
+                choice(Outline::Auto, [0x2c, 0x2b, 0x2e], ShellFinish::Solid),
             ),
             cart(
                 Platform::Snes,
                 "Clear test",
-                choice(Outline::Rounded, [0xd9, 0xdb, 0xd8], ShellFinish::Clear),
+                choice(Outline::Auto, [0xd9, 0xdb, 0xd8], ShellFinish::Clear),
             ),
         ],
         // A label scan, when one is given as the second argument.

@@ -1,6 +1,5 @@
-//! The SNES internal header: the game's title and the region it was released for, which is
-//! what decides the shell a cart is drawn in. North American carts came in their own boxy
-//! shell; Japanese and PAL carts in the Super Famicom's rounded one.
+//! The SNES internal header's title: what the shell table keys on, for the few carts that did
+//! not come in the usual grey.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -13,21 +12,11 @@ const HEADER_AT: [u64; 2] = [0x7fc0, 0xffc0];
 const COPIER: u64 = 512;
 const HEADER_LEN: usize = 0x20;
 const TITLE_LEN: usize = 21;
-const DEST_OFF: usize = 0x19;
 const COMPLEMENT_OFF: usize = 0x1c;
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Region {
-    Japan,
-    NorthAmerica,
-    /// Every other destination code: Europe, Australia, and the rest, all on the PAL shell.
-    Pal,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
     pub title: String,
-    pub region: Region,
 }
 
 /// The header, or `None` when no candidate place holds one whose checksum and complement agree.
@@ -56,10 +45,5 @@ pub fn parse(bytes: &[u8]) -> Option<Header> {
     }
     Some(Header {
         title: String::from_utf8_lossy(title).trim().to_string(),
-        region: match bytes[DEST_OFF] {
-            0x00 => Region::Japan,
-            0x01 => Region::NorthAmerica,
-            _ => Region::Pal,
-        },
     })
 }

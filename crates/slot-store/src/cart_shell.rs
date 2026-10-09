@@ -14,14 +14,12 @@ pub const CART_SHELL_FILE: &str = "Config/cart_shell.ini";
 pub const LABELS_SHELL_FILE: &str = "Labels/cart_shell.ini";
 
 /// Which mould: `auto` asks the rom. A Game Boy pak is `notched` (classes A and B) or `rounded`
-/// (class C); a SNES pak is `boxy` (the North American shell) or `rounded` (the Super Famicom
-/// and PAL one). A word meant for the other console reads as `auto`.
+/// (class C). Carts of the other consoles have one mould each and read every word as `auto`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Outline {
     Auto,
     Notched,
     Rounded,
-    Boxy,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -47,7 +45,6 @@ impl ShellChoice {
             "auto" => Outline::Auto,
             "notched" => Outline::Notched,
             "rounded" => Outline::Rounded,
-            "boxy" => Outline::Boxy,
             _ => return None,
         };
         let hex = words.next()?;
@@ -73,7 +70,6 @@ impl ShellChoice {
             Outline::Auto => "auto",
             Outline::Notched => "notched",
             Outline::Rounded => "rounded",
-            Outline::Boxy => "boxy",
         };
         let finish = match self.finish {
             ShellFinish::Solid => "solid",
