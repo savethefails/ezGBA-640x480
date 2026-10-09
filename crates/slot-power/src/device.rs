@@ -287,6 +287,35 @@ extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
+/// Uploads the one rumble effect as `id`, or as a new one for -1, and returns the id the
+/// driver gave it. Length zero is held until it is stopped, which is what a strength that
+/// persists across frames needs; full magnitude because the driver has only the one. Done again
+/// before every start, because BaseOS's own helpers erase effects on the node behind slot's back
+/// and a play of an erased id does nothing.
+fn upload(node: &fs::File, id: i16) -> Option<i16> {
+    let mut effect = FfEffect {
+        kind: FF_RUMBLE,
+        id,
+        direction: 0,
+        trigger: FfTrigger::default(),
+        replay: FfReplay::default(),
+        _align: 0,
+        rumble: FfRumble {
+            strong: u16::MAX,
+            weak: u16::MAX,
+        },
+        _tail: [0; 28],
+    };
+    let rc = unsafe {
+        ioctl(
+            node.as_raw_fd(),
+            EVIOCSFF,
+            &mut effect as *mut FfEffect as *mut c_void,
+        )
+    };
+    (rc >= 0).then_some(effect.id)
+}
+
 impl Motor {
     /// `None` where there is no motor, which is a device that does not buzz rather than a
     /// boot failure.
@@ -298,41 +327,29 @@ impl Motor {
             .open(Path::new(DEV_INPUT).join(&name))
             .map_err(|e| eprintln!("slot: rumble {name}: {e}"))
             .ok()?;
-        // Length zero is held until it is stopped, which is what a strength that persists
-        // across frames needs. Full magnitude because the driver has only the one.
-        let mut effect = FfEffect {
-            kind: FF_RUMBLE,
-            id: -1,
-            direction: 0,
-            trigger: FfTrigger::default(),
-            replay: FfReplay::default(),
-            _align: 0,
-            rumble: FfRumble {
-                strong: u16::MAX,
-                weak: u16::MAX,
-            },
-            _tail: [0; 28],
-        };
-        let rc = unsafe {
-            ioctl(
-                node.as_raw_fd(),
-                EVIOCSFF,
-                &mut effect as *mut FfEffect as *mut c_void,
-            )
-        };
-        if rc < 0 {
+        let Some(id) = upload(&node, -1) else {
             eprintln!("slot: rumble {name}: {}", std::io::Error::last_os_error());
             return None;
-        }
+        };
         Some(Motor {
             node,
             name,
-            id: effect.id,
+            id,
             running: false,
         })
     }
 
     fn play(&mut self, on: bool) {
+        if on {
+            match upload(&self.node, self.id).or_else(|| upload(&self.node, -1)) {
+                Some(id) => self.id = id,
+                None => eprintln!(
+                    "slot: rumble {}: {}",
+                    self.name,
+                    std::io::Error::last_os_error()
+                ),
+            }
+        }
         let ev = FfEvent {
             sec: 0,
             usec: 0,

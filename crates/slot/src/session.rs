@@ -16,6 +16,10 @@ use crate::persist;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
+/// How long the motor keeps running after the core last asked for it: long enough to ride
+/// through the frames between a game's pulses, short enough that a stop is still felt as one.
+pub const RUMBLE_HOLD_MS: Millis = 100;
+
 pub struct Session {
     root: PathBuf,
     app: App,
@@ -30,6 +34,10 @@ pub struct Session {
     /// What the motor was last set to. On the device that setting is a write to hardware and
     /// the core asks for the same value most frames.
     motor: u16,
+    /// The last rumble the core asked for and when. A core sets its motor per frame and lets
+    /// go between, so short gaps in what it asks for are held across rather than chattering
+    /// the motor off and on. See `RUMBLE_HOLD_MS`.
+    pulse: Option<(Millis, u16)>,
     /// A reload for a link is underway: the core in the slot was spawned for it, and `App` is
     /// waiting to hear whether it loaded. See `reload_for_link`.
     reloading: bool,
@@ -55,6 +63,7 @@ impl Session {
             rewinding: false,
             fast: false,
             motor: 0,
+            pulse: None,
             reloading: false,
             greeting_pcm: None,
         }
@@ -398,8 +407,19 @@ impl Session {
     /// rumble being off in the quick menu: the game rumbles on as far as the emulator knows, and
     /// the motor is only ever told 0.
     fn sync_rumble(&mut self) {
-        let want = match &self.emu {
+        let asked = match &self.emu {
             Some(emu) if self.playing() && self.app.rumble_enabled() => emu.rumble().strength(),
+            _ => {
+                self.pulse = None;
+                return self.rumble(0);
+            }
+        };
+        let now = self.app.now();
+        if asked > 0 {
+            self.pulse = Some((now, asked));
+        }
+        let want = match self.pulse {
+            Some((at, strength)) if now.saturating_sub(at) < RUMBLE_HOLD_MS => strength,
             _ => 0,
         };
         self.rumble(want);
