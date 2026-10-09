@@ -164,14 +164,9 @@ impl Frontend {
     /// Everything that never changes: the carts, the HUD glyphs and the key caps. All of it
     /// needs a live context, so it happens after the compositor and not at boot.
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {
-        let faces = self
-            .session
-            .app()
-            .carts()
-            .map(|c| {
-                let f = cart_face(c);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
+        let faces = build_cart_faces(&self.session.app().carts().collect::<Vec<_>>())
+            .into_iter()
+            .map(|f| compositor.create_texture(f.w, f.h, &f.rgba))
             .collect();
         self.session.app_mut().set_faces(faces);
         // Before the first frame, so the panel goes from the bootloader's picture to the same
@@ -563,6 +558,26 @@ impl Frontend {
 /// was rastered at. Every menu on the device is drawn from a list shaped exactly like this,
 /// so the four the in-game menu needs are built through one function rather than four copies
 /// of the same three lines.
+/// Every cart's face, in the order given. Each one decodes and scales its label art, which is
+/// most of a boot with a full card on the H700, so they are built a share per core rather than
+/// one after another; only the compositor can mint a texture, so that stays with the caller.
+fn build_cart_faces(carts: &[&slot_store::Cart]) -> Vec<slot_ui::CartFace> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let share = carts.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let builders: Vec<_> = carts
+            .chunks(share)
+            .map(|chunk| {
+                scope.spawn(move || chunk.iter().map(|c| cart_face(c)).collect::<Vec<_>>())
+            })
+            .collect();
+        builders
+            .into_iter()
+            .flat_map(|b| b.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
 fn menu_faces<'a>(
     compositor: &mut Compositor,
     labels: impl Iterator<Item = &'a str>,

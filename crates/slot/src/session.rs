@@ -690,6 +690,9 @@ impl Session {
         );
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
+        // L2 never rewinds on this build (see `Gestures::down`), so a rewind trail is a
+        // serialize every other present that nothing can ever read back.
+        emu.set_rewind_recording(false);
         self.app.set_snapshot(Box::new(emu.snapshot()));
         self.emu = Some(emu);
         crate::latency::note(&format!(

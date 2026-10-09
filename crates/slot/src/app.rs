@@ -630,6 +630,9 @@ pub struct App {
     /// When the state next has to be on the card. Moved by every resume write, not only by
     /// the autosave itself.
     autosave_at: Millis,
+    /// The autosave being written on its own thread, joined before anything else writes the
+    /// resume or the device goes down. See `autosave`.
+    pending_save: Option<std::thread::JoinHandle<()>>,
     battery_at: Millis,
     charge_at: Millis,
     /// The last full reading, with its charge half kept current by the fast tick. One
@@ -755,6 +758,7 @@ impl App {
             power: None,
             dozed_at: 0,
             autosave_at: AUTOSAVE_MS,
+            pending_save: None,
             battery_at: BATTERY_POLL_MS,
             charge_at: CHARGE_POLL_MS,
             battery: None,
@@ -1612,6 +1616,7 @@ impl App {
     }
 
     pub fn restart(&mut self) {
+        self.settle_saves();
         if let Some(power) = &mut self.power {
             power.restart();
         }
@@ -1743,6 +1748,7 @@ impl App {
     /// Does not return when there is a platform to power off. A unit test has none, and
     /// there the flag is the whole of it.
     pub fn poweroff(&mut self) {
+        self.settle_saves();
         if let Some(power) = &mut self.power {
             power.poweroff();
         }
@@ -2526,7 +2532,7 @@ impl App {
             self.on_doze_timeout();
         }
         if self.now() >= self.autosave_at {
-            self.flush_resume();
+            self.autosave();
         }
         if self.now() >= self.battery_at {
             self.battery_at = self.now() + BATTERY_POLL_MS;
@@ -2689,6 +2695,9 @@ impl App {
         let Some(root) = &self.root else {
             return;
         };
+        if let Some(h) = self.pending_save.take() {
+            let _ = h.join();
+        }
         let ring = StateRing::new(root, self.platform, self.core, stem);
         match ring.retire_resume(&format_stamp(self.wall_secs())) {
             Ok(Some(to)) => eprintln!(
@@ -3482,6 +3491,7 @@ impl App {
     /// the cart recorded as seated, so the next boot resumes it and the end of the
     /// animation retries the clear.
     fn flush_eject(&mut self, stem: &str) {
+        self.settle_saves();
         let (Some(root), Some(snapshot)) = (&self.root, &self.snapshot) else {
             return;
         };
@@ -4192,7 +4202,54 @@ impl App {
     ///
     /// Public for the one flush `App` cannot start itself: a reload for a link, which `Session`
     /// carries out and which has to be on the card before the core it reads is dropped.
+    /// Waits for an autosave still being written. Every other write of the resume goes after
+    /// it, so the older state can never land over a newer one.
+    pub fn settle_saves(&mut self) {
+        if let Some(h) = self.pending_save.take() {
+            let _ = h.join();
+        }
+    }
+
+    /// `flush_resume` with the card writes on a thread of their own. The state is taken here,
+    /// which is a moment's round trip to the core; writing it and the battery save to the card,
+    /// with their syncs, is what held the frame loop long enough to drop frames every minute.
+    fn autosave(&mut self) {
+        self.autosave_at = self.now() + AUTOSAVE_MS;
+        self.settle_saves();
+        let (Some(root), Some(snapshot), Some(cart)) = (&self.root, &self.snapshot, self.seated())
+        else {
+            return;
+        };
+        let Some(state) = snapshot.state() else {
+            eprintln!("slot: autosave: the core gave up no state");
+            return;
+        };
+        let (state, sav) = trusted_write(snapshot.as_ref(), state, "autosave");
+        let (root, platform, core, cart) =
+            (root.clone(), self.platform, self.core, cart.to_owned());
+        let write = move || {
+            if let Err(e) = persist::flush(
+                &root,
+                platform,
+                core,
+                &cart,
+                state.as_deref(),
+                sav.as_deref(),
+            ) {
+                eprintln!("slot: autosave: {e}");
+            }
+        };
+        match std::thread::Builder::new()
+            .name("slot-autosave".into())
+            .spawn(write)
+        {
+            Ok(h) => self.pending_save = Some(h),
+            Err(e) => eprintln!("slot: autosave: no writer thread: {e}"),
+        }
+    }
+
     pub fn flush_resume(&mut self) {
+        self.settle_saves();
         // The invariant is 60 s since the state was last durable, not 60 s since the last
         // autosave, so an attempt that had nothing to write still moves the deadline.
         self.autosave_at = self.now() + AUTOSAVE_MS;

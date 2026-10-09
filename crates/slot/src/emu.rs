@@ -101,6 +101,12 @@ const RUNAHEAD_BUDGET: Duration = Duration::from_millis(12);
 /// single heavy scene, or the scheduler, is not reason enough to lose it.
 const RUNAHEAD_STRIKES: u32 = 8;
 
+/// Kicked presents in a row the display's present is measured over, about five seconds: the
+/// audio's base rate while the worker follows the display. The SP's panel refreshes every
+/// 16.80 ms, not 60 Hz, which leaves the core 0.8% short of sound a second; DRC's trim reaches
+/// only half that, so without this the ring runs dry and the sound crackles.
+const RATE_WINDOW: u32 = 300;
+
 /// Frames between traced pacing lines, about five seconds.
 const TRACE_EVERY: u64 = 300;
 
@@ -172,6 +178,10 @@ struct Shared {
     observed: AtomicU8,
     state: AtomicU8,
     rewind: AtomicBool,
+    /// Whether presents record the rewind trail. Off, no snapshot is taken at all: on the H700
+    /// one is 6.6 ms of serialize every other present, work nothing can use where rewind is
+    /// unreachable. See `EmuHandle::set_rewind_recording`.
+    recording: AtomicBool,
     /// How much rewind history is left, 0 to 100, for the HUD bar to draw.
     rewind_fill: AtomicU8,
     stop: AtomicBool,
@@ -248,6 +258,7 @@ impl EmuHandle {
             observed: AtomicU8::new(Speed::Paused as u8),
             state: AtomicU8::new(CoreState::Loading as u8),
             rewind: AtomicBool::new(false),
+            recording: AtomicBool::new(true),
             rewind_fill: AtomicU8::new(0),
             stop: AtomicBool::new(false),
             volume: AtomicU8::new(100),
@@ -461,6 +472,12 @@ impl EmuHandle {
         self.shared.rewind.store(on, Ordering::Relaxed);
     }
 
+    /// Whether to keep recording the rewind trail. On by default; a frontend with no way to
+    /// rewind turns it off and saves the snapshot every other present costs.
+    pub fn set_rewind_recording(&self, on: bool) {
+        self.shared.recording.store(on, Ordering::Relaxed);
+    }
+
     pub fn rewind_fill(&self) -> u8 {
         self.shared.rewind_fill.load(Ordering::Relaxed)
     }
@@ -656,6 +673,13 @@ impl Worker {
         let mut fast_span: Option<(Instant, Duration)> = None;
         let mut deadline = Instant::now();
         let mut paced = 0u64;
+        // The display's present against `PRESENT`, measured from the kicks: 1.0 until a whole
+        // window of them has come, and whenever the presents are not following kicks.
+        let mut scale = 1.0f64;
+        // Whether the present under way began on a kick, and the run of kicked presents so
+        // far: when it began and how many. A present on the worker's own clock ends the run.
+        let mut kicked = false;
+        let mut run: (Instant, u32) = (Instant::now(), 0);
         // Run-ahead, while it is still affordable and the core can save its state. See `run_ahead`.
         let mut runahead_on = true;
         let mut ahead_strikes = 0u32;
@@ -945,6 +969,9 @@ impl Worker {
                 // trigger and the first pop of a rewind swallowed the entire stretch in one
                 // step instead of walking back through it.
                 since_snapshot += 1;
+                if !self.shared.recording.load(Ordering::Relaxed) {
+                    since_snapshot = 0;
+                }
                 if since_snapshot >= SNAPSHOT_EVERY {
                     since_snapshot = 0;
                     // A core that will not serialize has already said so through the save
@@ -971,7 +998,8 @@ impl Worker {
                     let queued = ring.queued_frames();
                     // `ran`, not the ceiling: the audio squeezed into this present is however
                     // many frames of it the present actually produced.
-                    resampler.set_ratio(drc_ratio(queued, target) / f64::from(ran));
+                    let base = if kicked { scale } else { 1.0 };
+                    resampler.set_ratio(drc_ratio(queued, target) * base / f64::from(ran));
                     resampler.process(&audio, &mut out);
                     crate::audio::volume::apply(
                         &mut out,
@@ -984,7 +1012,7 @@ impl Worker {
                     if crate::session::trace() && paced.is_multiple_of(TRACE_EVERY) {
                         let (dropped, starved) = (ring.overruns(), ring.underruns());
                         eprintln!(
-                            "slot: audio: {queued}/{target} queued, {dropped} dropped, {starved} starved"
+                            "slot: audio: {queued}/{target} queued, {dropped} dropped, {starved} starved, kicked {kicked} at {scale:.5}"
                         );
                     }
                 }
@@ -1004,8 +1032,20 @@ impl Worker {
                 // Falling behind by more than a frame means a stall, not a slow frame.
                 // Catching up would sprint through frames nobody sees.
                 deadline = now;
+                kicked = false;
             } else {
-                deadline = self.wait_for_kick(deadline);
+                (deadline, kicked) = self.wait_for_kick(deadline);
+            }
+            if !kicked {
+                run = (deadline, 0);
+            } else if run.1 == RATE_WINDOW {
+                // Clamped to what a panel could plausibly be: a window with a stall in it that
+                // still caught every kick is not a measurement of anything.
+                let present = deadline.duration_since(run.0) / RATE_WINDOW;
+                scale = (present.as_secs_f64() / PRESENT.as_secs_f64()).clamp(0.97, 1.03);
+                run = (deadline, 0);
+            } else {
+                run.1 += 1;
             }
         }
         // The ring belongs to the session, so a cart that left while fast forwarding would
@@ -1039,8 +1079,9 @@ impl Worker {
     /// Sleeps until the next present is due: at `deadline` on the worker's own clock, or as much
     /// as `KICK_LEAD` sooner if the frontend kicks, or as much as `KICK_LAG` later waiting for one.
     /// Returns the moment the present really starts, which the next deadline is counted from:
-    /// that is what lets the loop fall into step with the kicks, and so with the display.
-    fn wait_for_kick(&self, deadline: Instant) -> Instant {
+    /// that is what lets the loop fall into step with the kicks, and so with the display. And
+    /// whether a kick started it.
+    fn wait_for_kick(&self, deadline: Instant) -> (Instant, bool) {
         let earliest = deadline - KICK_LEAD;
         let latest = deadline + KICK_LAG;
         if let Some(wait) = earliest.checked_duration_since(Instant::now()) {
@@ -1051,11 +1092,11 @@ impl Worker {
             // A kick from before the window opened was for a frame already under way; only one
             // inside it says the next one is wanted now.
             if kick.take().is_some_and(|at| at >= earliest) {
-                return Instant::now();
+                return (Instant::now(), true);
             }
             let now = Instant::now();
             let Some(left) = latest.checked_duration_since(now) else {
-                return now;
+                return (now, false);
             };
             kick = self
                 .shared
