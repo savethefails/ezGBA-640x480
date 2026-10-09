@@ -11,15 +11,18 @@ use slot_power::{Platform, Power};
 // cartridges were made for.
 use slot_store::{format_stamp, Platform as CartPlatform};
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face,
-    date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face, menu_face, photo_face,
-    quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face,
-    snes_cart_shadow, socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face,
-    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
-    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    arrows_hint_face, badge_face, cart_face, cart_face_with, cart_shadow, chip_face,
+    chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face,
+    menu_face, photo_face, quick_caret_face, quick_label_face, quick_legend_faces,
+    quick_value_face, set_clock_hint_face, snes_cart_shadow, socket_face, sticker_face, title_face,
+    toast_face, wallpaper_face, word_face, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces,
+    QuickRow, QuickValue, StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK,
+    LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
+use crate::art_cache::label_art;
+use crate::backdrops::Backdrops;
 use crate::build_info::Build;
 use crate::face_builder::FaceBuilder;
 use crate::link_art_builder::LinkArtBuilder;
@@ -61,6 +64,8 @@ pub struct Frontend {
     title_tex: Option<TexId>,
     /// Builds the open cart's faces off the frame loop.
     faces: FaceBuilder,
+    /// Loads the backdrops around the selection off the frame loop.
+    backdrops: Backdrops,
     /// Builds the link screen's artwork off the frame loop, once, at boot.
     link_art: LinkArtBuilder,
     /// Whether the link art has been uploaded and handed to `App` already.
@@ -131,6 +136,7 @@ struct Switcher {
 impl Frontend {
     pub fn boot(platform: Box<dyn Platform>) -> Self {
         let now = Instant::now();
+        let backdrops = Backdrops::spawn(platform.root().to_path_buf());
         let mut session = Session::boot(platform.root().to_path_buf());
         session
             .app_mut()
@@ -143,6 +149,7 @@ impl Frontend {
             polaroid_texes: Vec::new(),
             title_tex: None,
             faces: FaceBuilder::spawn(),
+            backdrops,
             link_art: LinkArtBuilder::spawn(),
             link_art_done: false,
             core_asked: None,
@@ -161,10 +168,16 @@ impl Frontend {
         }
     }
 
+    /// The app behind the screen, to look at.
+    pub fn app(&self) -> &App {
+        self.session.app()
+    }
+
     /// Everything that never changes: the carts, the HUD glyphs and the key caps. All of it
     /// needs a live context, so it happens after the compositor and not at boot.
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {
-        let faces = build_cart_faces(&self.session.app().carts().collect::<Vec<_>>())
+        let app = self.session.app();
+        let faces = build_cart_faces(app.root(), &app.carts().collect::<Vec<_>>())
             .into_iter()
             .map(|f| compositor.create_texture(f.w, f.h, &f.rgba))
             .collect();
@@ -182,7 +195,8 @@ impl Frontend {
                 self.session.app_mut().set_boot_still(tex);
             }
         }
-        self.upload_backdrops(compositor);
+        self.backdrops
+            .sync_selected(self.session.app_mut(), compositor);
         let icons = Icon::ALL
             .iter()
             .map(|i| {
@@ -362,19 +376,6 @@ impl Frontend {
     /// face. A cart with no picture of its own, no readable one, or one the decoder will
     /// not take gets `None` here and falls back to the random wallpaper at draw time -
     /// exactly the fallback a card with no `Backdrops` folder at all gets for every cart.
-    fn upload_backdrops(&mut self, compositor: &mut Compositor) {
-        let backdrops = self
-            .session
-            .app()
-            .carts()
-            .map(|c| {
-                let rgba = wallpaper_face(c.backdrop.as_deref()?)?;
-                Some(compositor.create_texture(OUT_W, OUT_H, &rgba))
-            })
-            .collect();
-        self.session.app_mut().set_backdrops(backdrops);
-    }
-
     /// One decode, at boot. A card with no `Wallpapers`, no readable picture in it, or a
     /// picture the decoder will not take, gets the plain ground it had before.
     fn upload_wallpaper(&mut self, compositor: &mut Compositor) {
@@ -445,6 +446,7 @@ impl Frontend {
             compositor.upload_game(&frame, frame.size());
             crate::latency::drawn();
         }
+        self.backdrops.sync(self.session.app_mut(), compositor);
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
         sync_about(self.session.app_mut(), compositor, &mut self.about);
         sync_greeting(self.session.app_mut(), compositor, &mut self.greeting);
@@ -558,18 +560,24 @@ impl Frontend {
 /// was rastered at. Every menu on the device is drawn from a list shaped exactly like this,
 /// so the four the in-game menu needs are built through one function rather than four copies
 /// of the same three lines.
-/// Every cart's face, in the order given. Each one decodes and scales its label art, which is
-/// most of a boot with a full card on the H700, so they are built a share per core rather than
-/// one after another; only the compositor can mint a texture, so that stays with the caller.
-fn build_cart_faces(carts: &[&slot_store::Cart]) -> Vec<slot_ui::CartFace> {
+/// Every cart's face, in the order given. Each one needs its label art, scaled; with a content
+/// root that comes from `art_cache`, so only a label new since the last boot is decoded. They
+/// are built a share per core rather than one after another; only the compositor can mint a
+/// texture, so that stays with the caller.
+fn build_cart_faces(
+    root: Option<&std::path::Path>,
+    carts: &[&slot_store::Cart],
+) -> Vec<slot_ui::CartFace> {
+    let face = |c: &slot_store::Cart| match root {
+        Some(root) => cart_face_with(c, label_art(root, c)),
+        None => cart_face(c),
+    };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let share = carts.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         let builders: Vec<_> = carts
             .chunks(share)
-            .map(|chunk| {
-                scope.spawn(move || chunk.iter().map(|c| cart_face(c)).collect::<Vec<_>>())
-            })
+            .map(|chunk| scope.spawn(move || chunk.iter().map(|c| face(c)).collect::<Vec<_>>()))
             .collect();
         builders
             .into_iter()

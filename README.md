@@ -234,6 +234,9 @@ battery saves are shared. To keep one game on one emulator whatever the menu say
    `Backdrops/GBA/Pokemon - FireRed Version (USA).png`. Keep the art in the top 270 pixels
    so the carts don't cover it. Art made for the 720×480 RG SP still works: it is centred
    and loses 40 pixels off each side.
+   The first boot after adding art is a little slower: ezGBA keeps a ready-scaled copy of
+   each picture in `System/Cache`, so later boots and scrolling don't have to decode it again.
+   Deleting that folder is safe; it is rebuilt.
 
 ## Updating
 

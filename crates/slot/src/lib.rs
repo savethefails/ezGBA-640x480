@@ -1,5 +1,7 @@
 pub mod app;
+pub mod art_cache;
 pub mod audio;
+pub mod backdrops;
 pub mod boot_picture;
 pub mod build_info;
 pub mod core;

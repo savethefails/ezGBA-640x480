@@ -1200,14 +1200,52 @@ impl App {
         }
     }
 
-    /// Same distribution as `set_faces`: one flat list, in `carts` order, handed back out
-    /// one slice per shelf.
-    pub fn set_backdrops(&mut self, backdrops: Vec<Option<TexId>>) {
-        let mut backdrops = backdrops.into_iter();
-        for (_, shelf) in &mut self.shelves {
-            let n = shelf.carts.len();
-            shelf.set_backdrops(backdrops.by_ref().take(n).collect());
+    /// The carts whose backdrops should be ready, selection first: it and `backdrops::AHEAD`
+    /// either side of it on the active shelf, those that have a backdrop at all.
+    pub fn backdrop_wants(&self) -> Vec<crate::backdrops::Key> {
+        let Some((_, shelf)) = self.shelves.get(self.shelf_at) else {
+            return Vec::new();
+        };
+        let mut wants = Vec::new();
+        for step in 0..=crate::backdrops::AHEAD {
+            for off in [step, -step] {
+                if let Some(i) = shelf.cart_at_offset(off) {
+                    let key = (self.shelf_at, i);
+                    if shelf.carts[i].backdrop.is_some() && !wants.contains(&key) {
+                        wants.push(key);
+                    }
+                }
+            }
         }
+        wants
+    }
+
+    pub fn backdrop_cart(&self, (shelf, i): crate::backdrops::Key) -> Option<&Cart> {
+        self.shelves.get(shelf)?.1.carts.get(i)
+    }
+
+    pub fn backdrop_loaded(&self, (shelf, i): crate::backdrops::Key) -> bool {
+        self.shelves
+            .get(shelf)
+            .is_some_and(|(_, s)| s.backdrop(i).is_some())
+    }
+
+    /// Hands a cart its backdrop, and back any it had.
+    pub fn set_backdrop(&mut self, (shelf, i): crate::backdrops::Key, tex: TexId) -> Option<TexId> {
+        self.shelves.get_mut(shelf)?.1.set_backdrop(i, tex)
+    }
+
+    /// Takes back every backdrop not in `keep`, for reuse.
+    pub fn shed_backdrops(&mut self, keep: &[crate::backdrops::Key]) -> Vec<TexId> {
+        let mut shed = Vec::new();
+        for (at, (_, shelf)) in self.shelves.iter_mut().enumerate() {
+            for i in 0..shelf.carts.len() {
+                if !keep.contains(&(at, i)) {
+                    shed.extend(shelf.take_backdrop(i));
+                }
+            }
+        }
+        shed
     }
 
     /// The backdrop for whichever cart the active shelf has selected, if it has one of its

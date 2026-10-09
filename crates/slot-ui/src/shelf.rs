@@ -58,8 +58,9 @@ pub struct Shelf {
     pub index: usize,
     pub scroll: f32,
     faces: Vec<TexId>,
-    /// One background per cart, in the same order as `carts`. `None` where a cart has
-    /// no dedicated backdrop of its own, which falls back to the ordinary random one.
+    /// One background per cart, in the same order as `carts`. `None` where a cart has no
+    /// dedicated backdrop of its own, which falls back to the ordinary random one, and for one
+    /// that has but is not loaded: only those around the selection are.
     backdrops: Vec<Option<TexId>>,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture per *mould* rather
     /// than one for the row: a row can hold GBA carts or Game Boy paks, the two Game Pak shells
@@ -88,11 +89,11 @@ impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
             shells: carts.iter().map(gb_shell_of).collect(),
+            backdrops: vec![None; carts.len()],
             carts,
             index: 0,
             scroll: 0.0,
             faces: Vec::new(),
-            backdrops: Vec::new(),
             shadow: None,
             gb_shadow: None,
             gbc_shadow: None,
@@ -139,8 +140,17 @@ impl Shelf {
         self.faces = faces;
     }
 
-    pub fn set_backdrops(&mut self, backdrops: Vec<Option<TexId>>) {
-        self.backdrops = backdrops;
+    /// Hands cart `i` its backdrop, and back the one it had, if any.
+    pub fn set_backdrop(&mut self, i: usize, tex: TexId) -> Option<TexId> {
+        self.backdrops.get_mut(i).and_then(|b| b.replace(tex))
+    }
+
+    pub fn take_backdrop(&mut self, i: usize) -> Option<TexId> {
+        self.backdrops.get_mut(i).and_then(Option::take)
+    }
+
+    pub fn backdrop(&self, i: usize) -> Option<TexId> {
+        self.backdrops.get(i).copied().flatten()
     }
 
     /// The backdrop for whichever cart is currently selected, if it has one of its own.
