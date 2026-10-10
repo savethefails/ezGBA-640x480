@@ -380,6 +380,23 @@ fn for_each_scoop_span(mut span: impl FnMut(f32, f32, f32)) {
 /// The slot with nothing going into it. The shelf shows it so the cart you pick has a
 /// visible place to go, and so the bottom of the screen is the same object on every screen
 /// rather than appearing only during the animation.
+/// A word shown faintly in the slot's dark opening: the letter a jump along the row landed on.
+pub fn draw_slot_name(name: crate::Printed, alpha: f32, out: &mut Vec<Draw>) {
+    let (Some(tex), true) = (name.face, alpha > 0.0) else {
+        return;
+    };
+    let (w, h) = (name.w as f32, crate::HINT_H as f32);
+    let hole = SCOOP_Y + SCOOP_D - SLIT_Y;
+    out.push(Draw::Tex {
+        x: CX - w / 2.0,
+        y: SLIT_Y + (hole - h) / 2.0,
+        w,
+        h,
+        tex,
+        alpha,
+    });
+}
+
 pub fn draw_empty_slot(out: &mut Vec<Draw>) {
     // Both halves. The recess is a hole in the front pieces, so a slot drawn from the front
     // alone is a hole onto the backdrop rather than an opening in a device.

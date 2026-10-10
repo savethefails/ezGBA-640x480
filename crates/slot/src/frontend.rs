@@ -123,6 +123,9 @@ struct Clocks {
     shown: String,
     battery: String,
     battery_tex: Option<TexId>,
+    /// The letter in the slot's face, and the letter it was made for.
+    letter: Option<char>,
+    letter_tex: Option<TexId>,
 }
 
 /// What the switcher's textures were built for. The photos and the undo cap are per opening;
@@ -665,6 +668,17 @@ fn sync_switcher(app: &mut App, compositor: &mut Compositor, texes: Faces, state
 /// shelf clock follows the wall clock, so it is rebuilt when the minute turns and not on the
 /// fifty nine seconds either side of it.
 fn sync_clock(app: &mut App, compositor: &mut Compositor, clocks: &mut Clocks) {
+    // The letter a jump along the row landed on, made once a letter.
+    let letter = app.slot_letter();
+    if letter != clocks.letter {
+        clocks.letter = letter;
+        if let Some(letter) = letter {
+            let face = word_face(&letter.to_string());
+            let w = face.w;
+            let id = upload(compositor, &mut clocks.letter_tex, face);
+            app.set_slot_letter_face(id, w);
+        }
+    }
     let picked = app.picker().map(|p| p.text());
     if picked != clocks.picked {
         clocks.picked = picked;

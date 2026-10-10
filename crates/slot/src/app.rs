@@ -65,6 +65,12 @@ const POWER_OFF_S: f32 = 0.16;
 const VOLUME_STEP: u8 = 5;
 
 /// Crash insurance, and the only durable write that happens with the game still running.
+/// The letter a jump along the row lands on, shown faintly in the slot: in, held, then out.
+const SLOT_LETTER_IN_MS: Millis = 200;
+const SLOT_LETTER_HOLD_MS: Millis = 1200;
+const SLOT_LETTER_OUT_MS: Millis = 800;
+const SLOT_LETTER_ALPHA: f32 = 0.4;
+
 const AUTOSAVE_MS: Millis = 60_000;
 
 /// A dead battery is a far likelier hard cutoff than anyone holding POWER for eight
@@ -614,6 +620,11 @@ pub struct App {
     /// is what replaced the banner that used to name the shelf over the carts.
     mark_faces: Vec<TexId>,
     shelf_clock: slot_ui::Printed,
+    /// The letter the last jump along the row landed on, its face once the frontend has made
+    /// one, and when that face went up, which is what the fade is timed from.
+    slot_letter: Option<char>,
+    slot_letter_face: slot_ui::Printed,
+    slot_letter_since: Option<Millis>,
     hud: Hud,
     /// How far up the game layer's own screen is. Not a phase: it outlives the insert, since
     /// the cart is home and the chrome is still on screen while the picture arrives.
@@ -666,10 +677,11 @@ pub struct App {
 /// a card holding one console's games has always done. The platform beside it names nothing
 /// but the list's shape.
 fn shelves_of(mut carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
+    // `sort_key`'s order, which is what `Shelf`'s letter jumps step through: digits, then A to Z
+    // with case ignored, then anything led by neither.
     carts.sort_by(|a, b| {
-        a.stem
-            .to_lowercase()
-            .cmp(&b.stem.to_lowercase())
+        slot_store::sort_key(&a.stem)
+            .cmp(&slot_store::sort_key(&b.stem))
             .then(a.stem.cmp(&b.stem))
             .then((a.platform as u8).cmp(&(b.platform as u8)))
     });
@@ -753,6 +765,9 @@ impl App {
             bolt: None,
             mark_faces: Vec::new(),
             shelf_clock: slot_ui::Printed::default(),
+            slot_letter: None,
+            slot_letter_face: slot_ui::Printed::default(),
+            slot_letter_since: None,
             hud: Hud::new(),
             screen: 0.0,
             game_ready: false,
@@ -863,6 +878,54 @@ impl App {
 
     /// The carousel on screen. Every shelf keeps its own place, so this is only ever "the one
     /// being looked at": nothing may take it for "the library", which is `carts`.
+    /// Up or Down on the shelf: a letter along the row, with the letter it lands on shown in the
+    /// slot. Nothing is shown for a jump that went nowhere.
+    fn jump_letter(&mut self, dir: i32) {
+        let before = self.shelf().index;
+        match dir > 0 {
+            true => self.shelf_mut().jump_next_letter(),
+            false => self.shelf_mut().jump_prev_letter(),
+        }
+        if self.shelf().index == before {
+            return;
+        }
+        let Some(letter) = self.selected_stem().map(slot_store::initial) else {
+            return;
+        };
+        if self.slot_letter != Some(letter) {
+            self.slot_letter_face = slot_ui::Printed::default();
+        }
+        self.slot_letter = Some(letter);
+        // Restarted from the face going up, or now if the face is already the right letter.
+        self.slot_letter_since = self.slot_letter_face.face.map(|_| self.now());
+    }
+
+    /// The letter the slot should show, for the frontend to make a face of.
+    pub fn slot_letter(&self) -> Option<char> {
+        self.slot_letter
+    }
+
+    pub fn set_slot_letter_face(&mut self, face: TexId, w: u32) {
+        self.slot_letter_face = slot_ui::Printed::new(face, w);
+        self.slot_letter_since = Some(self.now());
+    }
+
+    fn slot_letter_alpha(&self) -> f32 {
+        let Some(at) = self.slot_letter_since else {
+            return 0.0;
+        };
+        let t = self.now().saturating_sub(at);
+        let level = if t < SLOT_LETTER_IN_MS {
+            t as f32 / SLOT_LETTER_IN_MS as f32
+        } else if t < SLOT_LETTER_IN_MS + SLOT_LETTER_HOLD_MS {
+            1.0
+        } else {
+            let out = t - SLOT_LETTER_IN_MS - SLOT_LETTER_HOLD_MS;
+            1.0 - (out as f32 / SLOT_LETTER_OUT_MS as f32).min(1.0)
+        };
+        SLOT_LETTER_ALPHA * ease(level)
+    }
+
     fn shelf(&self) -> &Shelf {
         &self.shelves[self.shelf_at].1
     }
@@ -1897,6 +1960,12 @@ impl App {
                 // Ahead of the shelf's own movement, so an open picker takes the arrows
                 // before the row of carts underneath it does.
                 _ if self.core_picker.is_some() => self.core_picker_input(action),
+                // Up and Down cross the row a letter at a time, where Left and Right cross it a
+                // cart at a time. A thirty cart library is a long hold on the shoulders and two
+                // presses here. SELECT+Up is brightness and reaches `adjust` before this, so the
+                // chord is unaffected.
+                Action::GbaDown(Btn::Up) => self.jump_letter(-1),
+                Action::GbaDown(Btn::Down) => self.jump_letter(1),
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf_mut().hold_left(now),
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => {
                     self.shelf_mut().hold_right(now)
@@ -2947,7 +3016,14 @@ impl App {
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
                     // art's title sits - is not the part the row sits directly over.
-                    _ => self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out),
+                    _ => {
+                        self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out);
+                        slot_ui::draw_slot_name(
+                            self.slot_letter_face,
+                            self.slot_letter_alpha(),
+                            out,
+                        );
+                    }
                 }
                 draw_footer(
                     self.battery,
