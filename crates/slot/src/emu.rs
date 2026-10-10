@@ -13,6 +13,7 @@ use slot_retro::{
 use crate::audio::Ring;
 use crate::drc::{drc_ratio, drc_target};
 use crate::frames::{FrameRef, Frames};
+use crate::link_state;
 use crate::persist::Snapshot;
 use crate::resample::Resampler;
 use crate::rewind::{RewindThread, REWIND_BYTES};
@@ -225,6 +226,8 @@ struct Shared {
     /// and only this one can tell the screen which of the two actually happened. See
     /// `EmuHandle::peer_ended`.
     peer_ended: AtomicBool,
+    /// The host's state came from another GBA BIOS and was not restored.
+    bios_mismatch: AtomicBool,
     /// Frames to run ahead of the one the game is really on, 0 to 2. See `Worker::run_ahead`.
     runahead: AtomicU8,
     /// Set by `EmuHandle::kick` when the frontend has read the buttons for the frame it is about
@@ -246,6 +249,29 @@ impl EmuHandle {
         ring: Arc<Ring>,
         sav: Option<Vec<u8>>,
         resume: Option<Vec<u8>>,
+    ) -> Self {
+        Self::spawn_as(core, rom, ring, sav, resume, None)
+    }
+
+    /// `spawn` for a core in mGBA's link mode, where this device plays `player`.
+    pub fn spawn_linked(
+        core: Box<dyn RetroCore>,
+        rom: PathBuf,
+        ring: Arc<Ring>,
+        sav: Option<Vec<u8>>,
+        resume: Option<Vec<u8>>,
+        player: u8,
+    ) -> Self {
+        Self::spawn_as(core, rom, ring, sav, resume, Some(player))
+    }
+
+    fn spawn_as(
+        core: Box<dyn RetroCore>,
+        rom: PathBuf,
+        ring: Arc<Ring>,
+        sav: Option<Vec<u8>>,
+        resume: Option<Vec<u8>>,
+        player: Option<u8>,
     ) -> Self {
         // Taken before the core goes to its thread, which is the last moment this side can
         // reach it. `net()` exactly once, for the same reason `rumble()` is: `RetroCore`'s
@@ -278,6 +304,7 @@ impl EmuHandle {
             link_lost: AtomicBool::new(false),
             linked: AtomicU64::new(0),
             peer_ended: AtomicBool::new(false),
+            bios_mismatch: AtomicBool::new(false),
             runahead: AtomicU8::new(0),
             kick: Mutex::new(None),
             kicked: Condvar::new(),
@@ -289,6 +316,7 @@ impl EmuHandle {
             frames: frames.clone(),
             shared: shared.clone(),
             cmds: rx,
+            player,
         };
         // A clone rather than the value itself: the worker needs its own handle to pump every
         // frame, and this side keeps one so `EmuHandle::net` can hand it out too.
@@ -345,6 +373,11 @@ impl EmuHandle {
     /// told the link was ended or that it broke.
     pub fn peer_ended(&self) -> bool {
         self.shared.peer_ended.load(Ordering::Relaxed)
+    }
+
+    /// The host's state came from another GBA BIOS, so the session cannot start.
+    pub fn bios_mismatch(&self) -> bool {
+        self.shared.bios_mismatch.load(Ordering::Relaxed)
     }
 
     /// Wires a transport into the core's serial traffic, on the emulator thread — the only
@@ -590,9 +623,26 @@ struct Worker {
     frames: Arc<Frames>,
     shared: Arc<Shared>,
     cmds: Receiver<Cmd>,
+    /// This device's player when the core runs mGBA's link mode.
+    player: Option<u8>,
 }
 
 impl Worker {
+    /// A state from the card, as the core takes it: mGBA's link mode wants both GBAs.
+    fn to_core(&self, state: Vec<u8>) -> Vec<u8> {
+        match self.player {
+            Some(_) if !link_state::is_pair(&state) => link_state::pair(&state),
+            _ => state,
+        }
+    }
+
+    /// A state from the core, as the card keeps it: only the local GBA.
+    fn from_core(&self, state: Vec<u8>) -> Vec<u8> {
+        self.player
+            .and_then(|p| link_state::local(&state, p))
+            .unwrap_or(state)
+    }
+
     fn run(
         self,
         mut core: Box<dyn RetroCore>,
@@ -626,7 +676,7 @@ impl Worker {
         // the intro. A state the core will not take leaves the save ram loaded above, which
         // costs the player their position but not their progress.
         if let Some(resume) = resume {
-            if let Err(e) = core.unserialize(&resume) {
+            if let Err(e) = core.unserialize(&self.to_core(resume)) {
                 eprintln!("slot: resume: {e}");
                 // Same reasoning as `sav_refused` above, for the resume half: a core running
                 // from wherever `load` left it is not resuming anything, and its `serialize()`
@@ -746,18 +796,24 @@ impl Worker {
                         // The host's machine, once it is whole. Restored here rather than in
                         // `cable.rs`, which holds no core and never should.
                         if let Some(state) = c.take_state() {
-                            match core.unserialize(&state) {
-                                Ok(()) => {
-                                    eprintln!(
-                                        "slot: cable: restored {} bytes, running the host's game",
-                                        state.len()
-                                    );
-                                    c.prime();
-                                    t.send(NETPACKET_RELIABLE, &cable::ready_packet());
+                            let own = core.serialize().unwrap_or_default();
+                            if !link_state::same_bios(&state, &own) {
+                                eprintln!("slot: cable: the host runs another GBA BIOS");
+                                self.shared.bios_mismatch.store(true, Ordering::Relaxed);
+                            } else {
+                                match core.unserialize(&state) {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "slot: cable: restored {} bytes, running the host's game",
+                                            state.len()
+                                        );
+                                        c.prime();
+                                        t.send(NETPACKET_RELIABLE, &cable::ready_packet());
+                                    }
+                                    // Nothing to run in step with. Better to sit refusing to
+                                    // start than to play a different game to the other device.
+                                    Err(e) => eprintln!("slot: cable: the state was refused: {e}"),
                                 }
-                                // Nothing to run in step with. Better to sit refusing to start
-                                // than to play a different game to the other device.
-                                Err(e) => eprintln!("slot: cable: the state was refused: {e}"),
                             }
                         }
                     }
@@ -1144,12 +1200,12 @@ impl Worker {
         match cmd {
             Cmd::Save(reply) => match core.serialize() {
                 Ok(state) => {
-                    let _ = reply.send(state);
+                    let _ = reply.send(self.from_core(state));
                 }
                 Err(e) => eprintln!("slot: {e}"),
             },
             Cmd::Load(state) => {
-                if let Err(e) = core.unserialize(&state) {
+                if let Err(e) = core.unserialize(&self.to_core(state)) {
                     eprintln!("slot: {e}");
                 }
             }
@@ -1162,6 +1218,7 @@ impl Worker {
             Cmd::BeginLink(client_id, t) => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
+                self.shared.bios_mismatch.store(false, Ordering::Relaxed);
                 // Both queues emptied before the session is live, the mirror of the clear
                 // `Cmd::EndLink` does on its way out and for the same reason on the other
                 // side of the same seam. `netpacket_send` (slot-retro's `libretro.rs`) pushes
@@ -1189,6 +1246,7 @@ impl Worker {
             Cmd::BeginCable(player, t) => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
+                self.shared.bios_mismatch.store(false, Ordering::Relaxed);
                 // No `start_link` and no `link.set_active`: this route never goes through
                 // libretro's netpacket interface at all, so a core with no `start` callback is
                 // not a gap here the way it is for `BeginLink`.
@@ -1217,6 +1275,7 @@ impl Worker {
             Cmd::EndLink => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
+                self.shared.bios_mismatch.store(false, Ordering::Relaxed);
                 *cable = None;
                 // `Cmd::BeginLink`'s counterpart: tells the core the session is over,
                 // if it registered a `stop` to hear it through (`RetroCore::stop_link`

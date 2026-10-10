@@ -1584,6 +1584,19 @@ impl App {
         self.sync_link_badge();
     }
 
+    /// The host runs another GBA BIOS. Ends like `peer_ended`, saying why.
+    pub fn bios_mismatch(&mut self) {
+        if !self.link_active() {
+            return;
+        }
+        let role = self
+            .link_client_id()
+            .map_or(self.last_role, LinkRow::from_client_id);
+        self.end_link();
+        self.hud.toast(Toast::BiosMismatch, self.now());
+        self.unplug(role);
+    }
+
     /// The other player ended the link and sent word before going.
     ///
     /// What separates this from `peer_lost` is that there is nothing to wait out and nothing

@@ -385,7 +385,9 @@ impl Session {
         // wraps. That timeout stays underneath this for every ending nobody could send word
         // about: a crash, a flat battery, an SP carried out of range.
         if self.app.link_active() {
-            if self.emu.as_ref().is_some_and(EmuHandle::peer_ended) {
+            if self.emu.as_ref().is_some_and(EmuHandle::bios_mismatch) {
+                self.bridge_link(|app| app.bios_mismatch());
+            } else if self.emu.as_ref().is_some_and(EmuHandle::peer_ended) {
                 self.bridge_link(|app| app.peer_ended());
             } else if self.emu.as_ref().is_some_and(EmuHandle::link_lost) {
                 self.app.peer_lost();
@@ -703,12 +705,13 @@ impl Session {
         // all. The quick menu that sets it is only ever open on the shelf, with the core already
         // dropped, so the cart going in now is always the first to see a change made there — the
         // same way `sync_speed` picks up the fast forward settings.
+        let player = self.app.link_player();
         let opened = open_core(
             &self.root,
             core,
             serial,
             self.app.colour_correction(),
-            self.app.link_player(),
+            player,
         );
         // Whether the emulator about to run is the one the state directory is named after.
         // Only this line knows: everything downstream sees a `Box<dyn RetroCore>` that looks
@@ -716,13 +719,13 @@ impl Session {
         // refused the resume above, and a refusal from the mock standing in for a missing dylib
         // means something entirely different from a refusal by the cart's own core.
         self.app.set_named_core(opened.named);
-        let emu = EmuHandle::spawn(
-            opened.core,
-            rom,
-            self.sink.ring(),
-            persist::read_sav(&self.root, platform, stem),
-            resume,
-        );
+        let sav = persist::read_sav(&self.root, platform, stem);
+        let ring = self.sink.ring();
+        // Game Boy link mode keeps no link state: only a GBA pair is wrapped and unwrapped.
+        let emu = match player.filter(|_| platform == Platform::Gba) {
+            Some(p) => EmuHandle::spawn_linked(opened.core, rom, ring, sav, resume, p),
+            None => EmuHandle::spawn(opened.core, rom, ring, sav, resume),
+        };
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
         // L2 never rewinds on this build (see `Gestures::down`), so a rewind trail is a

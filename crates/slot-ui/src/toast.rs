@@ -25,16 +25,19 @@ pub enum Toast {
     /// `LinkEnded`, and a separate sentence because which device ended it is the one thing the
     /// player on this one cannot see.
     PeerEnded,
+    /// The host runs another GBA BIOS, so its game cannot run here.
+    BiosMismatch,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 6] = [
+    pub const ALL: [Toast; 7] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
         Toast::NoLink,
         Toast::LinkEnded,
         Toast::PeerEnded,
+        Toast::BiosMismatch,
     ];
 
     /// Position in `ALL`, which is the order faces are uploaded in.
@@ -55,6 +58,7 @@ impl Toast {
             // Impersonal too, like every other line here ("No link support", "Nobody arrived");
             // the product says "friend" nowhere, so this is not the screen to start.
             Toast::PeerEnded => "Link was ended",
+            Toast::BiosMismatch => "BIOS does not match",
         }
     }
 }
