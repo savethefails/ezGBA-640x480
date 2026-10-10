@@ -369,6 +369,7 @@ pub struct StubPlatform {
     /// How many times `set_led` was called. `led` alone cannot catch a write that repeats the
     /// same state every tick forever: the value does not move, only the count would.
     led_writes: Arc<AtomicUsize>,
+    headphones: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// `LedState` has no `Copy`-friendly integer form of its own — it is deliberately opaque to
@@ -468,6 +469,7 @@ fn rig_with_led(
         percent: percent.clone(),
         led: led.clone(),
         led_writes: led_writes.clone(),
+        headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     (
         Power::new(Box::new(platform), timeout),
@@ -557,6 +559,10 @@ impl Platform for StubPlatform {
     /// No motor. `tests/rumble.rs` is the only test that reads one back and it runs over
     /// `SimPlatform`, which records it.
     fn set_rumble(&mut self, _strength: u16) {}
+
+    fn headphones(&self) -> bool {
+        self.headphones.load(Ordering::Relaxed)
+    }
 }
 
 /// Says the clock has already been confirmed. A root with no `clock_set` stops on the clock
@@ -576,6 +582,23 @@ pub fn boot(root: &Path) -> App {
 /// path starts.
 pub fn app_playing_in(root: &Path, stem: &str) -> App {
     app_playing_with(root, stem, StubSnapshot::boxed())
+}
+
+pub fn app_playing_with_jack(root: &Path, stem: &str) -> (App, Arc<std::sync::atomic::AtomicBool>) {
+    let mut a = app_playing_with(root, stem, StubSnapshot::boxed());
+    let jack = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let platform = StubPlatform {
+        backlight: Arc::new(AtomicU8::new(0)),
+        root: root.to_path_buf(),
+        clock: Clock::at(CLOCK_IS_SET),
+        charge: Arc::new(AtomicU8::new(0)),
+        percent: Arc::new(AtomicU8::new(50)),
+        led: Arc::new(AtomicU8::new(u8::MAX)),
+        led_writes: Arc::new(AtomicUsize::new(0)),
+        headphones: jack.clone(),
+    };
+    a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
+    (a, jack)
 }
 
 /// The same, wired to a platform whose charge state and percent a test can move

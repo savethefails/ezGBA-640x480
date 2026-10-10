@@ -346,6 +346,9 @@ impl Session {
 
     pub fn update(&mut self, dt: f32) {
         self.bridge_link(|app| app.update(dt));
+        if let Some(emu) = &self.emu {
+            emu.set_volume(self.app.output_volume());
+        }
         // The wire a link that just came up runs over. `App` holds a session's own
         // bookkeeping and never a transport (see `App::link`), so this is the hop that
         // carries one to the emulator thread — the mirror of `bridge_link`'s own hop for the

@@ -78,6 +78,10 @@ pub trait Platform: Send {
     fn relink_adb(&mut self) -> bool {
         false
     }
+
+    fn headphones(&self) -> bool {
+        false
+    }
 }
 
 /// Lid close and lid wake are one code path, parameterised.
