@@ -1,12 +1,18 @@
 use crate::{Btn, Millis, RawEvent};
 
-/// How long a *held* SELECT waits for a second key before conceding it was a plain press.
-/// Generous on purpose: the only reason to ever give up is a game that wants SELECT held,
-/// and 120 ms was not enough to land the second key of a chord.
+/// How long a *held* SELECT may still arm a chord with a second key. Generous on purpose:
+/// 120 ms was not enough to land the second key of a chord.
+///
+/// This withholds nothing. It used to be how long SELECT waited before conceding it was a
+/// plain press, which put a held SELECT in front of the game 600 ms late whether or not a chord
+/// ever followed. The press goes straight through now, so this is the arming window and
+/// nothing else.
 pub const SELECT_CHORD_MS: Millis = 600;
 
-/// How long a delivered tap stays down. Press and release in one batch net out to nothing,
-/// because the mask is set and cleared before the core reads it.
+/// The least time SELECT stays down on the pad, measured from the press. The core reads the
+/// mask once a frame, so a press and its release drained in the same batch would be set and
+/// cleared before it ever looked; a tap shorter than three frames is held on until the tick can
+/// let go of it.
 pub const SELECT_TAP_MS: Millis = 50;
 pub const MENU_TAP_MS: Millis = 250;
 pub const MENU_DOUBLE_TAP_MS: Millis = 350;
@@ -84,14 +90,12 @@ pub enum Action {
 enum Select {
     #[default]
     Idle,
-    /// Held, chord still undecided.
-    Pending(Millis),
-    /// A chord fired, so this press never reaches the core.
-    Consumed,
-    /// Passed to the core and still physically held.
-    Delivered,
-    /// Passed to the core after a release; the core is owed the up edge, but not in the
-    /// same batch as the down.
+    /// Physically down, and already handed to the core. `since` is when, which is what the
+    /// chord window is measured from; `chorded` says a chord has already fired under this same
+    /// hold, which keeps the window open for the rest of it.
+    Held { since: Millis, chorded: bool },
+    /// Physically up, with the release still owed. Held back only until `due`, so a tap short
+    /// enough to be drained whole inside one batch is still on the pad when the core looks.
     ReleaseDue(Millis),
 }
 
@@ -154,16 +158,13 @@ impl Gestures {
 
     pub fn tick(&mut self, now: Millis) -> Vec<Action> {
         let mut out = Vec::new();
-        match self.select {
-            Select::Pending(d) if now.saturating_sub(d) >= SELECT_CHORD_MS => {
-                self.select = Select::Delivered;
-                out.push(Action::GbaDown(Btn::Select));
-            }
-            Select::ReleaseDue(d) if now.saturating_sub(d) >= SELECT_TAP_MS => {
+        // The only thing SELECT still owes a tick is the release of a tap too short to have
+        // been polled. The chord window closing is not an event: it withholds nothing.
+        if let Select::ReleaseDue(due) = self.select {
+            if now >= due {
                 self.select = Select::Idle;
                 out.push(Action::GbaUp(Btn::Select));
             }
-            _ => {}
         }
         if let Some(d) = self.menu_down_at {
             if !self.menu_eject_fired && now.saturating_sub(d) >= MENU_HOLD_MS {
@@ -194,10 +195,7 @@ impl Gestures {
 
     fn down(&mut self, b: Btn, now: Millis) -> Vec<Action> {
         match b {
-            Btn::Select => {
-                self.select = Select::Pending(now);
-                Vec::new()
-            }
+            Btn::Select => self.select_down(now),
             Btn::Menu => self.menu_down(now),
             // The flush hangs off the press, because a POWER that is being held may be cut
             // by the PMIC before there is any release to see. Everything the user can
@@ -218,9 +216,8 @@ impl Gestures {
             Btn::L2 => vec![Action::BrightnessDown],
             Btn::R2 => vec![Action::BrightnessUp],
             _ => {
-                let chording = matches!(self.select, Select::Pending(_) | Select::Consumed);
-                if let (true, Some((bit, action))) = (chording, chord(b)) {
-                    self.select = Select::Consumed;
+                if let (true, Some((bit, action))) = (self.chording(now), chord(b)) {
+                    self.mark_chorded();
                     self.chord_held |= bit;
                     return vec![action];
                 }
@@ -251,16 +248,58 @@ impl Gestures {
         }
     }
 
+    /// SELECT is the game's on the press, every time. ezGBA has no SELECT gesture of its own
+    /// to wait for, only the chords below, and those arm off the same hold behind it: a chord
+    /// costs the game a SELECT press it did not mean to send, which is a far smaller price than
+    /// every held SELECT arriving 600 ms late.
+    ///
+    /// A press while an earlier tap's release is still owed takes that release over: the pad
+    /// simply stays down, which is what the player is doing.
+    fn select_down(&mut self, now: Millis) -> Vec<Action> {
+        let already_down = matches!(self.select, Select::ReleaseDue(_));
+        self.select = Select::Held {
+            since: now,
+            chorded: false,
+        };
+        if already_down {
+            Vec::new()
+        } else {
+            vec![Action::GbaDown(Btn::Select)]
+        }
+    }
+
     fn select_up(&mut self, now: Millis) -> Vec<Action> {
         match std::mem::take(&mut self.select) {
-            // The release settles it: no chord can follow, so the game gets the press now
-            // rather than waiting out a window that can no longer produce one.
-            Select::Pending(_) => {
-                self.select = Select::ReleaseDue(now);
-                vec![Action::GbaDown(Btn::Select)]
+            Select::Held { since, .. } if now < since + SELECT_TAP_MS => {
+                self.select = Select::ReleaseDue(since + SELECT_TAP_MS);
+                Vec::new()
             }
-            Select::Delivered => vec![Action::GbaUp(Btn::Select)],
-            _ => Vec::new(),
+            Select::Held { .. } => vec![Action::GbaUp(Btn::Select)],
+            other => {
+                self.select = other;
+                Vec::new()
+            }
+        }
+    }
+
+    /// Whether a key landing at `now` is the second half of a chord rather than the game's own
+    /// press: SELECT physically down, and either inside the window or under a hold that has
+    /// already chorded, so a held SELECT keeps ramping the brightness past the window.
+    fn chording(&self, now: Millis) -> bool {
+        match self.select {
+            Select::Held { since, chorded } => {
+                chorded || now.saturating_sub(since) < SELECT_CHORD_MS
+            }
+            _ => false,
+        }
+    }
+
+    fn mark_chorded(&mut self) {
+        if let Select::Held { since, .. } = self.select {
+            self.select = Select::Held {
+                since,
+                chorded: true,
+            };
         }
     }
 
@@ -270,9 +309,8 @@ impl Gestures {
     /// Ahead of the double tap check, and the order is load-bearing: behind it, a SELECT+MENU
     /// that follows a recent tap opens the switcher rather than the menu.
     fn menu_down(&mut self, now: Millis) -> Vec<Action> {
-        if matches!(self.select, Select::Pending(_) | Select::Consumed) {
-            // So `select_up` emits no stray press for a SELECT the game never gets.
-            self.select = Select::Consumed;
+        if self.chording(now) {
+            self.mark_chorded();
             // The chord is the whole gesture, and these two are what make it one. Clearing
             // the hold stops this press also arming an eject — and, because `menu_up` reads
             // that same field to decide the press ever happened, it is what makes the release
