@@ -23,10 +23,11 @@ This fork is laid out for the **RG35XXSP** and its 640×480 screen.
 
 | Button | What it does |
 |---|---|
-| **D-pad** | Pick a game |
+| **D-pad** | Pick a game. Hold left or right to scroll, faster the longer you hold. Up and down jump to the next letter, which shows in the slot. |
 | **A** | Play it |
 | **MENU** | In a game: save and go back to your games. On the shelf: settings. With only one game on the card, it boots straight into it, and MENU still takes you to the shelf and its settings. |
 | **L2 / R2** | Screen darker / brighter |
+| **Volume** | Louder / quieter. Headphones keep their own volume and mute, switched in the moment you plug them in or out. |
 | **Close the lid** | Saves and sleeps. Open it within 3 minutes to keep playing. After that it turns itself off to save battery, and the next time you turn it on, your game picks up right where you left off. |
 
 That's everything. Every button does one thing, on its own. No holding, no combos.
