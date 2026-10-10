@@ -13,6 +13,7 @@ use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
 use crate::input::Pad;
 use crate::persist;
+use crate::prefetch::Prefetch;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
@@ -41,6 +42,8 @@ pub struct Session {
     /// `RUMBLE_MIN_MS`, stops the frame the game stops asking after that, and never runs past
     /// `RUMBLE_MAX_MS`.
     pulse: Option<(Millis, u16)>,
+    /// The cart the shelf is resting on, read through into the page cache. See `prefetch`.
+    prefetch: Prefetch,
     /// A reload for a link is underway: the core in the slot was spawned for it, and `App` is
     /// waiting to hear whether it loaded. See `reload_for_link`.
     reloading: bool,
@@ -67,6 +70,7 @@ impl Session {
             fast: false,
             motor: 0,
             pulse: None,
+            prefetch: Prefetch::default(),
             reloading: false,
             greeting_pcm: None,
         }
@@ -146,6 +150,10 @@ impl Session {
         }
         self.motor = strength;
         self.app.set_rumble(strength);
+    }
+
+    pub fn prefetching(&self) -> Option<&std::path::Path> {
+        self.prefetch.reading()
     }
 
     /// The core's end of the motor, or nothing when the slot is empty.
@@ -413,6 +421,8 @@ impl Session {
         // Last, after the phase has moved and after a core spawned this frame exists to be told:
         // this is the frame a cart seats on, and whoever owns a shoulder now owns it from here.
         self.sync_pad();
+        let now = self.app.now();
+        self.prefetch.browse(self.app.browsed_rom(), now);
     }
 
     /// The core writes its motor from the emulator thread and this is the one place that

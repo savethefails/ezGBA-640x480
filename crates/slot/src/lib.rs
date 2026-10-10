@@ -24,6 +24,7 @@ pub mod link_start;
 pub mod link_state;
 pub mod pacer;
 pub mod persist;
+pub mod prefetch;
 pub mod resample;
 pub mod rewind;
 pub mod root;
