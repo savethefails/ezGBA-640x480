@@ -1959,3 +1959,90 @@ fn the_shortcut_still_opens_the_screen_when_nothing_is_linked() {
     assert!(app.game_menu_open());
     assert_eq!(app.toast(), None);
 }
+
+/// A SNES cart on the card. `scan` reads the platform off the folder, so the bytes only have to
+/// be a file.
+fn snes_root(stems: &[&str]) -> TempDir {
+    let d = common::tmp_root();
+    for stem in stems {
+        let path = d.path().join(format!("Games/SNES/{stem}.sfc"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, vec![0u8; 0x8000]).unwrap();
+    }
+    d
+}
+
+/// A SNES game links as two pads on one console, the cable trading them every frame, so both
+/// SNES cores open the screen on the cable, and nothing in the banner sends the player elsewhere.
+#[test]
+fn a_snes_cart_opens_the_link_screen_on_either_snes_core() {
+    for core in [Core::Snes9x2005, Core::Snes9x] {
+        let d = snes_root(&["Super Bomberman", "Zzz"]);
+        let mut app = seated_on_platform(&d, core, Platform::Snes);
+        app.apply(Action::GameMenu);
+        assert_eq!(
+            app.game_menu(),
+            Some(GameMenu::Pick(LinkRow::Host)),
+            "{core:?} did not offer a SNES link"
+        );
+        assert_eq!(
+            app.toast(),
+            None,
+            "{core:?} raised a banner over the screen"
+        );
+        assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+    }
+}
+
+/// There is one route for a SNES link, so SELECT has nothing to switch to and the screen stays
+/// on the cable rather than drawing a Wireless Adapter the core has no use for.
+#[test]
+fn select_on_a_snes_link_screen_is_refused() {
+    let d = snes_root(&["Super Bomberman", "Zzz"]);
+    let mut app = seated_on_platform(&d, Core::Snes9x2005, Platform::Snes);
+    app.apply(Action::GameMenu);
+    select(&mut app);
+    assert!(app.refusal_active(app.now()), "SELECT was not refused");
+    assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+}
+
+/// mGBA's cable is its only route too: a Wireless Adapter on its screen is a mode it cannot run.
+#[test]
+fn select_on_an_mgba_link_screen_is_refused() {
+    let (mut app, _d) = playing_on(Core::Mgba);
+    app.set_link_sprites(fake_link_sprites());
+    app.apply(Action::GameMenu);
+    select(&mut app);
+    assert!(app.refusal_active(app.now()), "SELECT was not refused");
+    assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+}
+
+/// A on a SNES screen starts the link straight away: no core option to load, so no reload. The
+/// role is the port this device plays, host on the first and joiner on the second, which is
+/// what sends the wire down the cable route when it arrives.
+#[test]
+fn a_on_a_snes_link_screen_starts_at_once_on_the_picked_port() {
+    let _link = common::link_port_lock();
+    for (row, port) in [(LinkRow::Host, 0u8), (LinkRow::Join, 1u8)] {
+        let d = snes_root(&["Super Bomberman", "Zzz"]);
+        let mut app = seated_on_platform(&d, Core::Snes9x2005, Platform::Snes);
+        app.apply(Action::GameMenu);
+        if row == LinkRow::Join {
+            app.apply(Action::GbaDown(Btn::Right));
+        }
+        app.apply(Action::GbaDown(Btn::A));
+        assert_eq!(
+            app.take_link_reload(),
+            None,
+            "{row:?}: a SNES link reloaded the game"
+        );
+        assert_eq!(
+            app.link_player(),
+            Some(port),
+            "{row:?} plays the wrong port"
+        );
+        assert!(reaches_waiting(&mut app), "{row:?}: A started no link");
+        app.apply(Action::GbaDown(Btn::B));
+        settle(&mut app);
+    }
+}

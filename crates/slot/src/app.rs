@@ -3977,6 +3977,16 @@ impl App {
             self.game_menu = Some(GameMenu::Pick(self.last_role));
             return;
         }
+        // A SNES game links as two controllers on one console: each device runs the whole
+        // machine and the cable trades the pads every frame, so like mGBA's route it carries
+        // every cart. snes9x2005 was checked to run in step from the host's state; full snes9x
+        // is the core RetroArch's own netplay leans on for the same property.
+        if self.cable_links_snes() {
+            self.link_hardware = LinkKind::Cable;
+            self.radio.ask(RadioJob::Warm);
+            self.game_menu = Some(GameMenu::Pick(self.last_role));
+            return;
+        }
         if self.platform != Platform::Gba {
             self.hud.toast(Toast::NoLink, self.now());
             return;
@@ -4179,12 +4189,22 @@ impl App {
         self.link_choices.insert(stem, other);
     }
 
+    /// A SNES cart seated on a SNES core: linked by the emulated cable, two pads on one console.
+    fn cable_links_snes(&self) -> bool {
+        self.platform == Platform::Snes && matches!(self.core, Core::Snes9x | Core::Snes9x2005)
+    }
+
     /// Whether SELECT has anything to switch this cart to: whether the other hardware would load
     /// it with a `gpsp_serial` it is not already on. It would not for a game with no cable
     /// protocol of its own, which loads on `auto` either way and links over the adapter
     /// regardless. Both the press and the legend that advertises it read this, so the screen
     /// never names a key that can only shake.
     fn link_switchable(&self, stem: &str) -> bool {
+        // Only gpSP has two hardwares to choose between. mGBA's cable and a SNES link are one
+        // route each, and gpSP's serial modes mean nothing to either.
+        if self.core != Core::Gpsp {
+            return false;
+        }
         self.auto_link(stem).is_some_and(|(cart, auto)| {
             serial_option(self.link_hardware.other(), auto, &cart.code, &cart.title)
                 != serial_option(self.link_hardware, auto, &cart.code, &cart.title)
@@ -4232,6 +4252,15 @@ impl App {
                 since: self.now(),
             });
             return;
+        }
+        // SNES: nothing to load the core with. Port 1 for the host, port 2 for the joiner, and
+        // `link_player` is what sends the wire down the cable route when it arrives.
+        if self.cable_links_snes() {
+            self.link_player = Some(role.client_id() as u8);
+            return self.start_link(
+                LinkStarter::spawn(role.role(), link_port()),
+                role.client_id(),
+            );
         }
         let (_, serial) = self.link_mode(&stem);
         if serial == loaded {

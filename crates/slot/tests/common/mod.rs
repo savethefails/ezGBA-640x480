@@ -136,7 +136,8 @@ pub fn tmp_root_with_real_carts(stems: &[&str]) -> TempDir {
     d
 }
 
-fn tmp_root() -> TempDir {
+/// An empty card with every content directory, for a test that writes its own carts.
+pub fn tmp_root() -> TempDir {
     let d = tempfile::tempdir().expect("tempdir");
     for sub in slot::root::DIRS {
         std::fs::create_dir(d.path().join(sub)).expect("create content dir");

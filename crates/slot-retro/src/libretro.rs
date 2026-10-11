@@ -679,7 +679,10 @@ impl RetroCore for LibretroCore {
             fps: av.timing.fps,
             sample_rate: av.timing.sample_rate,
         };
+        // Both ports: a SNES link plays player 2 on the second (`run_frame_linked`). Cores
+        // with one pad (mGBA, gpSP) ignore the call; full snes9x sets its port up from it.
         unsafe { (self.api.set_controller_port_device)(0, DEVICE_JOYPAD) };
+        unsafe { (self.api.set_controller_port_device)(1, DEVICE_JOYPAD) };
         Ok(())
     }
 
