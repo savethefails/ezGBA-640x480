@@ -94,6 +94,17 @@ const KICK_LEAD: Duration = Duration::from_millis(2);
 /// into step with it, a sixteenth of a frame at a time, and then stay there; a frontend that
 /// stops kicking costs the game no more than that.
 const KICK_LAG: Duration = Duration::from_millis(1);
+/// The same wait once the presents are following the kicks (`IN_STEP` in a row): long enough
+/// that a frontend frame that reads the buttons a few milliseconds late still gets its own
+/// present, rather than the worker running one on the old buttons and the display showing a
+/// frame twice, then skipping one. Short enough that a display that cannot keep up is not
+/// followed down to half speed: a refresh this late ends the run and the game keeps its clock.
+/// Never in a link session, whose timing is the cable's (see `Worker::run`).
+const KICK_PATIENCE: Duration = Duration::from_millis(6);
+/// Kicked presents in a row before the worker counts itself in step with the display. Low,
+/// because a display whose button read jitters would otherwise rarely string enough together
+/// to get there; a single present without a kick ends it again.
+const IN_STEP: u32 = 2;
 
 /// Run-ahead's share of a present. Past it, the game cannot afford to run a frame twice and
 /// restore a state as well within 16.7 ms, and running ahead would slow it down instead of
@@ -637,7 +648,7 @@ impl Worker {
     }
 
     /// A state from the core, as the card keeps it: only the local GBA.
-    fn from_core(&self, state: Vec<u8>) -> Vec<u8> {
+    fn to_card(&self, state: Vec<u8>) -> Vec<u8> {
         self.player
             .and_then(|p| link_state::local(&state, p))
             .unwrap_or(state)
@@ -750,6 +761,8 @@ impl Worker {
         // far: when it began and how many. A present on the worker's own clock ends the run.
         let mut kicked = false;
         let mut run: (Instant, u32) = (Instant::now(), 0);
+        // Kicked presents in a row, for `IN_STEP`.
+        let mut streak = 0u32;
         // Run-ahead, while it is still affordable and the core can save its state. See `run_ahead`.
         let mut runahead_on = true;
         let mut ahead_strikes = 0u32;
@@ -1154,8 +1167,15 @@ impl Worker {
                 deadline = now;
                 kicked = false;
             } else {
-                (deadline, kicked) = self.wait_for_kick(deadline);
+                // Only a plain game at its own speed waits longer: a link session paces on the
+                // cable and the peer, fast forward and rewind on their own budgets.
+                let steady = streak >= IN_STEP
+                    && speed == Speed::Normal
+                    && !rewinding
+                    && transport.is_none();
+                (deadline, kicked) = self.wait_for_kick(deadline, steady);
             }
+            streak = if kicked { streak.saturating_add(1) } else { 0 };
             if !kicked {
                 run = (deadline, 0);
             } else if run.1 == RATE_WINDOW {
@@ -1200,7 +1220,7 @@ impl Worker {
         match cmd {
             Cmd::Save(reply) => match core.serialize() {
                 Ok(state) => {
-                    let _ = reply.send(self.from_core(state));
+                    let _ = reply.send(self.to_card(state));
                 }
                 Err(e) => eprintln!("slot: {e}"),
             },
@@ -1338,17 +1358,24 @@ impl Worker {
     /// Returns the moment the present really starts, which the next deadline is counted from:
     /// that is what lets the loop fall into step with the kicks, and so with the display. And
     /// whether a kick started it.
-    fn wait_for_kick(&self, deadline: Instant) -> (Instant, bool) {
+    ///
+    /// `steady`: the presents have been following the kicks, so each began on one and any kick
+    /// since `deadline - PRESENT` (the start of the present just finished) is for the next
+    /// frame, even one that came a little earlier than the window. And the wait for a late one
+    /// is `KICK_PATIENCE` rather than `KICK_LAG`. Neither lets a present start before the window
+    /// opens, so a kick still cannot run the game fast.
+    fn wait_for_kick(&self, deadline: Instant, steady: bool) -> (Instant, bool) {
         let earliest = deadline - KICK_LEAD;
-        let latest = deadline + KICK_LAG;
+        let latest = deadline + if steady { KICK_PATIENCE } else { KICK_LAG };
+        let fresh = if steady { deadline - PRESENT } else { earliest };
         if let Some(wait) = earliest.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
         let mut kick = self.shared.kick.lock().unwrap_or_else(|e| e.into_inner());
         loop {
-            // A kick from before the window opened was for a frame already under way; only one
-            // inside it says the next one is wanted now.
-            if kick.take().is_some_and(|at| at >= earliest) {
+            // A kick from before `fresh` was for a frame already under way; only a later one
+            // says the next one is wanted now.
+            if kick.take().is_some_and(|at| at >= fresh) {
                 return (Instant::now(), true);
             }
             let now = Instant::now();

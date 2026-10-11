@@ -104,10 +104,13 @@ pub fn run() {
         if slot::latency::tracing() {
             frames += 1;
             if frames.is_multiple_of(600) {
+                // Missed: refreshes that showed the last frame again because the kicked one
+                // never came. Zero is a game in step with the panel.
                 slot::latency::note(&format!(
-                    "pacer: panel period {:.2} ms, work starts {:.1} ms before the latch",
+                    "pacer: panel period {:.2} ms, work starts {:.1} ms before the latch, {} missed",
                     pacer.period().as_secs_f64() * 1e3,
-                    pacer.lead().as_secs_f64() * 1e3
+                    pacer.lead().as_secs_f64() * 1e3,
+                    frontend.take_missed()
                 ));
             }
         }

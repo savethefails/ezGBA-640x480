@@ -1123,6 +1123,80 @@ fn a_kick_a_frame_brings_the_present_right_after_it() {
     );
 }
 
+/// Once in step, a kick that comes a few milliseconds late still gets its own present. The
+/// device loop's button read moves a little from refresh to refresh; before, a kick more than
+/// 1 ms late found the worker already running a frame on the old buttons, and the display
+/// showed one frame twice and then skipped one. Every fourth kick here is 3 ms late, at the
+/// SP's 16.8 ms period.
+#[test]
+fn a_late_kick_in_step_still_gets_its_own_present() {
+    let emu = spawn();
+    let period = Duration::from_micros(16_800);
+    let mut next = Instant::now();
+    let (mut prompt, mut kicks) = (0, 0);
+    for i in 0..180 {
+        next += period;
+        let late = if i % 4 == 3 {
+            Duration::from_millis(3)
+        } else {
+            Duration::ZERO
+        };
+        std::thread::sleep((next + late).saturating_duration_since(Instant::now()));
+        let since = emu.published_count();
+        emu.kick();
+        let kicked = Instant::now();
+        let came = emu.wait_published(since, Duration::from_millis(12));
+        if i >= 60 {
+            kicks += 1;
+            if came && kicked.elapsed() < Duration::from_millis(4) {
+                prompt += 1;
+            }
+        }
+    }
+    assert!(
+        prompt * 10 >= kicks * 9,
+        "only {prompt} of {kicks} presents followed their kick"
+    );
+}
+
+/// Waiting longer for a late kick never makes the game follow a display that cannot keep up: kicked
+/// at half the panel's rate, it still runs close to its own speed rather than at the kicks'.
+#[test]
+fn a_display_at_half_rate_does_not_halve_the_game() {
+    let emu = spawn();
+    std::thread::sleep(Duration::from_millis(100));
+    let before = emu.published_count();
+    let began = Instant::now();
+    let mut next = began;
+    while began.elapsed() < Duration::from_secs(1) {
+        next += Duration::from_micros(33_600);
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+        emu.kick();
+    }
+    let ran = emu.published_count() - before;
+    assert!(ran >= 45, "{ran} frames in a second of kicks at 30 Hz");
+}
+
+/// In step, then the kicks stop (the display went to the shelf, say): the game carries on at its
+/// own speed rather than waiting on kicks that are not coming.
+#[test]
+fn kicks_that_stop_leave_the_game_on_its_own_clock() {
+    let emu = spawn();
+    let mut next = Instant::now();
+    for _ in 0..60 {
+        next += Duration::from_micros(16_800);
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+        emu.kick();
+    }
+    let before = emu.published_count();
+    std::thread::sleep(Duration::from_secs(1));
+    let ran = emu.published_count() - before;
+    assert!(
+        (50..=70).contains(&ran),
+        "{ran} frames in a second without kicks"
+    );
+}
+
 /// The display kicks and waits for the frame the kick asked for, so it can draw it in the same
 /// refresh; with nothing coming the wait gives up at its timeout instead of holding the display.
 #[test]

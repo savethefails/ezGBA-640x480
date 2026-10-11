@@ -22,6 +22,9 @@ pub const RUMBLE_HOLD_MS: Millis = 100;
 
 pub struct Session {
     root: PathBuf,
+    /// Refreshes whose kicked frame never came while a game was running, since last taken. A
+    /// frame missed is one the display shows twice. See `Session::take_missed`.
+    missed: std::cell::Cell<u32>,
     app: App,
     emu: Option<EmuHandle>,
     /// Opened once and outliving every cart. The cart clicks home while it is still on its
@@ -54,6 +57,7 @@ impl Session {
             eprintln!("slot: audio: {e}");
         }
         Session {
+            missed: std::cell::Cell::new(0),
             app: App::boot(&root),
             root,
             emu: None,
@@ -542,7 +546,16 @@ impl Session {
             return None;
         }
         let began = Instant::now();
-        emu.wait_published(since, timeout).then(|| began.elapsed())
+        let came = emu.wait_published(since, timeout);
+        if !came {
+            self.missed.set(self.missed.get().saturating_add(1));
+        }
+        came.then(|| began.elapsed())
+    }
+
+    /// How many refreshes, since the last call, waited for a frame that never came.
+    pub fn take_missed(&self) -> u32 {
+        self.missed.replace(0)
     }
 
     fn sync_speed(&self) {

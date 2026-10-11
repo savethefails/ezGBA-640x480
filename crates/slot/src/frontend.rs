@@ -531,6 +531,12 @@ impl Frontend {
         self.session.kick_and_wait(timeout)
     }
 
+    /// Refreshes that waited for a frame that never came, since the last call. See
+    /// `Session::take_missed`.
+    pub fn take_missed(&self) -> u32 {
+        self.session.take_missed()
+    }
+
     /// The frame the next boot should open on, taken once.
     pub fn take_scene(&mut self) -> Option<Vec<u8>> {
         self.scene.take()
