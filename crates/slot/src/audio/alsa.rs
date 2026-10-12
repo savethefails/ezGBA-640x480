@@ -6,10 +6,11 @@ use std::ffi::{c_char, c_int, c_uint, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use libloading::Library;
 
+use super::pacer::Pacer;
 use super::ring::Ring;
 use super::silence::Silence;
 use super::sink::{AudioError, AudioSink};
@@ -253,6 +254,7 @@ impl Playback {
         let mut buf = vec![0i16; PERIOD_FRAMES * CHANNELS as usize];
         let span = Duration::from_secs_f64(PERIOD_FRAMES as f64 / self.rate as f64);
         let mut silence = Silence::new(RELEASE_AFTER);
+        let mut pace = Pacer::new(span);
         while !stop.load(Ordering::Relaxed) {
             ring.fill(&mut buf);
             let hold = silence.hear(&buf, span);
@@ -277,11 +279,12 @@ impl Playback {
             }
             match self.pcm {
                 Some(pcm) => {
+                    pace.reset();
                     if !self.write(pcm, &buf) {
                         return;
                     }
                 }
-                None => std::thread::sleep(span),
+                None => std::thread::sleep(pace.wait(Instant::now())),
             }
         }
     }
