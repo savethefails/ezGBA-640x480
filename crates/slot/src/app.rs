@@ -8,7 +8,7 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart,
     ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing,
-    Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -771,18 +771,7 @@ impl App {
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
         let theme = Theme::read(root);
-        let look = Look {
-            picture: theme.picture,
-            grid: theme.grid,
-            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
-            runahead: theme.runahead.unwrap_or(RUNAHEAD),
-            scaler: theme.scaler,
-            sharpness: theme.sharpness,
-            snes_picture: theme.snes_picture,
-            colour_depth: theme.colour_depth,
-            colour_custom: theme.colour_custom,
-            snes_core: theme.snes_core,
-        };
+        let look = Look::from(&theme);
         look.apply();
         slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
@@ -1015,7 +1004,8 @@ impl App {
             QuickRow::RunAhead => Some(match self.look.runahead {
                 0 => QuickValue::Off,
                 1 => QuickValue::Ahead1,
-                _ => QuickValue::Ahead2,
+                2 => QuickValue::Ahead2,
+                n => unreachable!("run-ahead {n}"),
             }),
             QuickRow::ColourDepth => Some(match self.look.colour_depth {
                 ColourDepth::Off => QuickValue::Off,
@@ -1025,7 +1015,8 @@ impl App {
             }),
             QuickRow::SnesCore => Some(match self.look.snes_core {
                 Core::Snes9x => QuickValue::Snes9x,
-                _ => QuickValue::Snes9x2005,
+                Core::Snes9x2005 => QuickValue::Snes9x2005,
+                c => unreachable!("SNES emulator {c:?}"),
             }),
             QuickRow::DateTime | QuickRow::About => None,
         }
@@ -1082,12 +1073,6 @@ impl App {
     /// The wallpaper the last session showed, for a boot that opens on its picture.
     pub fn remembered_wallpaper(&self) -> Option<&str> {
         self.state.wallpaper.as_deref()
-    }
-
-    /// Whether this boot carries the bootloader's picture over: the shelf or the game it
-    /// shows is what slot opens on.
-    pub fn boot_picture_carried(&self) -> bool {
-        self.backlight_held()
     }
 
     pub fn set_bolt_face(&mut self, bolt: TexId) {
@@ -1626,12 +1611,11 @@ impl App {
         matches!(self.phase, Phase::Inserting { resumed: true, .. })
     }
 
-    /// The picture the bootloader showed, as a texture the size of the panel. Taken only while
-    /// a resume is under way: anywhere else there is nothing for it to carry over.
+    /// The picture the bootloader showed, as a texture the size of the panel. Only while a
+    /// resume is under way: anywhere else there is nothing for it to carry over.
     pub fn set_boot_still(&mut self, tex: TexId) {
-        if self.resuming_at_boot() {
-            self.boot_still = Some(tex);
-        }
+        assert!(self.resuming_at_boot(), "a boot picture outside a resume");
+        self.boot_still = Some(tex);
     }
 
     /// Whether the bootloader's picture is still what is drawn.
@@ -1965,93 +1949,59 @@ impl App {
     /// the ends as the bar does. Drawn that way from the next frame, and written to
     /// `System/theme.txt` so the card keeps it and a hand edit there still wins at the next boot.
     fn change_look(&mut self, row: QuickRow, by: i32) {
-        const PICTURES: [Aspect; 2] = [Aspect::FourThree, Aspect::ThreeTwo];
-        const GRIDS: [LcdGrid; 4] = [LcdGrid::Off, LcdGrid::On, LcdGrid::Strict, LcdGrid::Lcd];
         let step = |at: usize, len: usize| (at as i32 + by).clamp(0, len as i32 - 1) as usize;
+        let look = &mut self.look;
         let (name, value) = match row {
             QuickRow::Picture => {
-                let at = PICTURES
-                    .iter()
-                    .position(|p| *p == self.look.picture)
-                    .unwrap_or(0);
-                self.look.picture = PICTURES[step(at, PICTURES.len())];
-                ("picture", aspect_word(self.look.picture).to_string())
+                look.picture = look.picture.step(by);
+                ("picture", look.picture.word().to_string())
             }
             QuickRow::Grid => {
-                let at = GRIDS.iter().position(|g| *g == self.look.grid).unwrap_or(0);
-                self.look.grid = GRIDS[step(at, GRIDS.len())];
-                ("grid", grid_word(self.look.grid).to_string())
+                look.grid = look.grid.step(by);
+                ("grid", look.grid.word().to_string())
             }
             QuickRow::GridDepth => {
                 let depths = QuickValue::DEPTHS;
-                let now = QuickValue::depth(self.look.depth).index() - QuickValue::Depth10.index();
-                self.look.depth = f32::from(depths[step(now, depths.len())]);
-                ("grid-depth", format!("{}", self.look.depth as u8))
+                let now = QuickValue::depth(look.depth).index() - QuickValue::Depth10.index();
+                look.depth = f32::from(depths[step(now, depths.len())]);
+                ("grid-depth", format!("{}", look.depth as u8))
             }
             QuickRow::SnesPicture => {
-                const SNES: [SnesPicture; 2] = [SnesPicture::Sharp, SnesPicture::FourThree];
-                let at = SNES
-                    .iter()
-                    .position(|x| *x == self.look.snes_picture)
-                    .unwrap_or(0);
-                self.look.snes_picture = SNES[step(at, SNES.len())];
-                let word = match self.look.snes_picture {
-                    SnesPicture::Sharp => "sharp",
-                    SnesPicture::FourThree => "4:3",
-                };
-                ("snes-picture", word.to_string())
+                look.snes_picture = look.snes_picture.step(by);
+                ("snes-picture", look.snes_picture.word().to_string())
             }
             QuickRow::Scaler => {
-                const SCALERS: [Scaling; 2] = [Scaling::PixelAa, Scaling::Shimmerless];
-                let at = SCALERS
-                    .iter()
-                    .position(|x| *x == self.look.scaler)
-                    .unwrap_or(0);
-                self.look.scaler = SCALERS[step(at, SCALERS.len())];
-                let word = match self.look.scaler {
-                    Scaling::PixelAa => "pixel-aa",
-                    Scaling::Shimmerless => "shimmerless",
-                };
-                ("scaler", word.to_string())
+                look.scaler = look.scaler.step(by);
+                ("scaler", look.scaler.word().to_string())
             }
             QuickRow::Sharpness => {
                 let steps = QuickValue::SHARPNESS;
-                let now = QuickValue::sharpness(self.look.sharpness).index()
-                    - QuickValue::Sharp05.index();
-                self.look.sharpness = steps[step(now, steps.len())];
-                ("sharpness", format!("{:.1}", self.look.sharpness))
+                let now =
+                    QuickValue::sharpness(look.sharpness).index() - QuickValue::Sharp05.index();
+                look.sharpness = steps[step(now, steps.len())];
+                ("sharpness", format!("{:.1}", look.sharpness))
             }
             QuickRow::RunAhead => {
-                self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
+                look.runahead = step(usize::from(look.runahead), 3) as u8;
                 crate::latency::note(&format!(
                     "settings: run-ahead set to {}, for the next game started",
-                    self.look.runahead
+                    look.runahead
                 ));
-                ("runahead", self.look.runahead.to_string())
+                ("runahead", look.runahead.to_string())
             }
             QuickRow::ColourDepth => {
-                const DEPTHS: [ColourDepth; 4] = [
-                    ColourDepth::Off,
-                    ColourDepth::Rich,
-                    ColourDepth::Deep,
-                    ColourDepth::Custom,
-                ];
-                let at = DEPTHS
-                    .iter()
-                    .position(|d| *d == self.look.colour_depth)
-                    .unwrap_or(0);
-                self.look.colour_depth = DEPTHS[step(at, DEPTHS.len())];
-                ("colour-depth", self.look.colour_depth.word().to_string())
+                look.colour_depth = look.colour_depth.step(by);
+                ("colour-depth", look.colour_depth.word().to_string())
             }
             QuickRow::SnesCore => {
-                self.look.snes_core = match self.look.snes_core {
-                    Core::Snes9x => Core::Snes9x2005,
-                    _ => Core::Snes9x,
-                };
-                let word = match self.look.snes_core {
-                    Core::Snes9x => "snes9x",
-                    _ => "snes9x2005",
-                };
+                // The menu's order: the fast one first, as it is the default.
+                const SNES_CORES: [Core; 2] = [Core::Snes9x2005, Core::Snes9x];
+                let at = SNES_CORES
+                    .iter()
+                    .position(|c| *c == look.snes_core)
+                    .expect("a SNES core");
+                look.snes_core = SNES_CORES[step(at, SNES_CORES.len())];
+                let word = look.snes_core.as_str();
                 crate::latency::note(&format!(
                     "settings: SNES emulator set to {word}, for the next game started"
                 ));
@@ -2502,19 +2452,6 @@ impl App {
         !matches!(self.backlight_hold, BacklightHold::Free)
     }
 
-    fn push_boot_still(&self, out: &mut Vec<Draw>) {
-        if let Some(tex) = self.boot_still {
-            out.push(Draw::Tex {
-                x: 0.0,
-                y: 0.0,
-                w: OUT_W as f32,
-                h: OUT_H as f32,
-                tex,
-                alpha: 1.0,
-            });
-        }
-    }
-
     /// The game layer's own power, which answers to the phase rather than to an event: an
     /// insert, a resume and a wake all bring the picture up the same way.
     fn step_screen(&mut self, dt: f32) {
@@ -2915,8 +2852,15 @@ impl App {
             }
             // The shelf recedes behind the cart on the way in; on the way out the live
             // game is what darkens, and the compositor has already drawn it.
-            Phase::Inserting { .. } | Phase::Playing { .. } if self.boot_still.is_some() => {
-                self.push_boot_still(out)
+            Phase::Inserting { .. } | Phase::Playing { .. } if let Some(tex) = self.boot_still => {
+                out.push(Draw::Tex {
+                    x: 0.0,
+                    y: 0.0,
+                    w: OUT_W as f32,
+                    h: OUT_H as f32,
+                    tex,
+                    alpha: 1.0,
+                })
             }
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
@@ -4850,26 +4794,33 @@ struct Look {
     snes_picture: SnesPicture,
     /// The game picture's colour depth, and the card's own values for `Custom`.
     colour_depth: ColourDepth,
-    colour_custom: [Option<f32>; 3],
+    colour_custom: [f32; 3],
     /// The emulator a SNES cart starts on when `selected_core.ini` does not name one. Not how
     /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
     snes_core: Core,
 }
 
+impl From<&Theme> for Look {
+    fn from(theme: &Theme) -> Self {
+        Look {
+            picture: theme.picture,
+            grid: theme.grid,
+            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
+            runahead: theme.runahead.unwrap_or(RUNAHEAD),
+            scaler: theme.scaler,
+            sharpness: theme.sharpness,
+            snes_picture: theme.snes_picture,
+            colour_depth: theme.colour_depth,
+            colour_custom: theme.colour_custom,
+            snes_core: theme.snes_core,
+        }
+    }
+}
+
+/// A card that says nothing: the theme's own defaults, so there is one set of them.
 impl Default for Look {
     fn default() -> Self {
-        Look {
-            picture: Aspect::FourThree,
-            grid: LcdGrid::Off,
-            depth: slot_gfx::GRID_DEPTH,
-            runahead: RUNAHEAD,
-            scaler: Scaling::PixelAa,
-            sharpness: 1.0,
-            snes_picture: SnesPicture::Sharp,
-            colour_depth: ColourDepth::Off,
-            colour_custom: [None; 3],
-            snes_core: Core::Snes9x2005,
-        }
+        Look::from(&Theme::default())
     }
 }
 
@@ -4904,22 +4855,5 @@ impl Look {
             saturation,
             contrast,
         });
-    }
-}
-
-/// The words `System/theme.txt` spells these with, which `Theme::parse` reads back.
-fn aspect_word(picture: Aspect) -> &'static str {
-    match picture {
-        Aspect::FourThree => "4:3",
-        Aspect::ThreeTwo => "3:2",
-    }
-}
-
-fn grid_word(grid: LcdGrid) -> &'static str {
-    match grid {
-        LcdGrid::Off => "off",
-        LcdGrid::On => "on",
-        LcdGrid::Strict => "strict",
-        LcdGrid::Lcd => "lcd",
     }
 }

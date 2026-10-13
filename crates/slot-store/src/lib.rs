@@ -32,5 +32,5 @@ pub use stamp::{
 };
 pub use theme::{
     write_theme_setting, Aspect, BootPicture, ColourDepth, LcdGrid, Scaling, SnesPicture, Theme,
-    THEME_FILE,
+    Word, THEME_FILE,
 };

@@ -52,7 +52,7 @@ pub struct Theme {
     pub colour_depth: ColourDepth,
     /// `colour-gamma 1.14`, `colour-saturation 1.1` and `colour-contrast 1.05`: what
     /// `colour-depth custom` draws with. Each is 1.0 when the card does not say.
-    pub colour_custom: [Option<f32>; 3],
+    pub colour_custom: [f32; 3],
     /// `snes-core snes9x2005` or `snes-core snes9x`: which emulator runs a SNES cart that
     /// `selected_core.ini` does not name. snes9x2005 is the default, being fast enough for
     /// run-ahead.
@@ -77,25 +77,96 @@ pub enum ColourDepth {
 }
 
 impl ColourDepth {
-    /// Gamma exponent, saturation and contrast. `custom` is what the card's lines say, each 1.0
-    /// where it says nothing.
-    pub fn values(self, custom: [Option<f32>; 3]) -> [f32; 3] {
+    /// Gamma exponent, saturation and contrast. `custom` is what the card's lines say.
+    pub fn values(self, custom: [f32; 3]) -> [f32; 3] {
         match self {
             ColourDepth::Off => [1.0, 1.0, 1.0],
             ColourDepth::Rich => [2.2 / 2.0, 1.05, 1.0],
             ColourDepth::Deep => [2.5 / 2.2, 1.10, 1.05],
-            ColourDepth::Custom => custom.map(|v| v.unwrap_or(1.0)),
+            ColourDepth::Custom => custom,
         }
+    }
+}
+
+/// A setting `theme.txt` spells as one of a fixed set of words. The table is the one spelling,
+/// read by `Theme::parse` and written by the settings menu, in the order the menu steps through.
+pub trait Word: Copy + PartialEq + std::fmt::Debug + 'static {
+    const WORDS: &'static [(Self, &'static str)];
+
+    fn word(self) -> &'static str {
+        Self::WORDS
+            .iter()
+            .find(|(v, _)| *v == self)
+            .unwrap_or_else(|| panic!("{self:?} has no word"))
+            .1
     }
 
-    pub fn word(self) -> &'static str {
-        match self {
-            ColourDepth::Off => "off",
-            ColourDepth::Rich => "rich",
-            ColourDepth::Deep => "deep",
-            ColourDepth::Custom => "custom",
-        }
+    /// `by` places along `WORDS`, stopping at either end.
+    fn step(self, by: i32) -> Self {
+        let at = Self::WORDS
+            .iter()
+            .position(|(v, _)| *v == self)
+            .unwrap_or_else(|| panic!("{self:?} has no word"));
+        Self::WORDS[(at as i32 + by).clamp(0, Self::WORDS.len() as i32 - 1) as usize].0
     }
+}
+
+impl Word for ColourDepth {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (ColourDepth::Off, "off"),
+        (ColourDepth::Rich, "rich"),
+        (ColourDepth::Deep, "deep"),
+        (ColourDepth::Custom, "custom"),
+    ];
+}
+
+impl Word for BootPicture {
+    const WORDS: &'static [(Self, &'static str)] =
+        &[(BootPicture::Last, "last"), (BootPicture::Off, "off")];
+}
+
+impl Word for LcdGrid {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (LcdGrid::Off, "off"),
+        (LcdGrid::On, "on"),
+        (LcdGrid::Strict, "strict"),
+        (LcdGrid::Lcd, "lcd"),
+    ];
+}
+
+impl Word for Scaling {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (Scaling::PixelAa, "pixel-aa"),
+        (Scaling::Shimmerless, "shimmerless"),
+    ];
+}
+
+impl Word for SnesPicture {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (SnesPicture::Sharp, "sharp"),
+        (SnesPicture::FourThree, "4:3"),
+    ];
+}
+
+impl Word for Aspect {
+    const WORDS: &'static [(Self, &'static str)] =
+        &[(Aspect::FourThree, "4:3"), (Aspect::ThreeTwo, "3:2")];
+}
+
+/// `value` into `slot` if it is one of the setting's words. Anything else is the user's own
+/// junk in their own file, and leaves the setting as it was.
+fn set<T: Word>(slot: &mut T, value: &str) {
+    if let Some((v, _)) = T::WORDS.iter().find(|(_, w)| *w == value) {
+        *slot = *v;
+    }
+}
+
+/// `value` as a number in `range`, and `None` for anything else on the card.
+fn ranged<T: std::str::FromStr + PartialOrd>(
+    value: &str,
+    range: std::ops::RangeInclusive<T>,
+) -> Option<T> {
+    value.parse().ok().filter(|x| range.contains(x))
 }
 
 /// What the bootloader shows while the device starts.
@@ -164,7 +235,7 @@ impl Default for Theme {
             snes_picture: SnesPicture::Sharp,
             boot_picture: BootPicture::Last,
             colour_depth: ColourDepth::Off,
-            colour_custom: [None; 3],
+            colour_custom: [1.0; 3],
             snes_core: crate::Core::Snes9x2005,
         }
     }
@@ -199,51 +270,30 @@ impl Theme {
             match (name.as_str(), value.to_ascii_lowercase().as_str()) {
                 ("menu", "off") => theme.menu = false,
                 ("menu", "on") => theme.menu = true,
-                ("picture", "4:3") => theme.picture = Aspect::FourThree,
-                ("picture", "3:2") => theme.picture = Aspect::ThreeTwo,
-                ("grid", "on") => theme.grid = LcdGrid::On,
-                ("grid", "strict") => theme.grid = LcdGrid::Strict,
-                ("grid", "lcd") => theme.grid = LcdGrid::Lcd,
-                ("grid", "off") => theme.grid = LcdGrid::Off,
-                ("scaler", "pixel-aa") => theme.scaler = Scaling::PixelAa,
-                ("scaler", "shimmerless") => theme.scaler = Scaling::Shimmerless,
-                ("snes-picture", "sharp") => theme.snes_picture = SnesPicture::Sharp,
-                ("snes-picture", "4:3") => theme.snes_picture = SnesPicture::FourThree,
-                ("boot-picture", "last") => theme.boot_picture = BootPicture::Last,
-                ("boot-picture", "off") => theme.boot_picture = BootPicture::Off,
-                ("colour-depth", "off") => theme.colour_depth = ColourDepth::Off,
-                ("colour-depth", "rich") => theme.colour_depth = ColourDepth::Rich,
-                ("colour-depth", "deep") => theme.colour_depth = ColourDepth::Deep,
-                ("colour-depth", "custom") => theme.colour_depth = ColourDepth::Custom,
+                ("picture", v) => set(&mut theme.picture, v),
+                ("grid", v) => set(&mut theme.grid, v),
+                ("scaler", v) => set(&mut theme.scaler, v),
+                ("snes-picture", v) => set(&mut theme.snes_picture, v),
+                ("boot-picture", v) => set(&mut theme.boot_picture, v),
+                ("colour-depth", v) => set(&mut theme.colour_depth, v),
                 ("snes-core", "snes9x") => theme.snes_core = crate::Core::Snes9x,
                 ("snes-core", "snes9x2005" | "snes9x2005_plus") => {
                     theme.snes_core = crate::Core::Snes9x2005
                 }
-                ("colour-gamma" | "colour-saturation" | "colour-contrast", v) => {
-                    if let Some(x) = v.parse::<f32>().ok().filter(|x| (0.5..=2.0).contains(x)) {
-                        let at = match name.as_str() {
-                            "colour-gamma" => 0,
-                            "colour-saturation" => 1,
-                            _ => 2,
-                        };
-                        theme.colour_custom[at] = Some(x);
+                (k @ ("colour-gamma" | "colour-saturation" | "colour-contrast"), v) => {
+                    let at = ["colour-gamma", "colour-saturation", "colour-contrast"]
+                        .iter()
+                        .position(|n| *n == k)
+                        .unwrap();
+                    if let Some(x) = ranged(v, 0.5..=2.0) {
+                        theme.colour_custom[at] = x;
                     }
                 }
                 ("runahead", "off") => theme.runahead = Some(0),
-                ("runahead", v) => {
-                    if let Some(n) = v.parse::<u8>().ok().filter(|n| *n <= 2) {
-                        theme.runahead = Some(n);
-                    }
-                }
-                ("grid-depth", v) => {
-                    if let Some(d) = v.parse::<f32>().ok().filter(|d| (5.0..=100.0).contains(d)) {
-                        theme.grid_depth = Some(d);
-                    }
-                }
+                ("runahead", v) => theme.runahead = ranged(v, 0..=2).or(theme.runahead),
+                ("grid-depth", v) => theme.grid_depth = ranged(v, 5.0..=100.0).or(theme.grid_depth),
                 ("sharpness", v) => {
-                    if let Some(s) = v.parse::<f32>().ok().filter(|s| (0.0..=2.0).contains(s)) {
-                        theme.sharpness = s;
-                    }
+                    theme.sharpness = ranged(v, 0.0..=2.0).unwrap_or(theme.sharpness)
                 }
                 _ => {}
             }

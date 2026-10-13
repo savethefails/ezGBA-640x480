@@ -374,7 +374,7 @@ impl Frontend {
         // the shelf the bootloader just showed. Otherwise a new one, as every boot gets.
         let kept = app
             .remembered_wallpaper()
-            .filter(|_| app.boot_picture_carried())
+            .filter(|_| app.backlight_held())
             .map(|name| root.join("Wallpapers").join(name))
             .filter(|path| path.is_file());
         let Some(path) = kept.or_else(|| wallpaper::pick(root, seed)) else {
