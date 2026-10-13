@@ -342,6 +342,7 @@ pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Res
     }
     let mut text = out.join("\n");
     text.push('\n');
+    std::fs::create_dir_all(root.join(crate::CONFIG_DIR))?;
     crate::atomic::atomic_write(&path, text.as_bytes())
 }
 

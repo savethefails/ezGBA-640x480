@@ -1,8 +1,8 @@
 use slot_power::{Battery, Charge};
 use slot_store::{Cart, Platform};
 use slot_ui::{
-    draw_footer, label_colour, rest_y, Draw, GbShell, Mould, Printed, Shelf, TexId, CART_W,
-    GB_CART_H, OUT_W,
+    draw_footer, label_colour, mark_at, mark_box, rest_y, Draw, GbShell, Printed, Shelf, TexId,
+    CART_W, GB_CART_H, OUT_W, PLATE_H,
 };
 
 fn shelf_with(n: usize) -> Shelf {
@@ -562,6 +562,39 @@ fn the_gauge_starts_at_the_case_margin() {
     );
 }
 
+/// And the mark it lost is somewhere else entirely: the top right corner, held off both edges by
+/// the case's own margin — the one the gauge and the clock are printed at, and the one this file
+/// asserts above. Read from `mark_box` and `mark_at` together rather than from four numbers, so
+/// moving either moves this with it.
+///
+/// The right edge is what is really held here. A mark and the clock are at the same end of the
+/// screen with nothing between them, and the mark spent a release inset half as far as the clock
+/// was, which is what "tucked into the corner" turned out to mean. The halo is the one pixel of
+/// slack: a mark's box carries a transparent ring that the clock's type does not.
+///
+/// The plate is deliberately not part of this any more. A mark is drawn on the carousel, where
+/// the HUD's plate is usually not on screen at all, and it is now taller than the plate is deep
+/// — so a rule that fitted it inside 40 px would be a rule that capped the drawing at a size the
+/// device has twice said is too small. What is held instead is that it clears the plate's depth,
+/// which is the geometry the layout now depends on: if a mark ever fits inside the plate again,
+/// the reasoning in `mark_at` and in `badge_at` about why the two came apart is stale.
+#[test]
+fn a_mark_is_held_off_the_screen_edges_by_the_case_margin() {
+    let (w, h) = mark_box();
+    let (x, y) = mark_at(w as f32);
+    assert_eq!(
+        x + w as f32,
+        OUT_W as f32 - 24.0,
+        "the mark's right edge is not on the case margin the clock is printed at"
+    );
+    assert_eq!(y, 16.0, "the mark is not held off the top of the screen");
+    assert!(
+        y + h as f32 > PLATE_H,
+        "a {w}x{h} mark at {y} fits inside the {PLATE_H} px plate again, which is not what \
+         `mark_at` and `badge_at` say about each other"
+    );
+}
+
 /// `draw_gauge`'s own suite proves the capsule holds still in isolation; `the_gauge_starts_at_
 /// the_case_margin` above only ever calls `draw_footer` while charging, so nothing here was
 /// exercising the discharging path through the call the app actually makes. This is that path,
@@ -769,7 +802,7 @@ fn the_row_parts_for_the_cart_going_in() {
 fn dim_darkens_a_side_carts_face_and_not_the_black_under_it() {
     let mut s = shelf_with(3);
     let shadow = TexId::from_raw(99);
-    s.set_shadow(Mould::Gba, shadow);
+    s.set_shadow(shadow);
     let side = TexId::from_raw(11);
     s.set_faces(vec![TexId::from_raw(10), side, TexId::from_raw(12)]);
     let drawn = |dim: f32| {
@@ -857,7 +890,7 @@ fn a_game_boy_row_backs_its_carts_with_the_game_boy_shadow() {
     settle(&mut s);
     s.set_faces((0..3).map(|i| TexId::from_raw(20 + i)).collect());
     let gba = TexId::from_raw(98);
-    s.set_shadow(Mould::Gba, gba);
+    s.set_shadow(gba);
     let drawn = |s: &Shelf| {
         let mut out = Vec::new();
         s.draw_row(None, 0.0, 0.0, 1.0, 0.0, &mut out);
@@ -870,7 +903,7 @@ fn a_game_boy_row_backs_its_carts_with_the_game_boy_shadow() {
         "the GBA silhouette was stretched under a Game Boy pak"
     );
     let gb = TexId::from_raw(97);
-    s.set_shadow(Mould::Gb(GbShell::Notched), gb);
+    s.set_gb_shadow(GbShell::Notched, gb);
     assert!(
         drawn(&s)
             .iter()
@@ -923,8 +956,8 @@ fn a_colour_pak_and_a_grey_one_are_backed_by_their_own_shells() {
         s.select(selected);
         settle(&mut s);
         s.set_faces(vec![TexId::from_raw(20), TexId::from_raw(21)]);
-        s.set_shadow(Mould::Gb(GbShell::Notched), notched);
-        s.set_shadow(Mould::Gb(GbShell::Rounded), rounded);
+        s.set_gb_shadow(GbShell::Notched, notched);
+        s.set_gb_shadow(GbShell::Rounded, rounded);
         let mut out = Vec::new();
         s.draw_row(None, 0.0, 0.0, 1.0, 0.0, &mut out);
         let backings: Vec<TexId> = out
@@ -941,4 +974,62 @@ fn a_colour_pak_and_a_grey_one_are_backed_by_their_own_shells() {
             carts[selected].stem
         );
     }
+}
+
+/// `carts` is public and the mould each one came out of is not: `shells` is built once, in
+/// `Shelf::new`, with one entry per cart. Nothing in the workspace mutates `carts` today, so the
+/// two cannot currently disagree — but they are two vectors kept in step by nobody, and the
+/// place that reads them together is the draw loop. A cart pushed straight onto the public field
+/// used to index one entry past the end of `shells` and panic there, which on the device is a
+/// black screen and a handset that has stopped, with the message nowhere anybody can read it.
+///
+/// So the row draws whatever it has been given. A cart whose mould was never recorded is backed
+/// with the straight sided silhouette, exactly as a cart whose face was never uploaded still
+/// holds its place in the row rather than leaving a hole in it.
+///
+/// The pushed cart is a Game Boy pak on a Game Boy row, which is the shape that makes the
+/// difference visible at all: if this ever goes back to indexing, it is a panic and not a wrong
+/// backing, and the row is one cart longer than the shells are either way.
+#[test]
+fn a_cart_pushed_onto_the_row_draws_rather_than_stopping_the_device() {
+    let mut s = gb_shelf_with(2);
+    let gb = TexId::from_raw(97);
+    let gba = TexId::from_raw(98);
+    s.set_shadow(gba);
+    s.set_gb_shadow(GbShell::Notched, gb);
+    settle(&mut s);
+    let backed = |s: &Shelf| {
+        let mut out = Vec::new();
+        s.draw_row(None, 0.0, 0.0, 1.0, 0.0, &mut out);
+        out.iter()
+            .filter(|d| matches!(**d, Draw::Tex { tex, .. } if tex == gb || tex == gba))
+            .count()
+    };
+    // Twice, not once: a row of two repeats, so its one neighbour stands on both sides of the
+    // selection and is backed under each of its two images. This read 1 until the repeat landed
+    // and was left behind by it — before that a row of two had a hole where the second image now
+    // stands, and only one cart on the row was dimmed.
+    assert_eq!(backed(&s), 2, "the neighbour was not backed to begin with");
+
+    // Straight onto the public field, which is the only way the two can come apart. The
+    // selection stays where it is, so the new cart stands as a *neighbour* — dimmed, and
+    // therefore backed, which is the one read that ever looks a cart's mould up.
+    s.carts.push(Cart {
+        platform: Platform::Gb,
+        stem: "Pushed".into(),
+        rom: "Games/GB/Pushed.gb".into(),
+        label: None,
+        box_art: None,
+        shell: None,
+        code: String::new(),
+        title: "PUSHED".into(),
+    });
+    settle(&mut s);
+    // Drawn at all is the whole claim. Which silhouette backs it is the graceful part; that the
+    // device is still running to draw anything is the part this exists for.
+    assert_eq!(
+        backed(&s),
+        2,
+        "the row holding a cart the shells never heard of did not draw both its neighbours"
+    );
 }

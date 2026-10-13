@@ -184,6 +184,10 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.wallpaper.as_deref().unwrap_or(""),
     );
     let path = state_path(root);
+    // `Config/` is new to cards from before it, and is not worth a lost cart over.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     atomic_write(&path, text.as_bytes())
 }
 

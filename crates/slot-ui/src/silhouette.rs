@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::cart::{Mould, CART_H, CART_W, GB_CART_H, GB_CART_W, SNES_CART_H, SNES_CART_W};
+use crate::cart::{CART_H, CART_W, GB_CART_H, GB_CART_W, SNES_CART_H, SNES_CART_W};
 
 const CART_SVG: &str = include_str!("../assets/cart.svg");
 const DETAIL_SVG: &str = include_str!("../assets/cart_detail.svg");
@@ -32,37 +32,55 @@ pub enum GbShell {
     Rounded,
 }
 
-/// The SVG outline and moulding of each shape, at its own canvas size.
-fn art(m: Mould) -> (&'static str, &'static str, u32, u32) {
-    match m {
-        Mould::Gba => (CART_SVG, DETAIL_SVG, CART_W, CART_H),
-        Mould::Snes => (SNES_CART_SVG, SNES_DETAIL_SVG, SNES_CART_W, SNES_CART_H),
-        Mould::Gb(GbShell::Notched) => (GB_CART_SVG, GB_DETAIL_SVG, GB_CART_W, GB_CART_H),
-        Mould::Gb(GbShell::Rounded) => (GBC_CART_SVG, GBC_DETAIL_SVG, GB_CART_W, GB_CART_H),
-    }
+/// Coverage of the cart outline, one byte per pixel, row major.
+pub fn silhouette(w: u32, h: u32) -> Vec<u8> {
+    rasterise(w, h).unwrap_or_else(|| vec![255; (w * h) as usize])
 }
 
-/// Coverage of a cart's outline, one byte per pixel, row major. Every cart of a shape is the
-/// same shape, so each is rasterised once and multiplied into faces.
-///
-/// The Game Boy pak has an outline of its own rather than the GBA one at a taller size: its
-/// sides are parallel where the GBA cart's taper into a grip ridge.
-pub fn silhouette(m: Mould) -> &'static [u8] {
-    static MASKS: [OnceLock<Vec<u8>>; Mould::COUNT] = [const { OnceLock::new() }; Mould::COUNT];
-    MASKS[m.index()].get_or_init(|| {
-        let (svg, _, w, h) = art(m);
-        rasterise_svg(svg, w, h)
-    })
+/// The same, for the Game Boy Game Pak. A separate outline rather than the GBA one at a taller
+/// size: the pak's sides are parallel where the GBA cart's taper into a grip ridge, and
+/// stretching one into the other would put a ridge on an object that never had one.
+pub fn gb_silhouette(shell: GbShell, w: u32, h: u32) -> Vec<u8> {
+    let svg = match shell {
+        GbShell::Notched => GB_CART_SVG,
+        GbShell::Rounded => GBC_CART_SVG,
+    };
+    rasterise_svg(svg, w, h).unwrap_or_else(|| vec![255; (w * h) as usize])
+}
+
+/// Every cart is the same shape, so the mask is rasterised once and multiplied into faces.
+pub(crate) fn cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| silhouette(CART_W, CART_H))
+}
+
+/// One cached mask per shell mould. Two `OnceLock`s rather than a map: there are exactly two
+/// Game Pak shells and there will not be a third, so a match reads better than a lookup.
+pub(crate) fn gb_cart_mask(shell: GbShell) -> &'static [u8] {
+    static NOTCHED: OnceLock<Vec<u8>> = OnceLock::new();
+    static ROUNDED: OnceLock<Vec<u8>> = OnceLock::new();
+    let lock = match shell {
+        GbShell::Notched => &NOTCHED,
+        GbShell::Rounded => &ROUNDED,
+    };
+    lock.get_or_init(|| gb_silhouette(shell, GB_CART_W, GB_CART_H))
 }
 
 /// How far inside the outline each pixel sits, in city block steps, saturating at 255. A
 /// translucent shell fades from its edge inward and needs the distance, not the coverage.
-pub(crate) fn depth(m: Mould) -> &'static [u8] {
-    static DEPTHS: [OnceLock<Vec<u8>>; Mould::COUNT] = [const { OnceLock::new() }; Mould::COUNT];
-    DEPTHS[m.index()].get_or_init(|| {
-        let (_, _, w, h) = art(m);
-        depth_map(silhouette(m), w as usize, h as usize)
-    })
+pub(crate) fn cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(cart_mask(), CART_W as usize, CART_H as usize))
+}
+
+pub(crate) fn gb_cart_depth(shell: GbShell) -> &'static [u8] {
+    static NOTCHED: OnceLock<Vec<u8>> = OnceLock::new();
+    static ROUNDED: OnceLock<Vec<u8>> = OnceLock::new();
+    let lock = match shell {
+        GbShell::Notched => &NOTCHED,
+        GbShell::Rounded => &ROUNDED,
+    };
+    lock.get_or_init(|| depth_map(gb_cart_mask(shell), GB_CART_W as usize, GB_CART_H as usize))
 }
 
 /// Two pass chamfer. Everything off the edge of the buffer counts as outside, so a pixel on
@@ -112,34 +130,62 @@ pub(crate) struct Detail {
     pub highlight: Vec<u8>,
 }
 
-/// A cart's moulding, shaded into the shell rather than drawn in a fixed colour, so it belongs
-/// to whatever colour the cart is: the GBA cart's grip ridge and thumb notch; the Game Boy pak's
-/// shoulder ribbing, lettering plate, side grooves and arrow; the SNES pak's own.
-///
-/// The two Game Pak shells differ in their moulding as well as their corners: a class C
-/// shoulder has no lines across it, its header panel being smooth with the ribbing surviving
-/// only as short ridges on the outer edges. See the note at the top of `gbc_cart_detail.svg`.
-pub(crate) fn detail(m: Mould) -> &'static Detail {
-    static DETAILS: [OnceLock<Detail>; Mould::COUNT] = [const { OnceLock::new() }; Mould::COUNT];
-    DETAILS[m.index()].get_or_init(|| {
-        let (_, svg, w, h) = art(m);
-        let mut detail = rasterise_detail(svg, w, h);
-        let lettering = match m {
-            Mould::Gba => Some(GBA_LETTERING),
-            Mould::Gb(GbShell::Notched) => Some(GB_LETTERING),
-            Mould::Gb(GbShell::Rounded) => Some(GBC_LETTERING),
-            Mould::Snes => None,
-        };
-        if let Some(png) = lettering {
-            emboss(&mut detail, png, w, h);
+impl Detail {
+    fn blank(w: u32, h: u32) -> Detail {
+        Detail {
+            shadow: vec![0; (w * h) as usize],
+            highlight: vec![0; (w * h) as usize],
         }
+    }
+}
+
+/// The moulded detail: the grip ridge above the label and the thumb notch at the bottom.
+/// Shaded into the shell rather than drawn in a fixed colour, so it belongs to whatever
+/// colour the cart is.
+pub(crate) fn detail_mask() -> &'static Detail {
+    static MASK: OnceLock<Detail> = OnceLock::new();
+    MASK.get_or_init(|| {
+        let mut detail = rasterise_detail(DETAIL_SVG, CART_W, CART_H)
+            .unwrap_or_else(|| Detail::blank(CART_W, CART_H));
+        emboss(&mut detail, GBA_LETTERING, CART_W, CART_H);
+        detail
+    })
+}
+
+/// The Game Boy pak's own moulding, which is a different object's: the ribbing on each shoulder,
+/// the lettering plate above the label, the grooves down both sides and the arrow that says
+/// which way up it goes. The GBA cart's ridge and thumb notch are nowhere on it.
+///
+/// One mask per shell, where there used to be one for both. The two moulds were thought to
+/// differ only at the top corners and the notch, neither of which any moulding reaches — but the
+/// user, looking at the rendered shelf, said the class C shoulder has no lines across it, and a
+/// square-on photograph of that shell agrees: its header panel is completely smooth and its
+/// ribbing survives only as short ridges on the outer side edges. So the shells differ in their
+/// moulding too, and this is what forces the two assets apart. They are still one drawing with
+/// one feature cut back rather than two drawings: see the note at the top of
+/// `gbc_cart_detail.svg`.
+pub(crate) fn gb_detail_mask(shell: GbShell) -> &'static Detail {
+    static NOTCHED: OnceLock<Detail> = OnceLock::new();
+    static ROUNDED: OnceLock<Detail> = OnceLock::new();
+    let (lock, svg) = match shell {
+        GbShell::Notched => (&NOTCHED, GB_DETAIL_SVG),
+        GbShell::Rounded => (&ROUNDED, GBC_DETAIL_SVG),
+    };
+    lock.get_or_init(|| {
+        let mut detail = rasterise_detail(svg, GB_CART_W, GB_CART_H)
+            .unwrap_or_else(|| Detail::blank(GB_CART_W, GB_CART_H));
+        let lettering = match shell {
+            GbShell::Notched => GB_LETTERING,
+            GbShell::Rounded => GBC_LETTERING,
+        };
+        emboss(&mut detail, lettering, GB_CART_W, GB_CART_H);
         // The class C shoulder is smooth, but the plate the lettering sits on ends in one
         // moulded step beneath it.
-        if m == Mould::Gb(GbShell::Rounded) {
+        if shell == GbShell::Rounded {
             let y = GBC_PLATE_STEP;
             for x in GBC_PLATE_X.0..GBC_PLATE_X.1 {
-                detail.shadow[(y * w + x) as usize] = 200;
-                detail.highlight[((y + 1) * w + x) as usize] = 160;
+                detail.shadow[(y * GB_CART_W + x) as usize] = 200;
+                detail.highlight[((y + 1) * GB_CART_W + x) as usize] = 160;
             }
         }
         detail
@@ -152,9 +198,12 @@ const GBC_PLATE_X: (u32, u32) = (72, 168);
 
 /// Raises `png`'s letters out of the shell: each letter is lit along its upper left and shaded
 /// along its lower right, which is how a moulded feature standing proud of the plastic reads
-/// with the light where every other feature has it.
+/// with the light where every other feature has it. Nothing happens for a mask that will not
+/// decode or is not this canvas's size, which leaves the cart as it was without the letters.
 fn emboss(detail: &mut Detail, png: &[u8], w: u32, h: u32) {
-    let mask = decode_mask(png, w, h);
+    let Some(mask) = decode_mask(png, w, h) else {
+        return;
+    };
     let at = |x: i32, y: i32| -> u8 {
         if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
             0
@@ -172,30 +221,49 @@ fn emboss(detail: &mut Detail, png: &[u8], w: u32, h: u32) {
     }
 }
 
-/// A built-in 8-bit greyscale mask the size of its cart's canvas.
-fn decode_mask(png: &[u8], w: u32, h: u32) -> Vec<u8> {
+fn decode_mask(png: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     let mut reader = png::Decoder::new(std::io::Cursor::new(png))
         .read_info()
-        .expect("a built-in lettering mask");
+        .ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buf)
-        .expect("a built-in lettering mask");
-    assert_eq!(
-        (info.color_type, info.bit_depth, info.width, info.height),
-        (png::ColorType::Grayscale, png::BitDepth::Eight, w, h),
-        "a lettering mask of the wrong kind"
-    );
-    buf.truncate((w * h) as usize);
-    buf
+    let info = reader.next_frame(&mut buf).ok()?;
+    let grey =
+        info.color_type == png::ColorType::Grayscale && info.bit_depth == png::BitDepth::Eight;
+    (grey && (info.width, info.height) == (w, h)).then(|| buf[..(w * h) as usize].to_vec())
+}
+
+/// The SNES Game Pak's outline, depth and moulding: one shell, so one of each.
+pub(crate) fn snes_cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_svg(SNES_CART_SVG, SNES_CART_W, SNES_CART_H)
+            .unwrap_or_else(|| vec![255; (SNES_CART_W * SNES_CART_H) as usize])
+    })
+}
+
+pub(crate) fn snes_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(snes_cart_mask(), SNES_CART_W as usize, SNES_CART_H as usize))
+}
+
+pub(crate) fn snes_detail_mask() -> &'static Detail {
+    static MASK: OnceLock<Detail> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail(SNES_DETAIL_SVG, SNES_CART_W, SNES_CART_H)
+            .unwrap_or_else(|| Detail::blank(SNES_CART_W, SNES_CART_H))
+    })
+}
+
+fn rasterise(w: u32, h: u32) -> Option<Vec<u8>> {
+    rasterise_svg(CART_SVG, w, h)
 }
 
 /// Splits one drawn asset into its shadow and its light by luminance: black is shadow, white is
 /// light, and the two come back as separate coverage masks. Authoring them as one file rather
 /// than two keeps a feature's lit edge and its dark edge from ever drifting apart, since they
 /// are the same shape drawn twice in the same document.
-fn rasterise_detail(svg: &str, w: u32, h: u32) -> Detail {
-    let px = render(svg, w, h);
+fn rasterise_detail(svg: &str, w: u32, h: u32) -> Option<Detail> {
+    let px = render(svg, w, h)?;
     let mut shadow = Vec::with_capacity((w * h) as usize);
     let mut highlight = Vec::with_capacity((w * h) as usize);
     for p in px.data().chunks_exact(4) {
@@ -207,26 +275,20 @@ fn rasterise_detail(svg: &str, w: u32, h: u32) -> Detail {
         highlight.push(lit);
         shadow.push(p[3] - lit);
     }
-    Detail { shadow, highlight }
+    Some(Detail { shadow, highlight })
 }
 
-fn rasterise_svg(svg: &str, w: u32, h: u32) -> Vec<u8> {
-    render(svg, w, h)
-        .data()
-        .iter()
-        .skip(3)
-        .step_by(4)
-        .copied()
-        .collect()
+fn rasterise_svg(svg: &str, w: u32, h: u32) -> Option<Vec<u8>> {
+    let px = render(svg, w, h)?;
+    Some(px.data().iter().skip(3).step_by(4).copied().collect())
 }
 
-/// A built-in SVG at a canvas size of ours, so nothing here can fail but a bug.
-fn render(svg: &str, w: u32, h: u32) -> resvg::tiny_skia::Pixmap {
-    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("a built-in SVG");
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h).expect("a canvas size");
+fn render(svg: &str, w: u32, h: u32) -> Option<resvg::tiny_skia::Pixmap> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
     let size = tree.size();
     let scale =
         resvg::tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
     resvg::render(&tree, scale, &mut pixmap.as_mut());
-    pixmap
+    Some(pixmap)
 }

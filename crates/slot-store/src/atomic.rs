@@ -6,10 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Temp, fsync, rename. A reader never observes a half written file, and a power cut
-/// during the write leaves the previous contents rather than a truncated one. The folder is
-/// made if a card from before it has none.
+/// during the write leaves the previous contents rather than a truncated one.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::create_dir_all(path.parent().expect("a file path"))?;
     let tmp = temp_path(path);
     match write_then_rename(&tmp, path, bytes) {
         Ok(()) => {}

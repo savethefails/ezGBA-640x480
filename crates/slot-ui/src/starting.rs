@@ -48,7 +48,12 @@ const SHADOW_DROP: f32 = 3.0;
 pub fn stamp_starting(rgba: &mut [u8], at: PillAt) {
     let (w, h) = (OUT_W as usize, OUT_H as usize);
     assert_eq!(rgba.len(), w * h * 4, "not a panel frame");
-    let text_w = line_width(label_font(), WORD, TEXT_PX, TRACKING);
+    let text_w = line_width(
+        label_font().expect("the built-in label font"),
+        WORD,
+        TEXT_PX,
+        TRACKING,
+    );
     let dots_w = DOT_GAP + 2.0 * DOT_STEP + DOT_R;
     let pill_w = SIDE + text_w + dots_w + SIDE;
     let (cx, cy) = (w as f32 / 2.0, at.centre_y());

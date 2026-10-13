@@ -71,7 +71,9 @@ pub fn rom_marking_face(stem: &str) -> CartFace {
         w: ROM_W,
         h: ROM_H,
     };
-    let font = text::label_font();
+    let Some(font) = text::label_font() else {
+        return face;
+    };
     let max_w = (ROM_W - 2 * MARK_PAD) as f32;
     let line_h = (MARK_PX * 1.25).ceil() as u32;
     let mut top = ROM_H.saturating_sub(line_h * title.len() as u32) / 2;
@@ -348,9 +350,10 @@ pub fn socket_face(core: Core) -> CartFace {
         w: SOCKET_W,
         h: SOCKET_H,
     };
-    // Inside the outline, which runs from 2.9 to 26.9 units down the face.
-    let layout = name_layout(core, (SOCKET_W - 12) as f32);
-    ink_band(&mut face, 4, 37, &layout, SOCKET_INK, 0.5);
+    if let Some(layout) = name_layout(core, (SOCKET_W - 12) as f32) {
+        // Inside the outline, which runs from 2.9 to 26.9 units down the face.
+        ink_band(&mut face, 4, 37, &layout, SOCKET_INK, 0.5);
+    }
     face
 }
 
@@ -363,7 +366,7 @@ pub fn chip_face(core: Option<Core>) -> CartFace {
         w: CHIP_W,
         h: CHIP_H,
     };
-    if let Some(layout) = core.map(|c| name_layout(c, (CHIP_W - 8) as f32)) {
+    if let Some(layout) = core.and_then(|c| name_layout(c, (CHIP_W - 8) as f32)) {
         // The body, between the two rows of legs.
         ink_band(&mut face, 4, 34, &layout, CHIP_INK, 1.0);
     }
@@ -387,16 +390,16 @@ pub fn chip_shadow_face() -> CartFace {
 
 /// A core's name exactly as the player reads it — `mGBA`, not `MGBA`. `text::fit` capitalises
 /// everything it lays out, so this builds the layout itself, shrinking only if it must.
-fn name_layout(core: Core, max_w: f32) -> text::Layout {
-    let font = text::label_font();
+fn name_layout(core: Core, max_w: f32) -> Option<text::Layout> {
+    let font = text::label_font()?;
     let tracking = |px: f32| (px * 0.10).round();
     let mut px = NAME_PX;
     while px > NAME_MIN_PX && text::line_width(font, core.text(), px, tracking(px)) > max_w {
         px -= 1.0;
     }
-    text::Layout {
+    Some(text::Layout {
         lines: vec![core.text().to_string()],
         px,
         tracking: tracking(px),
-    }
+    })
 }

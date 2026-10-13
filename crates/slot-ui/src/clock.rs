@@ -238,9 +238,10 @@ impl ClockPicker {
                 continue;
             }
             let mut buf = vec![0u8; (cell * PICKER_H * 4) as usize];
-            let font = text::label_font();
-            let layout = text::fit(font, &text, *cell as f32, 1, PICKER_PX, PICKER_MIN_PX);
-            text::draw_centred(&mut buf, *cell, PICKER_H, &layout, INK);
+            if let Some(font) = text::label_font() {
+                let layout = text::fit(font, &text, *cell as f32, 1, PICKER_PX, PICKER_MIN_PX);
+                text::draw_centred(&mut buf, *cell, PICKER_H, &layout, INK);
+            }
             blit(&mut rgba, w, &buf, *cell, PICKER_H, cell_x(i), 0);
         }
         UndoFace {

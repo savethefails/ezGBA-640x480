@@ -49,7 +49,13 @@ pub(crate) const MENU_INK: [u8; 3] = [0xf6, 0xf4, 0xef];
 /// that fits the words. A fixed width would make the bar the same size under "Restart" and
 /// "Power Off", which is the thing that looks wrong when the selection moves.
 pub fn menu_face(label: &str) -> UndoFace {
-    let font = text::label_font();
+    let Some(font) = text::label_font() else {
+        return UndoFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    };
     let ink = text::line_width(font, label, MENU_PX, 0.0).ceil() as u32;
     let w = ink + 2 * MENU_PAD;
     let mut rgba = vec![0u8; (w * MENU_H * 4) as usize];

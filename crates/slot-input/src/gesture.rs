@@ -216,7 +216,8 @@ impl Gestures {
             Btn::L2 => vec![Action::BrightnessDown],
             Btn::R2 => vec![Action::BrightnessUp],
             _ => {
-                if let Some((bit, action)) = chord(b).filter(|_| self.take_chord(now)) {
+                if let (true, Some((bit, action))) = (self.chording(now), chord(b)) {
+                    self.mark_chorded();
                     self.chord_held |= bit;
                     return vec![action];
                 }
@@ -282,15 +283,24 @@ impl Gestures {
     }
 
     /// Whether a key landing at `now` is the second half of a chord rather than the game's own
-    /// press, marking the hold chorded when it is: SELECT physically down, and either inside the
-    /// window or under a hold that has already chorded, so a held SELECT keeps ramping the
-    /// brightness past the window.
-    fn take_chord(&mut self, now: Millis) -> bool {
-        let Select::Held { since, chorded } = &mut self.select else {
-            return false;
-        };
-        *chorded |= now.saturating_sub(*since) < SELECT_CHORD_MS;
-        *chorded
+    /// press: SELECT physically down, and either inside the window or under a hold that has
+    /// already chorded, so a held SELECT keeps ramping the brightness past the window.
+    fn chording(&self, now: Millis) -> bool {
+        match self.select {
+            Select::Held { since, chorded } => {
+                chorded || now.saturating_sub(since) < SELECT_CHORD_MS
+            }
+            _ => false,
+        }
+    }
+
+    fn mark_chorded(&mut self) {
+        if let Select::Held { since, .. } = self.select {
+            self.select = Select::Held {
+                since,
+                chorded: true,
+            };
+        }
     }
 
     /// MENU is dispatched by name from `down`, ahead of the `_` arm that reads the `chord`
@@ -299,7 +309,8 @@ impl Gestures {
     /// Ahead of the double tap check, and the order is load-bearing: behind it, a SELECT+MENU
     /// that follows a recent tap opens the switcher rather than the menu.
     fn menu_down(&mut self, now: Millis) -> Vec<Action> {
-        if self.take_chord(now) {
+        if self.chording(now) {
+            self.mark_chorded();
             // The chord is the whole gesture, and these two are what make it one. Clearing
             // the hold stops this press also arming an eject — and, because `menu_up` reads
             // that same field to decide the press ever happened, it is what makes the release

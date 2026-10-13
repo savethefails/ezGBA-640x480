@@ -52,8 +52,8 @@ pub fn decode(buf: &[u8]) -> Option<(u64, ButtonMask)> {
     if buf.len() != PACKET || buf[0] != KIND_MASK {
         return None;
     }
-    let frame = u64::from_le_bytes(buf[1..9].try_into().unwrap());
-    let mask = u16::from_le_bytes(buf[9..].try_into().unwrap());
+    let frame = u64::from_le_bytes(buf[1..9].try_into().ok()?);
+    let mask = u16::from_le_bytes(buf[9..].try_into().ok()?);
     Some((frame, ButtonMask(mask)))
 }
 

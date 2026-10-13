@@ -55,9 +55,13 @@ impl Core {
     }
 
     pub fn parse(s: &str) -> Option<Core> {
-        Core::ALL
-            .into_iter()
-            .find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+        match s.trim().to_ascii_lowercase().as_str() {
+            "mgba" => Some(Core::Mgba),
+            "gpsp" => Some(Core::Gpsp),
+            "snes9x" => Some(Core::Snes9x),
+            "snes9x2005_plus" => Some(Core::Snes9x2005),
+            _ => None,
+        }
     }
 }
 

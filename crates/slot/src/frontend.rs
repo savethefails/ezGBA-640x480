@@ -9,14 +9,15 @@ use slot_power::{Platform, Power};
 // Aliased because `slot_power::Platform` above is already `Platform` here and is a different
 // thing entirely: that one is the machine slot is running on, this one is the machine a shelf's
 // cartridges were made for.
-use slot_store::format_stamp;
+use slot_store::{format_stamp, Platform as CartPlatform};
 use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_face_with, cart_shadow, chip_face,
-    chip_shadow_face, date_time_text, hhmm, hint_face, icon_face, menu_face, photo_face,
-    quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face,
-    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge,
-    Mould, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields, Toast, UndoFace,
-    ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face,
+    menu_face, photo_face, quick_caret_face, quick_label_face, quick_legend_faces,
+    quick_value_face, set_clock_hint_face, snes_cart_shadow, socket_face, sticker_face, title_face,
+    toast_face, wallpaper_face, word_face, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces,
+    QuickRow, QuickValue, StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK,
+    LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -339,13 +340,19 @@ impl Frontend {
         // with the other key caps, so moving the caret rasterises only the line above it.
         let hint = set_clock_hint_face();
         self.clocks.hint = Some(compositor.create_texture(hint.w, hint.h, &hint.rgba));
-        // One per shape: the two Game Pak shells' corners differ, and a shared backing showed
-        // through a dimmed cart where they disagree.
-        for m in Mould::ALL {
-            let shadow = cart_shadow(m);
-            let id = compositor.create_texture(shadow.w, shadow.h, &shadow.rgba);
-            self.session.app_mut().set_cart_shadow(m, id);
-        }
+        let shadow = cart_shadow();
+        let id = compositor.create_texture(shadow.w, shadow.h, &shadow.rgba);
+        self.session.app_mut().set_cart_shadow(id);
+        // One per Game Pak mould: the two shells' corners differ, and a shared backing was
+        // showing through a dimmed cart at the corner where they disagree.
+        let notched = gb_cart_shadow(GbShell::Notched);
+        let notched = compositor.create_texture(notched.w, notched.h, &notched.rgba);
+        let rounded = gb_cart_shadow(GbShell::Rounded);
+        let rounded = compositor.create_texture(rounded.w, rounded.h, &rounded.rgba);
+        self.session.app_mut().set_gb_cart_shadows(notched, rounded);
+        let snes = snes_cart_shadow();
+        let snes = compositor.create_texture(snes.w, snes.h, &snes.rgba);
+        self.session.app_mut().set_snes_cart_shadow(snes);
         // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
         // reserved slot rather than over the fill. The housing tint was only ever needed to
         // hide the bolt inside the fill it sat on; out here it sits where every other HUD
@@ -353,6 +360,18 @@ impl Frontend {
         let bolt = icon_face(Icon::Charging, BOLT_PX, HUD_INK);
         let bolt_id = compositor.create_texture(bolt.w, bolt.h, &bolt.rgba);
         self.session.app_mut().set_bolt_face(bolt_id);
+        // One mark per shelf, in `Platform::ALL` order, beside the bolt because they are the
+        // same kind of thing: a small tinted drawing that never changes. At boot and not on the
+        // press that needs one, because each is an SVG through a rasteriser, which is the one
+        // thing this device must never do on a frame.
+        let marks = CartPlatform::ALL
+            .iter()
+            .map(|p| {
+                let f = mark_face(*p);
+                compositor.create_texture(f.w, f.h, &f.rgba)
+            })
+            .collect();
+        self.session.app_mut().set_mark_faces(marks);
         self.upload_wallpaper(compositor);
     }
 
@@ -374,17 +393,15 @@ impl Frontend {
         let Some(path) = kept.or_else(|| wallpaper::pick(root, seed)) else {
             return;
         };
-        let name = path
-            .file_name()
-            .expect("a wallpaper file")
-            .to_string_lossy()
-            .into_owned();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         let Some(rgba) = wallpaper_face(&path) else {
             return;
         };
         let id = compositor.create_texture(OUT_W, OUT_H, &rgba);
         self.session.app_mut().set_wallpaper(id);
-        self.session.app_mut().set_wallpaper_name(name);
+        if let Some(name) = name {
+            self.session.app_mut().set_wallpaper_name(name);
+        }
     }
 
     /// One frame into the offscreen target and out to a surface of `window` pixels. The

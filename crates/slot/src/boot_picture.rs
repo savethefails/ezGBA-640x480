@@ -157,6 +157,7 @@ pub fn apply(logo: &Path, backup: &Path, want: &Want) -> io::Result<Painted> {
             if !backup.exists() {
                 let original = std::fs::read(logo)?;
                 pixel_offset(&original, original.len() as u64).ok_or_else(not_ours)?;
+                std::fs::create_dir_all(backup.parent().expect("a file path"))?;
                 atomic_write(backup, &original)?;
             }
             pixels

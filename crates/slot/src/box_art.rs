@@ -24,8 +24,8 @@ use crate::art_cache::{box_art, Art};
 /// direction's repeat with the next one already up.
 pub const AHEAD: i32 = 2;
 
-/// A cart by its place on the shelf.
-pub type Key = usize;
+/// A cart by shelf and place on it.
+pub type Key = (usize, usize);
 
 #[derive(Default)]
 struct Queue {
@@ -106,8 +106,10 @@ impl BoxArtLoader {
             if self.pending.contains(&key) || app.box_art_loaded(key) {
                 continue;
             }
-            queue.jobs.push_back((key, app.box_art_cart(key).clone()));
-            self.pending.insert(key);
+            if let Some(cart) = app.box_art_cart(key) {
+                queue.jobs.push_back((key, cart.clone()));
+                self.pending.insert(key);
+            }
         }
         wake.notify_all();
     }
