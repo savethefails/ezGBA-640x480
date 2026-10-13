@@ -195,9 +195,9 @@ fn only_the_box_art_around_the_selection_is_loaded() {
     let mut input = Script(VecDeque::new());
     f.advance(&mut input);
 
-    let loaded = |f: &Frontend| (0..10).filter(|&i| f.app().box_art_loaded((0, i))).count();
+    let loaded = |f: &Frontend| (0..10).filter(|&i| f.app().box_art_loaded(i)).count();
     assert!(
-        f.app().box_art_loaded((0, 0)),
+        f.app().box_art_loaded(0),
         "the selection's box art was not up for the first frame"
     );
     assert!(loaded(&f) <= 5, "{} pictures loaded", loaded(&f));
@@ -215,17 +215,14 @@ fn only_the_box_art_around_the_selection_is_loaded() {
     // Six carts along, with time for the loader to catch up.
     for _ in 0..200 {
         f.compose(&mut c);
-        if f.app().box_art_loaded((0, 6)) {
+        if f.app().box_art_loaded(6) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(
-        f.app().box_art_loaded((0, 6)),
+        f.app().box_art_loaded(6),
         "the new selection's box art never came"
     );
-    assert!(
-        !f.app().box_art_loaded((0, 0)),
-        "box art far behind was kept"
-    );
+    assert!(!f.app().box_art_loaded(0), "box art far behind was kept");
 }

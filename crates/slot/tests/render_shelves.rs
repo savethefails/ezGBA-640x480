@@ -22,8 +22,8 @@ use slot_power::SimPlatform;
 // this runs on and is already spoken for, and this one is the console a cart is for.
 use slot_store::{Cart, Platform as CartPlatform};
 use slot_ui::{
-    cart_box, cart_face, clean_label, edge, housing, label_colour, mark_at, mark_box, opening,
-    recess, rest_y, Draw, SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, PLATE_H,
+    cart_box, cart_face, clean_label, edge, housing, label_colour, opening, recess, rest_y, Draw,
+    SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, PLATE_H,
 };
 
 /// One batch of events per poll, and nothing once they run out.
@@ -71,43 +71,12 @@ fn apart(a: [u32; 3], b: [u32; 3]) -> u32 {
 }
 
 /// Lit pixels across the middle of the top plate, where the shelf's name used to be banner'd
-/// over the carts. Nothing is drawn there now — the plate's right corner carries a mark that says
-/// which shelf this is — so this exists to catch the banner coming back, not to find it. The span
-/// stops well short of the corner the mark is in: a banner was 320 px of type across the middle.
+/// over the carts. Nothing is drawn there now, so this exists to catch the banner coming back, not
+/// to find it: a banner was 320 px of type across the middle.
 fn banner_ink(px: &[u8]) -> usize {
     (0..PLATE_H as usize)
         .flat_map(|y| (200..520).map(move |x| (x, y)))
         .filter(|(x, y)| at(px, *x, *y).iter().all(|c| *c > 0x80))
-        .count()
-}
-
-/// The mark's own box in the screen's top right corner, which is the corner a live session's link
-/// badge takes. Read out of `mark_at` and `mark_box` rather than typed as four numbers, so moving
-/// either moves the reading with it.
-fn mark_window() -> (usize, usize, usize, usize) {
-    let (w, h) = mark_box();
-    let (x, y) = mark_at(w as f32);
-    (x as usize, y as usize, w as usize, h as usize)
-}
-
-/// Every pixel of the mark, as it reached the panel. Two shelves' marks compare equal only if
-/// they are the same drawing — which is what "the mark changed when the shoulder was pressed"
-/// actually means, and what a count of lit pixels could agree on while showing one picture
-/// three times.
-fn mark_pixels(px: &[u8]) -> Vec<[u8; 3]> {
-    let (x0, y0, w, h) = mark_window();
-    (y0..y0 + h)
-        .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-        .map(|(x, y)| at(px, x, y))
-        .collect()
-}
-
-/// How much of the mark's box is lit above what is behind it. The corner is over the shelf's own
-/// ground here — this card has no wallpaper — so anything appreciably lighter is the mark's ink.
-fn mark_ink(px: &[u8]) -> usize {
-    mark_pixels(px)
-        .iter()
-        .filter(|c| u32::from(c[0]) > GROUND[0] + 0x30)
         .count()
 }
 
@@ -187,7 +156,6 @@ fn every_console_shares_one_row() {
     f.advance(&mut input);
 
     let row = composed(&mut f, &mut c, "one-row");
-    assert_eq!(mark_ink(&row), 0, "a card of one shelf named a machine");
     assert_eq!(banner_ink(&row), 0, "the carousel said something unasked");
     for btn in [Btn::R1, Btn::L1] {
         tap(&mut f, &mut input, btn);
@@ -197,65 +165,6 @@ fn every_console_shares_one_row() {
         let after = composed(&mut f, &mut c, "one-row-after-shoulder");
         assert!(after == row, "{btn:?} changed the row");
     }
-}
-
-/// A card whose carts are all Game Boy Advance gets a bare corner. The shoulders have nowhere to
-/// go on it, so naming the platform would be the device stating, permanently, the one thing about
-/// the card that cannot change — and the same rule that makes L1 and R1 inert makes the mark
-/// absent.
-///
-/// Rendered rather than asserted off the draw list, because "no mark" is exactly the claim a draw
-/// list is worst at: a list with no `Draw::Tex` in it looks identical whether the corner is empty
-/// because the rule held or because the faces never arrived, and the panel is where the
-/// difference shows. The shelf beside it, which does have two platforms, is composed from the
-/// same fixture path for contrast — one of these two frames has a machine in the corner and the
-/// other does not, and both are written out to be looked at.
-#[test]
-fn a_card_on_one_shelf_leaves_the_corner_empty() {
-    let Ok(surface) = HeadlessSurface::new() else {
-        return;
-    };
-    let Ok(mut c) = Compositor::new(&surface) else {
-        return;
-    };
-
-    let one = tmp_root_with_carts(&["Emerald", "Fusion"]);
-    clocked(one.path());
-    let mut f = Frontend::boot(Box::new(SimPlatform::at(one.path().to_path_buf())));
-    f.upload_faces(&mut c);
-    let mut input = Script(VecDeque::new());
-    f.advance(&mut input);
-    let bare = composed(&mut f, &mut c, "one-shelf");
-    assert_eq!(
-        mark_ink(&bare),
-        0,
-        "a card with one shelf put a machine in the corner: {} lit pixels",
-        mark_ink(&bare)
-    );
-    // And the shoulders leave it that way, which is the same statement from the other side: a
-    // mark that appeared on the first press would be a control that is dead and says so late.
-    tap(&mut f, &mut input, Btn::R1);
-    let pressed = composed(&mut f, &mut c, "one-shelf-after-r1");
-    assert_eq!(
-        mark_ink(&pressed),
-        0,
-        "R1 put a mark in the corner of a card that has one shelf"
-    );
-
-    // The same fixture with Game Boy carts added: they stand on the same shelf, so there is
-    // still nowhere to switch to and still no mark.
-    let two = tmp_root_with_carts(&["Emerald", "Fusion"]);
-    put_game_boy_carts(two.path());
-    clocked(two.path());
-    let mut f = Frontend::boot(Box::new(SimPlatform::at(two.path().to_path_buf())));
-    f.upload_faces(&mut c);
-    f.advance(&mut input);
-    let mixed = composed(&mut f, &mut c, "two-consoles");
-    assert_eq!(
-        mark_ink(&mixed),
-        0,
-        "a card of two consoles on one shelf named a machine"
-    );
 }
 
 /// The cart going into the slot from a shelf of two, and what the rest of that row does while it

@@ -426,48 +426,6 @@ fn the_shoulders_do_nothing_when_there_is_one_shelf_to_be_on() {
     }
 }
 
-/// A card whose library is all on one shelf gets no mark at all. The shoulders do nothing there
-/// — there is nowhere to go — and a mark naming the platform would be the device answering a
-/// question the player has no way to ask: it would sit in the corner for the life of the card
-/// saying the one thing that can never change.
-///
-/// It is the same rule L1 and R1 follow and it is asked of the same code, so this is really
-/// holding that the two cannot come apart. Both cases are read here rather than only the dead
-/// one: a mark that vanished whenever the shoulders were pressed would pass a test that only
-/// looked at the single-shelf card.
-#[test]
-fn a_card_on_one_shelf_shows_no_mark_because_there_is_nowhere_to_switch_to() {
-    let marks: Vec<TexId> = (0..Platform::ALL.len())
-        .map(|i| TexId::from_raw(900 + i))
-        .collect();
-    let marked = |a: &App| {
-        let out = frame(a);
-        marks.iter().any(|m| tex_at(&out, *m).is_some())
-    };
-
-    let mut alone = app_with_platforms(&[(Platform::Gba, "Emerald"), (Platform::Gba, "Fusion")]);
-    alone.set_mark_faces(marks.clone());
-    assert!(
-        !marked(&alone),
-        "a card with only Game Boy Advance carts named its platform anyway"
-    );
-    // The shoulders and the mark are the same rule read from two sides: nothing to switch to,
-    // nothing to say.
-    for btn in [Btn::L1, Btn::R1] {
-        alone.apply_at(Action::GbaDown(btn), 1_000);
-        assert!(
-            !marked(&alone),
-            "{btn:?} put a mark up on a card that has one shelf"
-        );
-    }
-
-    // Nor does a card holding several consoles' carts: they share the one shelf, so there is
-    // still nowhere to switch to.
-    let mut mixed = app_with_platforms(&[(Platform::Gba, "Emerald"), (Platform::Gb, "Tetris")]);
-    mixed.set_mark_faces(marks.clone());
-    assert!(!marked(&mixed), "a card of two consoles named one of them");
-}
-
 /// A card with no Game Boy Advance carts opens on the shelf that has some. Booting onto an
 /// empty shelf beside a full one would be a device that starts by showing nothing.
 #[test]

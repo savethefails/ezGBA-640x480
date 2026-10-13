@@ -9,15 +9,14 @@ use slot_power::{Platform, Power};
 // Aliased because `slot_power::Platform` above is already `Platform` here and is a different
 // thing entirely: that one is the machine slot is running on, this one is the machine a shelf's
 // cartridges were made for.
-use slot_store::{format_stamp, Platform as CartPlatform};
+use slot_store::format_stamp;
 use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_face_with, cart_shadow, chip_face,
-    chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face,
-    menu_face, photo_face, quick_caret_face, quick_label_face, quick_legend_faces,
-    quick_value_face, set_clock_hint_face, snes_cart_shadow, socket_face, sticker_face, title_face,
-    toast_face, wallpaper_face, word_face, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces,
-    QuickRow, QuickValue, StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK,
-    LEGEND,
+    chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, menu_face,
+    photo_face, quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face,
+    set_clock_hint_face, snes_cart_shadow, socket_face, sticker_face, title_face, toast_face,
+    wallpaper_face, word_face, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow,
+    QuickValue, StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -360,18 +359,6 @@ impl Frontend {
         let bolt = icon_face(Icon::Charging, BOLT_PX, HUD_INK);
         let bolt_id = compositor.create_texture(bolt.w, bolt.h, &bolt.rgba);
         self.session.app_mut().set_bolt_face(bolt_id);
-        // One mark per shelf, in `Platform::ALL` order, beside the bolt because they are the
-        // same kind of thing: a small tinted drawing that never changes. At boot and not on the
-        // press that needs one, because each is an SVG through a rasteriser, which is the one
-        // thing this device must never do on a frame.
-        let marks = CartPlatform::ALL
-            .iter()
-            .map(|p| {
-                let f = mark_face(*p);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        self.session.app_mut().set_mark_faces(marks);
         self.upload_wallpaper(compositor);
     }
 

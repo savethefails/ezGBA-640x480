@@ -1,8 +1,8 @@
 use slot_power::{Battery, Charge};
 use slot_store::{Cart, Platform};
 use slot_ui::{
-    draw_footer, label_colour, mark_at, mark_box, rest_y, Draw, GbShell, Printed, Shelf, TexId,
-    CART_W, GB_CART_H, OUT_W, PLATE_H,
+    draw_footer, label_colour, rest_y, Draw, GbShell, Printed, Shelf, TexId, CART_W, GB_CART_H,
+    OUT_W,
 };
 
 fn shelf_with(n: usize) -> Shelf {
@@ -559,39 +559,6 @@ fn the_gauge_starts_at_the_case_margin() {
             alpha: 1.0,
         }),
         "the thing at the margin is not the bolt's own slot: {out:?}"
-    );
-}
-
-/// And the mark it lost is somewhere else entirely: the top right corner, held off both edges by
-/// the case's own margin — the one the gauge and the clock are printed at, and the one this file
-/// asserts above. Read from `mark_box` and `mark_at` together rather than from four numbers, so
-/// moving either moves this with it.
-///
-/// The right edge is what is really held here. A mark and the clock are at the same end of the
-/// screen with nothing between them, and the mark spent a release inset half as far as the clock
-/// was, which is what "tucked into the corner" turned out to mean. The halo is the one pixel of
-/// slack: a mark's box carries a transparent ring that the clock's type does not.
-///
-/// The plate is deliberately not part of this any more. A mark is drawn on the carousel, where
-/// the HUD's plate is usually not on screen at all, and it is now taller than the plate is deep
-/// — so a rule that fitted it inside 40 px would be a rule that capped the drawing at a size the
-/// device has twice said is too small. What is held instead is that it clears the plate's depth,
-/// which is the geometry the layout now depends on: if a mark ever fits inside the plate again,
-/// the reasoning in `mark_at` and in `badge_at` about why the two came apart is stale.
-#[test]
-fn a_mark_is_held_off_the_screen_edges_by_the_case_margin() {
-    let (w, h) = mark_box();
-    let (x, y) = mark_at(w as f32);
-    assert_eq!(
-        x + w as f32,
-        OUT_W as f32 - 24.0,
-        "the mark's right edge is not on the case margin the clock is printed at"
-    );
-    assert_eq!(y, 16.0, "the mark is not held off the top of the screen");
-    assert!(
-        y + h as f32 > PLATE_H,
-        "a {w}x{h} mark at {y} fits inside the {PLATE_H} px plate again, which is not what \
-         `mark_at` and `badge_at` say about each other"
     );
 }
 
