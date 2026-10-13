@@ -940,13 +940,21 @@ impl Worker {
                     _ => 0,
                 };
                 crate::latency::emu_started(input.0, ahead);
-                // This present's run-ahead: the real frame's sound and state, and the size of the
-                // picture ahead in `ahead_picture`.
+                // This present's run-ahead: the real frame's sound, and its state and the size of
+                // the picture ahead in `ahead_picture` when the core could save and load it.
                 let mut ran_ahead = None;
                 if ahead > 0 {
                     ran = 1;
                     let frame_began = Instant::now();
-                    ran_ahead = Some(run_ahead(core.as_mut(), input, ahead, &mut ahead_picture));
+                    let (audio, kept) = run_ahead(core.as_mut(), input, ahead, &mut ahead_picture);
+                    if kept.is_none() {
+                        // Off for this game rather than stopping it: the game keeps playing.
+                        let why = "run-ahead: this core cannot save and load its state, off";
+                        eprintln!("slot: {why}");
+                        crate::latency::note(why);
+                        runahead_on = false;
+                    }
+                    ran_ahead = Some((audio, kept));
                     let spent = frame_began.elapsed();
                     worst = spent / (u32::from(ahead) + 1);
                     ahead_strikes = if spent > RUNAHEAD_BUDGET {
@@ -1071,10 +1079,13 @@ impl Worker {
                 // With run-ahead on, the picture is the frame ahead's, copied out before the state
                 // was wound back: a core is free to repaint on a load.
                 match &ran_ahead {
-                    Some((_, _, size)) => self.publish(&ahead_picture, *size),
-                    None => self.publish(core.video_xrgb8888(), core.video_size()),
+                    Some((_, Some((_, size)))) => self.publish(&ahead_picture, *size),
+                    _ => self.publish(core.video_xrgb8888(), core.video_size()),
                 }
-                let (ahead_audio, ahead_state) = ran_ahead.map(|(a, s, _)| (a, s)).unzip();
+                let (ahead_audio, ahead_state) = ran_ahead
+                    .map(|(a, kept)| (a, kept.map(|(state, _)| state)))
+                    .unzip();
+                let ahead_state = ahead_state.flatten();
 
                 // Counted per present rather than per frame, so a fast forward pays the
                 // same snapshot cost per present as normal play and simply records a
@@ -1097,15 +1108,14 @@ impl Worker {
                 if since_snapshot >= SNAPSHOT_EVERY {
                     since_snapshot = 0;
                     // Run-ahead has already saved this very state this present, so it is not
-                    // saved twice.
-                    let state = ahead_state.unwrap_or_else(|| {
-                        core.serialize()
-                            .expect("rewind: the core would not serialize mid-game")
-                    });
-                    rewind.push(state);
-                    self.shared
-                        .rewind_fill
-                        .store(rewind.fill(), Ordering::Relaxed);
+                    // saved twice. A core that will not serialize has already said so through the
+                    // save path; rewind is not the place to say it again at 30 Hz.
+                    if let Some(state) = ahead_state.or_else(|| core.serialize().ok()) {
+                        rewind.push(state);
+                        self.shared
+                            .rewind_fill
+                            .store(rewind.fill(), Ordering::Relaxed);
+                    }
                 }
 
                 // The real frame's sound, which run-ahead kept aside before running on: the frames
@@ -1426,22 +1436,26 @@ fn drain_transport(transport: &mut dyn LinkChannel, link: &Link, cap: u32) {
 /// whatever the buttons really are then, so the only thing that can go wrong is a picture that
 /// guessed the buttons would stay as they were and was right to within a frame.
 ///
-/// Hands back the real frame's sound, which is the one that should be heard, the real frame's
-/// state, which the rewind history can take instead of saving it again, and the size of the
-/// picture ahead, copied into `picture`.
+/// Hands back the real frame's sound, which is the one that should be heard, and with it the
+/// real frame's state, which the rewind history can take instead of saving it again, and the
+/// size of the picture ahead, copied into `picture`. Those are `None` when the core could not
+/// save or load its state: the real frame ran once, undrawn, and the picture shown is the one
+/// before it, a single repeated frame before run-ahead is switched off.
+#[allow(clippy::type_complexity)]
 fn run_ahead(
     core: &mut dyn RetroCore,
     input: ButtonMask,
     ahead: u8,
     picture: &mut Vec<u8>,
-) -> (Vec<i16>, Vec<u8>, (u32, u32)) {
+) -> (Vec<i16>, Option<(Vec<u8>, (u32, u32))>) {
     // The real frame's picture is never shown, so the core is asked not to draw it.
     core.set_frame_skip(true);
     core.run_frame(input);
     let audio = core.take_audio();
-    let state = core
-        .serialize()
-        .expect("run-ahead: the core would not serialize mid-game");
+    let Ok(state) = core.serialize() else {
+        core.set_frame_skip(false);
+        return (audio, None);
+    };
     for k in 0..ahead {
         core.set_frame_skip(k + 1 < ahead);
         core.run_frame(input);
@@ -1451,9 +1465,11 @@ fn run_ahead(
     picture.clear();
     picture.extend_from_slice(core.video_xrgb8888());
     let size = core.video_size();
-    core.unserialize(&state)
-        .expect("run-ahead: the core refused the state it had just saved");
-    (audio, state, size)
+    if let Err(e) = core.unserialize(&state) {
+        eprintln!("slot: run-ahead: {e}");
+        return (audio, None);
+    }
+    (audio, Some((state, size)))
 }
 
 #[cfg(test)]
@@ -1474,8 +1490,8 @@ mod tests {
             for _ in 0..30 {
                 plain.run_frame(ButtonMask(0));
                 let _ = plain.take_audio();
-                let (audio, _, s) = run_ahead(&mut ahead_core, ButtonMask(0), ahead, &mut shown);
-                size = s;
+                let (audio, kept) = run_ahead(&mut ahead_core, ButtonMask(0), ahead, &mut shown);
+                size = kept.expect("the mock can save and load its state").1;
                 assert!(!audio.is_empty(), "the real frame's sound was not kept");
             }
             assert_eq!(
@@ -1503,7 +1519,7 @@ mod tests {
         for _ in 0..10 {
             plain.run_frame(ButtonMask(0));
             let want = plain.take_audio();
-            let (got, _, _) = run_ahead(&mut core, ButtonMask(0), 1, &mut Vec::new());
+            let (got, _) = run_ahead(&mut core, ButtonMask(0), 1, &mut Vec::new());
             assert_eq!(got, want, "the sound is not the real frame's");
         }
     }
