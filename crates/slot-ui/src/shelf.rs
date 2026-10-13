@@ -3,7 +3,6 @@ use slot_store::{Cart, Platform};
 
 use crate::cart::{cart_box, label_colour, label_text, mould_of, Mould, CART_W};
 use crate::hud::Millis;
-use crate::silhouette::GbShell;
 use crate::slot_chrome::draw_empty_slot;
 
 /// Distance between cart centres. Wider than a cart so the neighbours peek in at both
@@ -110,10 +109,7 @@ pub struct Shelf {
     /// differ at their top corners, and all three are different objects. Backing of the wrong
     /// outline either draws black over the wallpaper beside the cart or leaves part of the
     /// dimmed face with nothing behind it, and both of those are visible.
-    shadow: Option<TexId>,
-    gb_shadow: Option<TexId>,
-    gbc_shadow: Option<TexId>,
-    snes_shadow: Option<TexId>,
+    shadows: [Option<TexId>; Mould::COUNT],
     /// Which mould each cart in `carts` came out of. Worked out once here because the answer is
     /// in the rom's header: asking it while drawing would open a file on every cart of every
     /// frame.
@@ -139,10 +135,7 @@ impl Shelf {
             index: 0,
             scroll: 0.0,
             faces: Vec::new(),
-            shadow: None,
-            gb_shadow: None,
-            gbc_shadow: None,
-            snes_shadow: None,
+            shadows: [None; Mould::COUNT],
             ride: 0.0,
             vel: 0.0,
             held: None,
@@ -162,23 +155,10 @@ impl Shelf {
 
     /// Face textures in `carts` order. The caller uploads them because only the compositor
     /// can mint a `TexId`.
-    pub fn set_shadow(&mut self, face: TexId) {
-        self.shadow = Some(face);
-    }
-
-    /// The Game Boy pak's outline in black, one per shell mould. A row whose carts are paks and
-    /// whose only uploaded shadow is the GBA one draws no black at all rather than a tapered
-    /// shape stretched under a straight sided cart.
-    /// The SNES Game Pak's outline in black: a shape of its own, not the GBA cart's grown.
-    pub fn set_snes_shadow(&mut self, face: TexId) {
-        self.snes_shadow = Some(face);
-    }
-
-    pub fn set_gb_shadow(&mut self, shell: GbShell, face: TexId) {
-        match shell {
-            GbShell::Notched => self.gb_shadow = Some(face),
-            GbShell::Rounded => self.gbc_shadow = Some(face),
-        }
+    /// A cart shape's outline in black. A row with no shadow for a shape draws no black under
+    /// those carts rather than another shape's outline.
+    pub fn set_shadow(&mut self, m: Mould, face: TexId) {
+        self.shadows[m.index()] = Some(face);
     }
 
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
@@ -548,23 +528,8 @@ impl Shelf {
             // Black in the cart's own shape, under the dimmed face. Without it the dimming is
             // transparency, and over a wallpaper the row reads as ghosts of carts.
             if alpha < 1.0 {
-                // Three backings for three moulds: it is the cart's own outline, and a class C
-                // pak's corners are not a class A/B pak's. See `cart::gb_cart_shadow`.
-                //
-                // Asked for rather than indexed, the way `faces` is asked for eighteen lines
-                // below and for the same reason: `carts` is public, `moulds` is not, and a push
-                // through the public field would leave this one entry short. Indexed, that is a
-                // panic inside the draw loop — on the device a black screen and a dead handset,
-                // with no message anywhere — for a row that would otherwise have drawn. A cart
-                // whose mould was never recorded gets the straight sided backing, which is the
-                // same degrading a cart whose face was never uploaded already gets.
-                let backing = match self.moulds.get(i).copied() {
-                    None | Some(Mould::Gba) => self.shadow,
-                    Some(Mould::Gb(GbShell::Notched)) => self.gb_shadow,
-                    Some(Mould::Gb(GbShell::Rounded)) => self.gbc_shadow,
-                    Some(Mould::Snes) => self.snes_shadow,
-                };
-                if let Some(tex) = backing {
+                // The cart's own outline: a class C pak's corners are not a class A/B pak's.
+                if let Some(tex) = self.shadows[self.moulds[i].index()] {
                     out.push(Draw::Tex {
                         x,
                         y,

@@ -1,9 +1,9 @@
 use slot_store::scan;
 use slot_ui::{
-    cart_face, clean_label, foot_y, gb_label_panel, gb_silhouette, label_colour, label_panel,
-    label_text, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
-    GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
-    MOUTH_H, OUT_H, OUT_W, PLATE_H,
+    cart_face, clean_label, foot_y, gb_label_panel, label_colour, label_panel, label_text, rest_y,
+    shell_for, silhouette, Finish, GbShell, Mould, CART_H, CART_W, GB_CART_H, GB_CART_W,
+    GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y, MOUTH_H,
+    OUT_H, OUT_W, PLATE_H,
 };
 use tempfile::TempDir;
 
@@ -206,7 +206,7 @@ fn the_label_is_wide_and_sits_low() {
 /// invented rather than the cartridge that was traced.
 #[test]
 fn the_body_is_narrower_than_its_grip_ears() {
-    let m = silhouette(CART_W, CART_H);
+    let m = silhouette(Mould::Gba);
     let solid = |x: u32, y: u32| m[(y * CART_W + x) as usize] > 128;
     let width_at = |y: u32| (0..CART_W).filter(|&x| solid(x, y)).count();
 
@@ -353,7 +353,7 @@ fn the_game_boy_pak_is_the_published_ratio_taller_at_the_same_width() {
 #[test]
 fn the_game_boy_outline_has_parallel_sides_and_no_grip_ears() {
     for shell in [GbShell::Notched, GbShell::Rounded] {
-        let gb = gb_silhouette(shell, GB_CART_W, GB_CART_H);
+        let gb = silhouette(Mould::Gb(shell));
         let width_at = |y: u32| {
             (0..GB_CART_W)
                 .filter(|&x| gb[(y * GB_CART_W + x) as usize] > 128)
@@ -368,7 +368,7 @@ fn the_game_boy_outline_has_parallel_sides_and_no_grip_ears() {
         assert_eq!(top, middle, "{shell:?}: wider at the top than the middle");
         assert_eq!(middle, bottom, "{shell:?}: tapers toward the bottom");
 
-        let gba = silhouette(CART_W, CART_H);
+        let gba = silhouette(Mould::Gba);
         let gba_body = (0..CART_W)
             .filter(|&x| gba[((CART_H / 2) * CART_W + x) as usize] > 128)
             .count();
@@ -387,8 +387,8 @@ fn the_game_boy_outline_has_parallel_sides_and_no_grip_ears() {
 /// Below the shoulder they are the same object.
 #[test]
 fn the_colour_only_shell_loses_the_notch_and_rounds_the_corners() {
-    let notched = gb_silhouette(GbShell::Notched, GB_CART_W, GB_CART_H);
-    let rounded = gb_silhouette(GbShell::Rounded, GB_CART_W, GB_CART_H);
+    let notched = silhouette(Mould::Gb(GbShell::Notched));
+    let rounded = silhouette(Mould::Gb(GbShell::Rounded));
     fn covered(m: &[u8], y: u32) -> Vec<u32> {
         (0..GB_CART_W)
             .filter(|&x| m[(y * GB_CART_W + x) as usize] > 128)
@@ -402,24 +402,24 @@ fn the_colour_only_shell_loses_the_notch_and_rounds_the_corners() {
     // has plastic here and the notched one has a hole.
     let y = 6;
     assert!(
-        right_at(&rounded, y) > right_at(&notched, y) + 10,
+        right_at(rounded, y) > right_at(notched, y) + 10,
         "the clear pak ends at {} against the notched {} at row {y}: the notch is not cut",
-        right_at(&rounded, y),
-        right_at(&notched, y)
+        right_at(rounded, y),
+        right_at(notched, y)
     );
     // The top left corner, where no notch confuses the reading: the rounded shell's corner is
     // cut back much further than the older mould's shallow step.
     assert!(
-        left_at(&rounded, 0) > left_at(&notched, 0) + 10,
+        left_at(rounded, 0) > left_at(notched, 0) + 10,
         "the top row starts at {} against the notched {}: the corners are not rounded",
-        left_at(&rounded, 0),
-        left_at(&notched, 0)
+        left_at(rounded, 0),
+        left_at(notched, 0)
     );
     // Everything from the shoulder down is one shape drawn twice.
     for y in 30..GB_CART_H {
         assert_eq!(
-            width_at(&notched, y),
-            width_at(&rounded, y),
+            width_at(notched, y),
+            width_at(rounded, y),
             "the shells disagree at row {y}, which is below the shoulder"
         );
     }
@@ -742,10 +742,10 @@ fn a_game_boy_title_stays_inside_its_near_square_label() {
 /// reachable here; the shape and the colour are.
 #[test]
 fn the_cart_shadow_is_the_cart_in_black() {
-    let s = slot_ui::cart_shadow();
+    let s = slot_ui::cart_shadow(Mould::Gba);
     assert_eq!((s.w, s.h), (CART_W, CART_H));
-    let mask = silhouette(CART_W, CART_H);
-    for (px, cover) in s.rgba.chunks_exact(4).zip(&mask) {
+    let mask = silhouette(Mould::Gba);
+    for (px, cover) in s.rgba.chunks_exact(4).zip(mask) {
         assert_eq!(&px[..3], &[0, 0, 0], "the shadow is not black");
         assert_eq!(px[3], *cover, "the shadow is not the cart's shape");
     }
@@ -768,9 +768,9 @@ fn the_cart_shadow_is_the_cart_in_black() {
 #[test]
 fn each_game_boy_shell_gets_a_black_shadow_of_its_own_exact_outline() {
     for shell in [GbShell::Notched, GbShell::Rounded] {
-        let s = slot_ui::gb_cart_shadow(shell);
+        let s = slot_ui::cart_shadow(Mould::Gb(shell));
         assert_eq!((s.w, s.h), (GB_CART_W, GB_CART_H));
-        let own = gb_silhouette(shell, GB_CART_W, GB_CART_H);
+        let own = silhouette(Mould::Gb(shell));
         for (i, px) in s.rgba.chunks_exact(4).enumerate() {
             assert_eq!(&px[..3], &[0, 0, 0], "{shell:?}: the shadow is not black");
             assert_eq!(
@@ -781,11 +781,11 @@ fn each_game_boy_shell_gets_a_black_shadow_of_its_own_exact_outline() {
     }
     // And the two really are different objects, so sharing one was a choice with a cost rather
     // than a tidy-up: this is the count of cartridge the shared intersection used to leave bare.
-    let notched = gb_silhouette(GbShell::Notched, GB_CART_W, GB_CART_H);
-    let rounded = gb_silhouette(GbShell::Rounded, GB_CART_W, GB_CART_H);
+    let notched = silhouette(Mould::Gb(GbShell::Notched));
+    let rounded = silhouette(Mould::Gb(GbShell::Rounded));
     let bare: u32 = notched
         .iter()
-        .zip(&rounded)
+        .zip(rounded)
         .map(|(n, r)| u32::from(n.abs_diff(*r)))
         .sum();
     assert!(

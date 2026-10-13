@@ -1368,7 +1368,7 @@ impl Worker {
             .wait_timeout_while(
                 kick,
                 latest.saturating_duration_since(Instant::now()),
-                |k| !k.take().is_some_and(|at| at >= fresh),
+                |k| k.take().is_none_or(|at| at < fresh),
             )
             .unwrap_or_else(|e| e.into_inner())
             .1;

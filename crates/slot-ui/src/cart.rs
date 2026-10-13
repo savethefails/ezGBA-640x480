@@ -3,10 +3,7 @@ use slot_store::{Cart, Outline, Platform};
 
 use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
-use crate::silhouette::{
-    cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
-    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell,
-};
+use crate::silhouette::{depth, detail, silhouette, GbShell};
 use crate::text;
 
 /// The traced outline's own aspect, so `cart.svg` rasterises unstretched. With a neighbour at
@@ -128,9 +125,8 @@ struct Spec {
     h: u32,
     /// Left, top, width, height of the label well.
     label: (u32, u32, u32, u32),
-    mask: &'static [u8],
-    depth: &'static [u8],
-    detail: &'static Detail,
+    /// Whose outline, depth and moulding these are.
+    mould: Mould,
     max_px: f32,
     /// The height the type block has to fit inside, or infinite where the panel is wide enough
     /// for its height that only the width can ever bind.
@@ -173,6 +169,26 @@ pub enum Mould {
     Gb(GbShell),
 }
 
+impl Mould {
+    pub const COUNT: usize = 4;
+    pub const ALL: [Mould; Mould::COUNT] = [
+        Mould::Gba,
+        Mould::Snes,
+        Mould::Gb(GbShell::Notched),
+        Mould::Gb(GbShell::Rounded),
+    ];
+
+    /// Its place in `ALL`, for anything held one per shape.
+    pub fn index(self) -> usize {
+        match self {
+            Mould::Gba => 0,
+            Mould::Snes => 1,
+            Mould::Gb(GbShell::Notched) => 2,
+            Mould::Gb(GbShell::Rounded) => 3,
+        }
+    }
+}
+
 /// Which Game Pak mould this cart came out of, or `None` for a GBA cart, which came out of
 /// neither. It opens the rom for the CGB flag, so it is a question to ask once and remember and
 /// never one to ask on a frame: `Shelf::new` asks it when a row is built and `cart_face` when a
@@ -210,9 +226,7 @@ fn spec(shape: Mould) -> Spec {
             w: CART_W,
             h: CART_H,
             label: (LABEL_X, LABEL_Y, LABEL_W, LABEL_H),
-            mask: cart_mask(),
-            depth: cart_depth(),
-            detail: detail_mask(),
+            mould: shape,
             max_px: MAX_PX,
             max_h: f32::INFINITY,
             rim: RIM,
@@ -229,9 +243,7 @@ fn spec(shape: Mould) -> Spec {
             w: SNES_CART_W,
             h: SNES_CART_H,
             label: (SNES_LABEL_X, SNES_LABEL_Y, SNES_LABEL_W, SNES_LABEL_H),
-            mask: snes_cart_mask(),
-            depth: snes_cart_depth(),
-            detail: snes_detail_mask(),
+            mould: shape,
             max_px: SNES_MAX_PX,
             max_h: (SNES_LABEL_H - 2 * PAD) as f32,
             rim: SNES_RIM,
@@ -244,13 +256,11 @@ fn spec(shape: Mould) -> Spec {
             },
             wraps: true,
         },
-        Mould::Gb(shell) => Spec {
+        Mould::Gb(_) => Spec {
             w: GB_CART_W,
             h: GB_CART_H,
             label: (GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W, GB_LABEL_H),
-            mask: gb_cart_mask(shell),
-            depth: gb_cart_depth(shell),
-            detail: gb_detail_mask(shell),
+            mould: shape,
             max_px: GB_MAX_PX,
             max_h: (GB_LABEL_H - 2 * PAD) as f32,
             rim: GB_RIM,
@@ -283,14 +293,9 @@ pub fn cart_box(platform: Platform) -> (u32, u32) {
 /// The cart's own shape in black. Drawn under a side cart so the dimming is a cart in shadow
 /// rather than a cart you can see through: over a wallpaper a translucent face is a ghost,
 /// and the shelf's carts are solid objects.
-pub fn cart_shadow() -> CartFace {
-    shadow(CART_W, CART_H, cart_mask())
-}
-
-/// The same backing for the Game Boy shelves. Stretching the GBA one to a taller box would put
-/// a tapered shadow under a straight sided cart.
 ///
-/// One per shell mould, where there used to be one covering both. The shared one was the two
+/// One per shape. Stretching the GBA one to a taller box would put a tapered shadow under a
+/// straight sided pak, and the two Game Pak shells each have their own: a shared one was the two
 /// outlines *intersected* — backing larger than the cart draws black over the wallpaper beside
 /// it, so the only safe way to share was to meet in the middle — and that left 72 px of a
 /// notched pak and 169 px of a rounded one with nothing behind them, in two corner wedges where
@@ -298,18 +303,11 @@ pub fn cart_shadow() -> CartFace {
 /// error: a class C pak's top right corner came up as a pale bite taken out of it, and a class
 /// A/B pak ghosted at the top left. The shelf picks between these per cart instead, off a shell
 /// it worked out once when the row was built.
-pub fn gb_cart_shadow(shell: GbShell) -> CartFace {
-    shadow(GB_CART_W, GB_CART_H, gb_cart_mask(shell))
-}
-
-/// The SNES Game Pak's outline in black, for the same reason the other carts have theirs.
-pub fn snes_cart_shadow() -> CartFace {
-    shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask())
-}
-
-fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {
+pub fn cart_shadow(m: Mould) -> CartFace {
+    let s = spec(m);
+    let (w, h) = (s.w, s.h);
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for cover in mask {
+    for cover in silhouette(m) {
         rgba.extend_from_slice(&[0, 0, 0, *cover]);
     }
     CartFace { rgba, w, h }
@@ -353,7 +351,7 @@ pub fn cart_face_with(cart: &Cart, art: Option<Vec<u8>>) -> CartFace {
 /// Colour is left alone and only alpha is cut, because the sprite pass blends straight
 /// alpha rather than premultiplied.
 fn clip_to_silhouette(s: &Spec, face: &mut CartFace) {
-    for (px, cover) in face.rgba.chunks_exact_mut(4).zip(s.mask) {
+    for (px, cover) in face.rgba.chunks_exact_mut(4).zip(silhouette(s.mould)) {
         px[3] = ((px[3] as u32 * *cover as u32 + 127) / 255) as u8;
     }
 }
@@ -445,7 +443,7 @@ pub fn label_tags(stem: &str) -> Vec<String> {
 fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
     let mut rgba = Vec::with_capacity((s.w * s.h * 4) as usize);
     let edge = rim_colour(through(shell.colour, shell.colour));
-    for (i, depth) in s.depth.iter().enumerate() {
+    for (i, depth) in depth(s.mould).iter().enumerate() {
         let (x, y) = (i as u32 % s.w, i as u32 / s.w);
         let c = match shell.finish {
             Finish::Solid => shell.colour,
@@ -561,7 +559,8 @@ fn mould_detail(s: &Spec, face: &mut CartFace) {
             px[c] = ((to[c] as u32 * a + px[c] as u32 * (255 - a) + 127) / 255) as u8;
         }
     };
-    let sides = s.detail.shadow.iter().zip(&s.detail.highlight);
+    let detail = detail(s.mould);
+    let sides = detail.shadow.iter().zip(&detail.highlight);
     for (px, (shade, light)) in face.rgba.chunks_exact_mut(4).zip(sides) {
         let under = [px[0], px[1], px[2]];
         if *shade > 0 {

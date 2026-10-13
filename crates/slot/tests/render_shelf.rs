@@ -19,8 +19,7 @@ use slot_input::{Action, Btn};
 use slot_store::{write_slot_state, Core, Platform, SlotState};
 use slot_ui::{
     arrows_hint_face, board_face, cart_face, cart_shadow, chip_face, chip_shadow_face, clean_label,
-    edge, gb_cart_shadow, hint_face, housing, label_colour, opening, padded, recess, socket_face,
-    GbShell, TURN_PAD,
+    edge, hint_face, housing, label_colour, opening, padded, recess, socket_face, Mould, TURN_PAD,
 };
 use tempfile::TempDir;
 
@@ -56,19 +55,13 @@ fn upload_faces(app: &mut App, c: &mut Compositor) {
         })
         .collect();
     app.set_faces(row);
-    // Both outlines, as the frontend uploads both: a row of Game Boy paks with only the GBA
-    // shadow to hand draws no black under a dimmed cart, and the side paks would come out as
-    // ghosts over the wallpaper rather than as carts in shadow.
-    let shadow = cart_shadow();
-    let shadow = tex(c, shadow.w, shadow.h, &shadow.rgba);
-    app.set_cart_shadow(shadow);
-    // One per Game Pak mould, as the frontend uploads them: the two shells' top corners
-    // disagree, and a shared backing showed through a dimmed cart where they do.
-    let notched = gb_cart_shadow(GbShell::Notched);
-    let notched = tex(c, notched.w, notched.h, &notched.rgba);
-    let rounded = gb_cart_shadow(GbShell::Rounded);
-    let rounded = tex(c, rounded.w, rounded.h, &rounded.rgba);
-    app.set_gb_cart_shadows(notched, rounded);
+    // Every shape's outline, as the frontend uploads them: a row with no shadow for a shape
+    // draws no black under its dimmed carts, which come out as ghosts over the wallpaper.
+    for m in Mould::ALL {
+        let shadow = cart_shadow(m);
+        let shadow = tex(c, shadow.w, shadow.h, &shadow.rgba);
+        app.set_cart_shadow(m, shadow);
+    }
 
     let sockets = Core::GBA
         .iter()

@@ -12,11 +12,11 @@ use slot_store::{
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lid_from, lift_of, on_board, shelf_cart_at, BoxArt, ClockPicker, Draw, FfState,
-    GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice, QuickMenu,
-    QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast, BOARD_W,
-    BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, SHADOW_H,
-    SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    lid_at, lid_from, lift_of, on_board, shelf_cart_at, BoxArt, ClockPicker, Draw, FfState, Hud,
+    HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice, QuickMenu, QuickMenuFaces,
+    QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast, BOARD_W, BOARD_X, CART_W,
+    CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W, SOCKET_H,
+    SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -1039,26 +1039,9 @@ impl App {
         self.clock_faces = Some((line, hint));
     }
 
-    /// The GBA cart's outline in black, for the dimmed side carts.
-    pub fn set_cart_shadow(&mut self, face: TexId) {
-        self.shelf.set_shadow(face);
-    }
-
-    /// The Game Boy pak's outline in black, uploaded beside the GBA one rather than instead of
-    /// it: one card can hold both, and the two are different objects. A row of paks with only
-    /// the GBA shadow to hand draws no black at all, so a dimmed pak would read as a ghost over
-    /// the wallpaper.
-    ///
-    /// One per Game Pak mould, because the two disagree at their top corners and a shadow of the
-    /// wrong outline is visible either way round — see `slot_ui::gb_cart_shadow`.
-    pub fn set_gb_cart_shadows(&mut self, notched: TexId, rounded: TexId) {
-        self.shelf.set_gb_shadow(GbShell::Notched, notched);
-        self.shelf.set_gb_shadow(GbShell::Rounded, rounded);
-    }
-
-    /// The SNES Game Pak's outline in black.
-    pub fn set_snes_cart_shadow(&mut self, face: TexId) {
-        self.shelf.set_snes_shadow(face);
+    /// A cart shape's outline in black, for the dimmed side carts.
+    pub fn set_cart_shadow(&mut self, m: slot_ui::Mould, face: TexId) {
+        self.shelf.set_shadow(m, face);
     }
 
     pub fn set_wallpaper(&mut self, face: TexId) {

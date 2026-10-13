@@ -77,5 +77,5 @@ fn the_word_is_written_on_the_capsule() {
 #[test]
 #[should_panic(expected = "not a panel frame")]
 fn a_frame_of_another_size_is_a_bug() {
-    stamp_starting(&mut vec![7u8; 100], PillAt::Game);
+    stamp_starting(&mut [7u8; 100], PillAt::Game);
 }
