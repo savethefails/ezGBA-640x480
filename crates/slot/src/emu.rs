@@ -639,19 +639,24 @@ struct Worker {
 }
 
 impl Worker {
-    /// A state from the card, as the core takes it: mGBA's link mode wants both GBAs.
+    /// A state from the card, as the core takes it: mGBA's link mode wants both GBAs. The card
+    /// only ever holds one (`to_card`).
     fn to_core(&self, state: Vec<u8>) -> Vec<u8> {
         match self.player {
-            Some(_) if !link_state::is_pair(&state) => link_state::pair(&state),
-            _ => state,
+            Some(_) => {
+                assert!(!link_state::is_pair(&state), "a link state on the card");
+                link_state::pair(&state)
+            }
+            None => state,
         }
     }
 
     /// A state from the core, as the card keeps it: only the local GBA.
     fn to_card(&self, state: Vec<u8>) -> Vec<u8> {
-        self.player
-            .and_then(|p| link_state::local(&state, p))
-            .unwrap_or(state)
+        match self.player {
+            Some(p) => link_state::local(&state, p),
+            None => state,
+        }
     }
 
     fn run(
@@ -808,9 +813,15 @@ impl Worker {
                         }
                         // The host's machine, once it is whole. Restored here rather than in
                         // `cable.rs`, which holds no core and never should.
+                        // Only GBA link mode has a BIOS to disagree about (`self.player`).
                         if let Some(state) = c.take_state() {
-                            let own = core.serialize().unwrap_or_default();
-                            if !link_state::same_bios(&state, &own) {
+                            let mismatch = self.player.is_some() && {
+                                let own = core
+                                    .serialize()
+                                    .expect("the joiner's core would not serialize");
+                                !link_state::same_bios(&state, &own)
+                            };
+                            if mismatch {
                                 eprintln!("slot: cable: the host runs another GBA BIOS");
                                 self.shared.bios_mismatch.store(true, Ordering::Relaxed);
                             } else {
@@ -1278,14 +1289,13 @@ impl Worker {
                 // was already choosing a character. Serialized before a single frame runs, so
                 // what crosses is frame zero rather than wherever the host had got to.
                 if player == 0 {
-                    match core.serialize() {
-                        Ok(state) => {
-                            eprintln!("slot: cable: sending {} bytes of state", state.len());
-                            for p in cable::state_packets(&state) {
-                                wire.send(NETPACKET_RELIABLE, &p);
-                            }
-                        }
-                        Err(e) => eprintln!("slot: cable: the core would not serialize: {e}"),
+                    // Without it the joiner can never start: fail here, not as a silent stall.
+                    let state = core
+                        .serialize()
+                        .expect("the host's core would not serialize");
+                    eprintln!("slot: cable: sending {} bytes of state", state.len());
+                    for p in cable::state_packets(&state) {
+                        wire.send(NETPACKET_RELIABLE, &p);
                     }
                     c.prime();
                 }

@@ -7,18 +7,25 @@ pub fn is_pair(state: &[u8]) -> bool {
     state.starts_with(MAGIC)
 }
 
-/// `player`'s GBA out of a link state. `None` when `state` is not a whole one.
-pub fn local(state: &[u8], player: u8) -> Option<Vec<u8>> {
-    let mut rest = state.strip_prefix(MAGIC)?;
+/// `player`'s GBA out of a link state. Panics on anything but a whole one: every pair comes from
+/// mGBA's link mode, so a malformed one is a bug, not something to carry on past.
+pub fn local(state: &[u8], player: u8) -> Vec<u8> {
+    assert!(
+        player < 2,
+        "a link state has two players, not {}",
+        player + 1
+    );
+    let mut rest = state.strip_prefix(MAGIC).expect("not a link state");
     let mut parts = Vec::with_capacity(2);
     for _ in 0..2 {
-        let len = u32::from_le_bytes(rest.get(..4)?.try_into().ok()?) as usize;
-        parts.push(rest.get(4..4 + len)?);
+        assert!(rest.len() >= 4, "a link state cut short");
+        let len = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+        assert!(rest.len() >= 4 + len, "a link state cut short");
+        parts.push(&rest[4..4 + len]);
         rest = &rest[4 + len..];
     }
-    rest.is_empty()
-        .then(|| parts.get(usize::from(player)).map(|p| p.to_vec()))
-        .flatten()
+    assert!(rest.is_empty(), "{} bytes after a link state", rest.len());
+    parts[usize::from(player)].to_vec()
 }
 
 /// A one-GBA state as a link state, the same GBA for both players.
@@ -31,22 +38,15 @@ pub fn pair(state: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The GBA BIOS checksum mGBA writes at byte 4 of a state, the local one of a link state.
-fn bios(state: &[u8]) -> Option<u32> {
-    let gba = if is_pair(state) {
-        local(state, 0)?
-    } else {
-        state.to_vec()
-    };
-    (gba.len() >= 0x400).then(|| u32::from_le_bytes(gba[4..8].try_into().unwrap()))
-}
-
-/// Whether two states were made on the same BIOS. Anything too short to be a GBA state passes.
+/// Whether two link states were made on the same BIOS: the checksum mGBA writes at byte 4 of
+/// each GBA's state, read off player 1's.
 pub fn same_bios(a: &[u8], b: &[u8]) -> bool {
-    match (bios(a), bios(b)) {
-        (Some(a), Some(b)) => a == b,
-        _ => true,
-    }
+    let bios = |state: &[u8]| {
+        let gba = local(state, 0);
+        assert!(gba.len() >= 0x400, "a {} byte GBA state", gba.len());
+        u32::from_le_bytes(gba[4..8].try_into().unwrap())
+    };
+    bios(a) == bios(b)
 }
 
 #[cfg(test)]
@@ -57,8 +57,8 @@ mod tests {
     fn a_pair_gives_each_player_the_state_back() {
         let pair = pair(b"gba");
         assert!(is_pair(&pair));
-        assert_eq!(local(&pair, 0).as_deref(), Some(&b"gba"[..]));
-        assert_eq!(local(&pair, 1).as_deref(), Some(&b"gba"[..]));
+        assert_eq!(local(&pair, 0), b"gba");
+        assert_eq!(local(&pair, 1), b"gba");
     }
 
     #[test]
@@ -68,38 +68,38 @@ mod tests {
             state.extend_from_slice(&4u32.to_le_bytes());
             state.extend_from_slice(gba);
         }
-        assert_eq!(local(&state, 0).as_deref(), Some(&b"zero"[..]));
-        assert_eq!(local(&state, 1).as_deref(), Some(&b"one!"[..]));
+        assert_eq!(local(&state, 0), b"zero");
+        assert_eq!(local(&state, 1), b"one!");
     }
 
     #[test]
-    fn anything_but_a_whole_link_state_has_no_local_gba() {
+    #[should_panic(expected = "not a link state")]
+    fn a_one_gba_state_is_not_a_link_state() {
+        local(b"a one-GBA state", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cut short")]
+    fn a_link_state_cut_short_fails_loudly() {
         let whole = pair(b"gba");
-        assert_eq!(local(b"a one-GBA state", 0), None);
-        assert_eq!(local(&whole[..whole.len() - 1], 0), None);
-        assert_eq!(local(&[whole.as_slice(), b"x"].concat(), 0), None);
-        assert_eq!(local(&whole, 2), None);
+        local(&whole[..whole.len() - 1], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "after a link state")]
+    fn trailing_bytes_fail_loudly() {
+        local(&[pair(b"gba").as_slice(), b"x"].concat(), 0);
     }
 
     fn gba(bios: u32) -> Vec<u8> {
         let mut state = vec![0u8; 0x400];
         state[4..8].copy_from_slice(&bios.to_le_bytes());
-        state
+        pair(&state)
     }
 
     #[test]
-    fn states_on_the_same_bios_match_whether_paired_or_not() {
-        assert!(same_bios(&pair(&gba(0xBAAE187F)), &gba(0xBAAE187F)));
-        assert!(same_bios(&gba(1), &pair(&gba(1))));
-    }
-
-    #[test]
-    fn states_on_different_bioses_do_not() {
-        assert!(!same_bios(&pair(&gba(0xBAAE187F)), &pair(&gba(0xA6473709))));
-    }
-
-    #[test]
-    fn a_state_too_short_to_be_a_gba_says_nothing() {
-        assert!(same_bios(&0u64.to_le_bytes(), &1u64.to_le_bytes()));
+    fn link_states_on_the_same_bios_match_and_on_different_ones_do_not() {
+        assert!(same_bios(&gba(0xBAAE187F), &gba(0xBAAE187F)));
+        assert!(!same_bios(&gba(0xBAAE187F), &gba(0xA6473709)));
     }
 }
