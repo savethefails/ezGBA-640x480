@@ -132,24 +132,15 @@ pub fn haloed(cov: &[u8], cw: u32, ch: u32, colour: [u8; 3]) -> CartFace {
 /// Rasterised RGBA at `px` tall, transparent everywhere the glyph and its halo do not cover.
 /// Two pixels wider and taller than the glyph, for the halo.
 pub fn icon_face(icon: Icon, px: f32, colour: [u8; 3]) -> CartFace {
-    let Some(r) = raster(icon, px) else {
-        return CartFace {
-            rgba: Vec::new(),
-            w: 0,
-            h: 0,
-        };
-    };
+    let r = raster(icon, px);
     haloed(&r.cov, r.w, r.h, colour)
 }
 
 /// The box every icon at this size is rastered into, for callers laying out around one before
-/// they know which it will be. Zero when the font is missing, which costs the glyph its slot
-/// rather than the row its shape.
+/// they know which it will be.
 pub fn icon_box(px: f32) -> (u32, u32) {
-    match raster(Icon::Volume, px) {
-        Some(r) => (r.w + 2 * HALO_PX, r.h + 2 * HALO_PX),
-        None => (0, 0),
-    }
+    let r = raster(Icon::Volume, px);
+    (r.w + 2 * HALO_PX, r.h + 2 * HALO_PX)
 }
 
 /// Badges drawn where the fast-forward badge goes that are not in `Icon::ALL`. Their glyphs sit a
@@ -172,13 +163,7 @@ impl Badge {
 
 /// The badge at `px`, tinted, haloed, in exactly `icon_box(px)`.
 pub fn badge_face(badge: Badge, px: f32, colour: [u8; 3]) -> CartFace {
-    let Some(font) = symbols_font() else {
-        return CartFace {
-            rgba: Vec::new(),
-            w: 0,
-            h: 0,
-        };
-    };
+    let font = symbols_font();
     let f = frame(font, px);
     let (m, cov) = font.rasterize(badge.glyph(), px);
     let x0 = m.xmin - f.left;
@@ -205,21 +190,19 @@ struct Raster {
 
 type Cache = Mutex<HashMap<(Icon, u32), Arc<Raster>>>;
 
-fn raster(icon: Icon, px: f32) -> Option<Arc<Raster>> {
+fn raster(icon: Icon, px: f32) -> Arc<Raster> {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let cache = CACHE.get_or_init(Mutex::default);
     let key = (icon, px.to_bits());
     let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(r) = cache.get(&key) {
-        return Some(r.clone());
-    }
-    let r = Arc::new(rasterise(icon, px)?);
-    cache.insert(key, r.clone());
-    Some(r)
+    cache
+        .entry(key)
+        .or_insert_with(|| Arc::new(rasterise(icon, px)))
+        .clone()
 }
 
-fn rasterise(icon: Icon, px: f32) -> Option<Raster> {
-    let font = symbols_font()?;
+fn rasterise(icon: Icon, px: f32) -> Raster {
+    let font = symbols_font();
     let f = frame(font, px);
     let (m, cov) = font.rasterize(icon.glyph(), px);
     let x0 = m.xmin - f.left;
@@ -235,11 +218,11 @@ fn rasterise(icon: Icon, px: f32) -> Option<Raster> {
             out[(dy * f.w + dx) as usize] = cov[gy * m.width + gx];
         }
     }
-    Some(Raster {
+    Raster {
         cov: out,
         w: f.w,
         h: f.h,
-    })
+    }
 }
 
 struct Frame {
@@ -269,8 +252,10 @@ fn frame(font: &Font, px: f32) -> Frame {
     }
 }
 
-pub(crate) fn symbols_font() -> Option<&'static Font> {
-    static FONT: OnceLock<Option<Font>> = OnceLock::new();
-    FONT.get_or_init(|| Font::from_bytes(SYMBOLS_TTF, FontSettings::default()).ok())
-        .as_ref()
+/// Built in, so it always loads.
+pub(crate) fn symbols_font() -> &'static Font {
+    static FONT: OnceLock<Font> = OnceLock::new();
+    FONT.get_or_init(|| {
+        Font::from_bytes(SYMBOLS_TTF, FontSettings::default()).expect("the built-in symbols font")
+    })
 }

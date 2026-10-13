@@ -139,8 +139,5 @@ pub fn write(root: &Path, file: &str, key: &str, value: &str) -> std::io::Result
         out.push('\n');
     }
 
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     crate::atomic::atomic_write(&path, out.as_bytes())
 }

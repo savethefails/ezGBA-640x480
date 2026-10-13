@@ -158,9 +158,7 @@ impl Canvas {
     /// What `print` would take, without drawing it. Needed wherever something is placed
     /// against its own right edge rather than its left.
     fn print_measure(&self, s: &str, px: f32) -> f32 {
-        let Some(font) = text::label_font() else {
-            return 0.0;
-        };
+        let font = text::label_font();
         let layout = text::fit(font, s, f32::MAX, 1, px, px);
         layout
             .lines
@@ -238,9 +236,7 @@ impl Canvas {
     /// from the column, which is also what stops `fit` shrinking and then breaking a line
     /// mid-word to make it match.
     fn print(&mut self, x: f32, y: f32, s: &str, px: f32, c: [u8; 3]) -> f32 {
-        let Some(font) = text::label_font() else {
-            return y;
-        };
+        let font = text::label_font();
         let layout = text::fit(font, s, f32::MAX, 1, px, px);
         let measured = layout
             .lines

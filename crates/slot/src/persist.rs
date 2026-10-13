@@ -99,9 +99,6 @@ pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std
             return Ok(false);
         }
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     atomic_write(&path, sav)?;
     Ok(true)
 }

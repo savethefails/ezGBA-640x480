@@ -393,15 +393,17 @@ impl Frontend {
         let Some(path) = kept.or_else(|| wallpaper::pick(root, seed)) else {
             return;
         };
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = path
+            .file_name()
+            .expect("a wallpaper file")
+            .to_string_lossy()
+            .into_owned();
         let Some(rgba) = wallpaper_face(&path) else {
             return;
         };
         let id = compositor.create_texture(OUT_W, OUT_H, &rgba);
         self.session.app_mut().set_wallpaper(id);
-        if let Some(name) = name {
-            self.session.app_mut().set_wallpaper_name(name);
-        }
+        self.session.app_mut().set_wallpaper_name(name);
     }
 
     /// One frame into the offscreen target and out to a surface of `window` pixels. The

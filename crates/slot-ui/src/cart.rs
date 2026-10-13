@@ -680,18 +680,17 @@ fn generated_label(s: &Spec, title: &str) -> Vec<u8> {
         rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
     }
 
-    if let Some(font) = text::label_font() {
-        let layout = text::fit_box(
-            font,
-            title,
-            (lw - 2 * PAD) as f32,
-            s.max_h,
-            MAX_LINES,
-            s.max_px,
-            MIN_PX,
-        );
-        text::draw_centred(&mut rgba, lw, lh, &layout, ink(bg));
-    }
+    let font = text::label_font();
+    let layout = text::fit_box(
+        font,
+        title,
+        (lw - 2 * PAD) as f32,
+        s.max_h,
+        MAX_LINES,
+        s.max_px,
+        MIN_PX,
+    );
+    text::draw_centred(&mut rgba, lw, lh, &layout, ink(bg));
     rgba
 }
 
@@ -756,32 +755,31 @@ fn generated_snes_label(s: &Spec, title: &str) -> Vec<u8> {
     }
     let name_h = at(0.12, lh).max(4);
     let name_y = bottom - name_h;
-    if let Some(font) = text::label_font() {
-        let w = r1 - r0;
-        let layout = text::fit_box(
-            font,
-            "SUPER NINTENDO",
-            w as f32,
-            name_h as f32,
-            1,
-            name_h as f32,
-            3.0,
-        );
-        ink_into(&mut rgba, lw, (r0, name_y), (w, name_h), &layout, SNES_RED);
+    let font = text::label_font();
+    let w = r1 - r0;
+    let layout = text::fit_box(
+        font,
+        "SUPER NINTENDO",
+        w as f32,
+        name_h as f32,
+        1,
+        name_h as f32,
+        3.0,
+    );
+    ink_into(&mut rgba, lw, (r0, name_y), (w, name_h), &layout, SNES_RED);
 
-        // The title, in the picture.
-        let (pw, ph) = (px1 - px0, bottom - top);
-        let layout = text::fit_box(
-            font,
-            title,
-            (pw - 2 * 6) as f32,
-            (ph - 2 * 6) as f32,
-            MAX_LINES,
-            s.max_px,
-            MIN_PX.min(8.0),
-        );
-        ink_into(&mut rgba, lw, (px0, top), (pw, ph), &layout, ink(bg));
-    }
+    // The title, in the picture.
+    let (pw, ph) = (px1 - px0, bottom - top);
+    let layout = text::fit_box(
+        font,
+        title,
+        (pw - 2 * 6) as f32,
+        (ph - 2 * 6) as f32,
+        MAX_LINES,
+        s.max_px,
+        MIN_PX.min(8.0),
+    );
+    ink_into(&mut rgba, lw, (px0, top), (pw, ph), &layout, ink(bg));
     rgba
 }
 

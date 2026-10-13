@@ -270,8 +270,7 @@ impl Theme {
 /// gets one with just that line. Written whole and renamed into place, so a card pulled
 /// mid-write keeps the old file rather than half of the new one.
 pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Result<()> {
-    let dir = root.join(crate::CONFIG_DIR);
-    let path = dir.join(THEME_FILE);
+    let path = root.join(crate::CONFIG_DIR).join(THEME_FILE);
     let old = std::fs::read_to_string(&path).unwrap_or_default();
     let line = format!("{name} {value}");
     let mut out: Vec<String> = Vec::new();
@@ -293,7 +292,6 @@ pub fn write_theme_setting(root: &Path, name: &str, value: &str) -> std::io::Res
     }
     let mut text = out.join("\n");
     text.push('\n');
-    std::fs::create_dir_all(&dir)?;
     crate::atomic::atomic_write(&path, text.as_bytes())
 }
 

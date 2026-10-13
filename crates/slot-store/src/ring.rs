@@ -48,7 +48,6 @@ impl StateRing {
     }
 
     pub fn push(&self, state: &[u8], thumb_png: &[u8], stamp: &str) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
         // Thumb first. An entry is listed by its state file, so a cut between the two
         // leaves an unlisted orphan rather than a polaroid with no picture.
         atomic_write(&self.path(stamp, THUMB_EXT), thumb_png)?;
@@ -104,7 +103,6 @@ impl StateRing {
     }
 
     pub fn write_resume(&self, state: &[u8]) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
         atomic_write(&self.path(RESUME, STATE_EXT), state)
     }
 

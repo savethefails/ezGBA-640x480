@@ -74,10 +74,8 @@ fn the_word_is_written_on_the_capsule() {
     assert!(f.chunks_exact(4).all(|p| p[3] == 255));
 }
 
-/// A frame of the wrong size is left alone rather than written past its end.
 #[test]
-fn a_frame_of_another_size_is_left_alone() {
-    let mut small = vec![7u8; 100];
-    stamp_starting(&mut small, PillAt::Game);
-    assert!(small.iter().all(|b| *b == 7));
+#[should_panic(expected = "not a panel frame")]
+fn a_frame_of_another_size_is_a_bug() {
+    stamp_starting(&mut vec![7u8; 100], PillAt::Game);
 }

@@ -73,9 +73,7 @@ pub fn hint_row(legend: &[(&'static str, &'static str)]) -> Vec<Hint> {
 /// that names two buttons, since shrinking `L / R` into the square would make the shelf's only
 /// legend the smallest type on screen.
 pub fn cap_width(key: &str) -> u32 {
-    let Some(font) = text::label_font() else {
-        return CAP;
-    };
+    let font = text::label_font();
     let layout = text::fit(font, key, CAP_MAX_W, 1, KEY_PX, KEY_PX);
     let ink = layout
         .lines
@@ -102,18 +100,16 @@ pub fn hint_face(key: &str, label: &str) -> UndoFace {
     for _ in 0..cap_w * CAP {
         cap.extend_from_slice(&[INK[0], INK[1], INK[2], 255]);
     }
-    if let Some(font) = text::label_font() {
-        let layout = text::fit(font, key, cap_w as f32, 1, KEY_PX, KEY_PX);
-        text::draw_centred(&mut cap, cap_w, CAP, &layout, CAP_INK);
-    }
+    let font = text::label_font();
+    let layout = text::fit(font, key, cap_w as f32, 1, KEY_PX, KEY_PX);
+    text::draw_centred(&mut cap, cap_w, CAP, &layout, CAP_INK);
     blit(&mut rgba, w, &cap, cap_w, CAP, 0, (HINT_H - CAP) / 2);
 
     let text_w = band_width(label);
     let mut band = vec![0u8; (text_w * HINT_H * 4) as usize];
-    if let Some(font) = text::label_font() {
-        let layout = text::fit(font, label, text_w as f32, 1, LABEL_PX, LABEL_MIN_PX);
-        text::draw_centred(&mut band, text_w, HINT_H, &layout, INK);
-    }
+    let font = text::label_font();
+    let layout = text::fit(font, label, text_w as f32, 1, LABEL_PX, LABEL_MIN_PX);
+    text::draw_centred(&mut band, text_w, HINT_H, &layout, INK);
     blit(&mut rgba, w, &band, text_w, HINT_H, cap_w + CAP_GAP, 0);
 
     UndoFace { rgba, w, h: HINT_H }
@@ -128,10 +124,9 @@ pub fn word_width(text: &str) -> u32 {
 pub fn word_face(text: &str) -> UndoFace {
     let w = word_width(text);
     let mut rgba = vec![0u8; (w * HINT_H * 4) as usize];
-    if let Some(font) = text::label_font() {
-        let layout = text::fit(font, text, w as f32, 1, LABEL_PX, LABEL_MIN_PX);
-        text::draw_centred(&mut rgba, w, HINT_H, &layout, INK);
-    }
+    let font = text::label_font();
+    let layout = text::fit(font, text, w as f32, 1, LABEL_PX, LABEL_MIN_PX);
+    text::draw_centred(&mut rgba, w, HINT_H, &layout, INK);
     UndoFace { rgba, w, h: HINT_H }
 }
 
@@ -184,9 +179,7 @@ pub fn centred_hints(hints: &[(TexId, u32)], gap: f32) -> Vec<(TexId, u32, f32)>
 /// How wide the type alone comes out, which is what the hint is sized around. A label the
 /// fitter had to break lands at `LABEL_MAX_W`, since that is the width it was broken to.
 fn band_width(label: &str) -> u32 {
-    let Some(font) = text::label_font() else {
-        return LABEL_MAX_W as u32;
-    };
+    let font = text::label_font();
     let layout = text::fit(font, label, LABEL_MAX_W, 1, LABEL_PX, LABEL_MIN_PX);
     let ink = layout
         .lines
@@ -199,10 +192,9 @@ fn band_width(label: &str) -> u32 {
 /// One line of type for the top plate, naming the entry under the eye.
 pub fn title_face(text: &str) -> UndoFace {
     let mut rgba = vec![0u8; (TITLE_W * TITLE_H * 4) as usize];
-    if let Some(font) = text::label_font() {
-        let layout = text::fit(font, text, TITLE_W as f32, 1, TITLE_PX, TITLE_MIN_PX);
-        text::draw_centred(&mut rgba, TITLE_W, TITLE_H, &layout, INK);
-    }
+    let font = text::label_font();
+    let layout = text::fit(font, text, TITLE_W as f32, 1, TITLE_PX, TITLE_MIN_PX);
+    text::draw_centred(&mut rgba, TITLE_W, TITLE_H, &layout, INK);
     UndoFace {
         rgba,
         w: TITLE_W,
@@ -248,10 +240,9 @@ pub fn arrows_hint_face(label: &str) -> UndoFace {
     }
     let text_w = band_width(label);
     let mut band = vec![0u8; (text_w * HINT_H * 4) as usize];
-    if let Some(font) = text::label_font() {
-        let layout = text::fit(font, label, text_w as f32, 1, LABEL_PX, LABEL_MIN_PX);
-        text::draw_centred(&mut band, text_w, HINT_H, &layout, INK);
-    }
+    let font = text::label_font();
+    let layout = text::fit(font, label, text_w as f32, 1, LABEL_PX, LABEL_MIN_PX);
+    text::draw_centred(&mut band, text_w, HINT_H, &layout, INK);
     blit(
         &mut rgba,
         w,
@@ -270,9 +261,7 @@ fn glyph_cap(glyph: char) -> Vec<u8> {
     for _ in 0..CAP * CAP {
         cap.extend_from_slice(&[INK[0], INK[1], INK[2], 255]);
     }
-    let Some(font) = crate::icon::symbols_font() else {
-        return cap;
-    };
+    let font = crate::icon::symbols_font();
     let (m, cov) = font.rasterize(glyph, KEY_PX);
     let x0 = (CAP as i32 - m.width as i32) / 2;
     let y0 = (CAP as i32 - m.height as i32) / 2;

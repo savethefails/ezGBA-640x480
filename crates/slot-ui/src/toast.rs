@@ -86,13 +86,7 @@ pub fn toast_box() -> (u32, u32) {
 /// Transparent apart from the type and the halo dilated out of it. Nothing backs a toast, so
 /// the halo is the only thing keeping it legible over a bright game frame.
 pub fn toast_face(toast: Toast) -> CartFace {
-    let Some(font) = text::label_font() else {
-        return CartFace {
-            rgba: Vec::new(),
-            w: 0,
-            h: 0,
-        };
-    };
+    let font = text::label_font();
     let layout = text::fit(
         font,
         toast.text(),
@@ -112,7 +106,7 @@ mod tests {
     /// The ink's own width in the box, which is what a line actually occupies once the font
     /// has uppercased it.
     fn ink_width(toast: Toast) -> u32 {
-        let font = text::label_font().expect("label font");
+        let font = text::label_font();
         let layout = text::fit(
             font,
             toast.text(),
@@ -149,7 +143,7 @@ mod tests {
     /// The ink's height in a face rastered at a stated size, for holding the shipped one
     /// against the fallback it would have been given.
     fn ink_height_at(toast: Toast, px: f32) -> u32 {
-        let font = text::label_font().expect("label font");
+        let font = text::label_font();
         let layout = text::fit(font, toast.text(), TOAST_W as f32, 1, px, px);
         let cov = text::coverage(TOAST_W, TOAST_H, &layout);
         let rows: Vec<u32> = (0..TOAST_H)
@@ -202,7 +196,7 @@ mod tests {
     /// fit fails rather than ships.
     #[test]
     fn every_toast_is_set_at_full_size() {
-        let font = text::label_font().expect("label font");
+        let font = text::label_font();
         for t in Toast::ALL {
             let layout = text::fit(font, t.text(), TOAST_W as f32, 1, TOAST_PX, TOAST_MIN_PX);
             assert_eq!(

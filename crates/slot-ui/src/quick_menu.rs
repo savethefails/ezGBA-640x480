@@ -307,13 +307,7 @@ pub fn quick_value_face(text: &str, lit: bool) -> UndoFace {
 /// it, but here that put every label a different distance off the 32 px edge, and shrank the
 /// longest one to fit a face too narrow for it.
 fn quick_text_face(label: &str, colour: [u8; 3]) -> UndoFace {
-    let Some(font) = text::label_font() else {
-        return UndoFace {
-            rgba: Vec::new(),
-            w: 0,
-            h: 0,
-        };
-    };
+    let font = text::label_font();
     // Laid out at the menu's size and no smaller, as wide as the panel: nothing on the menu comes
     // near that, so nothing is ever shrunk or broken.
     let layout = text::fit(font, label, OUT_W as f32, 1, MENU_PX, MENU_PX);
@@ -333,13 +327,7 @@ fn quick_text_face(label: &str, colour: [u8; 3]) -> UndoFace {
 /// arrow centred on the capitals so it sits on the value's line rather than the face's middle.
 pub fn quick_caret_face(right: bool) -> UndoFace {
     let glyph = if right { '\u{f0da}' } else { '\u{f0d9}' };
-    let (Some(symbols), Some(label)) = (crate::icon::symbols_font(), text::label_font()) else {
-        return UndoFace {
-            rgba: Vec::new(),
-            w: 0,
-            h: 0,
-        };
-    };
+    let (symbols, label) = (crate::icon::symbols_font(), text::label_font());
     let (m, cov) = symbols.rasterize(glyph, CARET_PX);
     let (w, h) = (m.width as u32, MENU_H);
     // Where `menu_face` puts the capitals: the baseline `draw_centred` lays down, less half a

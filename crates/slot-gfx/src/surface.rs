@@ -203,20 +203,17 @@ impl Tone {
     };
 }
 
-impl Default for Tone {
-    fn default() -> Self {
-        Tone::NEUTRAL
-    }
-}
-
 static TONE_GAMMA: AtomicU32 = AtomicU32::new(0x3f80_0000);
 static TONE_SATURATION: AtomicU32 = AtomicU32::new(0x3f80_0000);
 static TONE_CONTRAST: AtomicU32 = AtomicU32::new(0x3f80_0000);
 
 pub fn set_tone(tone: Tone) {
-    TONE_GAMMA.store(tone.gamma.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
-    TONE_SATURATION.store(tone.saturation.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
-    TONE_CONTRAST.store(tone.contrast.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
+    for v in [tone.gamma, tone.saturation, tone.contrast] {
+        assert!((0.5..=2.0).contains(&v), "tone out of range: {tone:?}");
+    }
+    TONE_GAMMA.store(tone.gamma.to_bits(), Ordering::Relaxed);
+    TONE_SATURATION.store(tone.saturation.to_bits(), Ordering::Relaxed);
+    TONE_CONTRAST.store(tone.contrast.to_bits(), Ordering::Relaxed);
 }
 
 pub fn tone() -> Tone {
@@ -314,11 +311,12 @@ pub fn set_fit(fit: Fit) {
 
 pub fn fit() -> Fit {
     match FIT.load(Ordering::Relaxed) {
+        0 => Fit::Gba,
         1 => Fit::Whole,
         2 => Fit::Aspect(f32::from_bits(FIT_ASPECT.load(Ordering::Relaxed))),
         3 => Fit::Fill,
         4 => Fit::Rows,
-        _ => Fit::Gba,
+        n => unreachable!("FIT {n}"),
     }
 }
 

@@ -44,14 +44,11 @@ const SHADOW_ALPHA: f32 = 0.45;
 const SHADOW_DROP: f32 = 3.0;
 
 /// Stamps the pill into a frame laid out as `Compositor::read_frame` gives it: RGBA, top row
-/// first, the size of the panel. A frame of any other size is left as it is.
+/// first, the size of the panel.
 pub fn stamp_starting(rgba: &mut [u8], at: PillAt) {
     let (w, h) = (OUT_W as usize, OUT_H as usize);
-    if rgba.len() != w * h * 4 {
-        return;
-    }
-    let font = label_font();
-    let text_w = font.map_or(0.0, |f| line_width(f, WORD, TEXT_PX, TRACKING));
+    assert_eq!(rgba.len(), w * h * 4, "not a panel frame");
+    let text_w = line_width(label_font(), WORD, TEXT_PX, TRACKING);
     let dots_w = DOT_GAP + 2.0 * DOT_STEP + DOT_R;
     let pill_w = SIDE + text_w + dots_w + SIDE;
     let (cx, cy) = (w as f32 / 2.0, at.centre_y());
@@ -86,30 +83,20 @@ pub fn stamp_starting(rgba: &mut [u8], at: PillAt) {
         }
     }
 
-    // The word, laid out by the same type the labels use, centred in its own box.
-    if font.is_some() {
-        let box_w = text_w.ceil() as u32 + 2;
-        let box_h = HEIGHT as u32;
-        let layout = Layout {
-            lines: vec![WORD.to_string()],
-            px: TEXT_PX,
-            tracking: TRACKING,
-        };
-        let cov = coverage(box_w, box_h, &layout);
-        let bx = (left + SIDE).round() as i32 - 1;
-        let by = (cy - hh).round() as i32;
-        for (j, a) in cov.into_iter().enumerate() {
-            if a == 0 {
-                continue;
-            }
-            let x = bx + (j as u32 % box_w) as i32;
-            let y = by + (j as u32 / box_w) as i32;
-            if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
-                continue;
-            }
-            let i = (y as usize * w + x as usize) * 4;
-            over(&mut rgba[i..i + 4], INK, a as f32 / 255.0);
-        }
+    // The word, laid out by the same type the labels use, centred in its own box. The pill sits
+    // at fixed places well inside the panel, so the box never reaches an edge.
+    let box_w = text_w.ceil() as usize + 2;
+    let layout = Layout {
+        lines: vec![WORD.to_string()],
+        px: TEXT_PX,
+        tracking: TRACKING,
+    };
+    let cov = coverage(box_w as u32, HEIGHT as u32, &layout);
+    let bx = (left + SIDE).round() as usize - 1;
+    let by = (cy - hh).round() as usize;
+    for (j, a) in cov.into_iter().enumerate() {
+        let i = ((by + j / box_w) * w + bx + j % box_w) * 4;
+        over(&mut rgba[i..i + 4], INK, a as f32 / 255.0);
     }
 }
 
@@ -133,8 +120,7 @@ fn over(px: &mut [u8], colour: [u8; 3], alpha: f32) {
     if alpha <= 0.0 {
         return;
     }
-    let a = alpha.min(1.0);
     for c in 0..3 {
-        px[c] = (px[c] as f32 * (1.0 - a) + colour[c] as f32 * a).round() as u8;
+        px[c] = (px[c] as f32 * (1.0 - alpha) + colour[c] as f32 * alpha).round() as u8;
     }
 }

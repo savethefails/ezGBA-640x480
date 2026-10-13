@@ -77,12 +77,17 @@ fn anything_but_the_exact_format_is_refused() {
 fn a_frame_becomes_bottom_up_bgr() {
     let mut rgba = frame([0, 0, 0, 255]);
     rgba[0..4].copy_from_slice(&[10, 20, 30, 255]);
-    let px = bmp_pixels(&rgba).unwrap();
+    let px = bmp_pixels(&rgba);
     assert_eq!(px.len(), PIXELS);
     let last_row = (H - 1) * W * 3;
     assert_eq!(&px[last_row..last_row + 3], &[30, 20, 10]);
     assert_eq!(&px[0..3], &[0, 0, 0]);
-    assert_eq!(bmp_pixels(&rgba[4..]), None, "a frame short");
+}
+
+#[test]
+#[should_panic(expected = "not a panel frame")]
+fn a_frame_short_is_a_bug() {
+    bmp_pixels(&frame([0, 0, 0, 255])[4..]);
 }
 
 #[test]

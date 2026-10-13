@@ -208,9 +208,7 @@ fn stamp(
     ink: [u8; 3],
     align: Align,
 ) {
-    let Some(font) = text::label_font() else {
-        return;
-    };
+    let font = text::label_font();
     let layout = text::fit(font, line, f32::MAX, 1, px, px);
     let width = layout
         .lines

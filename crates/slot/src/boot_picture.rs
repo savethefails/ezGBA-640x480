@@ -56,6 +56,8 @@ const TIME_LIMIT: Duration = Duration::from_secs(5);
 
 const ROW: usize = OUT_W as usize * 3;
 const PIXEL_BYTES: usize = ROW * OUT_H as usize;
+/// A composed panel frame, RGBA.
+const FRAME_BYTES: usize = OUT_W as usize * OUT_H as usize * 4;
 
 /// Where a BMP's pixels start, if its header is one U-Boot is known to show at this panel's
 /// size: 24-bit, uncompressed, bottom up, a whole number of 4-byte rows, `len` long exactly.
@@ -82,17 +84,15 @@ pub fn pixel_offset(header: &[u8], len: u64) -> Option<u64> {
 /// A composed frame, RGBA top row first as `Compositor::read_frame` gives it, as a 24-bit
 /// BMP's pixel array: BGR, bottom row first. 640 * 3 is a multiple of four, so rows need no
 /// padding.
-pub fn bmp_pixels(rgba: &[u8]) -> Option<Vec<u8>> {
-    if rgba.len() != OUT_W as usize * OUT_H as usize * 4 {
-        return None;
-    }
+pub fn bmp_pixels(rgba: &[u8]) -> Vec<u8> {
+    assert_eq!(rgba.len(), FRAME_BYTES, "not a panel frame");
     let mut out = Vec::with_capacity(PIXEL_BYTES);
     for row in rgba.chunks_exact(OUT_W as usize * 4).rev() {
         for px in row.chunks_exact(4) {
             out.extend_from_slice(&[px[2], px[1], px[0]]);
         }
     }
-    Some(out)
+    out
 }
 
 /// What became of the picture.
@@ -106,23 +106,13 @@ pub enum Painted {
 /// Replaces the pixels inside `logo`, in place. Fails with `InvalidData`, having written
 /// nothing, unless the file is already a picture `pixel_offset` accepts.
 pub fn paint(logo: &Path, pixels: &[u8]) -> io::Result<Painted> {
-    if pixels.len() != PIXEL_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a whole picture",
-        ));
-    }
+    assert_eq!(pixels.len(), PIXEL_BYTES, "not a whole picture");
     // No create, no truncate: a file that is not there stays not there.
     let mut f = OpenOptions::new().read(true).write(true).open(logo)?;
     let len = f.metadata()?.len();
     let mut header = [0u8; 54];
     f.read_exact(&mut header)?;
-    let Some(offset) = pixel_offset(&header, len) else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "not a picture slot writes",
-        ));
-    };
+    let offset = pixel_offset(&header, len).ok_or_else(not_ours)?;
     let mut current = vec![0u8; PIXEL_BYTES];
     f.seek(SeekFrom::Start(offset))?;
     f.read_exact(&mut current)?;
@@ -133,6 +123,10 @@ pub fn paint(logo: &Path, pixels: &[u8]) -> io::Result<Painted> {
     f.write_all(pixels)?;
     f.sync_all()?;
     Ok(Painted::Written)
+}
+
+fn not_ours() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "not a picture slot writes")
 }
 
 /// The pixels of a picture `pixel_offset` accepts, and `None` for anything else.
@@ -159,19 +153,10 @@ pub enum Want {
 pub fn apply(logo: &Path, backup: &Path, want: &Want) -> io::Result<Painted> {
     let pixels = match want {
         Want::Scene(rgba) => {
-            let pixels = bmp_pixels(rgba)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a whole frame"))?;
+            let pixels = bmp_pixels(rgba);
             if !backup.exists() {
                 let original = std::fs::read(logo)?;
-                if pixel_offset(&original, original.len() as u64).is_none() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "not a picture slot writes",
-                    ));
-                }
-                if let Some(dir) = backup.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
+                pixel_offset(&original, original.len() as u64).ok_or_else(not_ours)?;
                 atomic_write(backup, &original)?;
             }
             pixels
@@ -286,18 +271,16 @@ pub fn write_both(
     }
     let painted = device(card, want)?;
     if let Want::Scene(rgba) = want {
-        let png = encode_png(rgba).ok_or("could not encode the picture")?;
-        if let Err(e) = atomic_write(&last, &png) {
+        if let Err(e) = atomic_write(&last, &encode_png(rgba)) {
             eprintln!("slot: boot picture: {LAST_SCREEN} not kept: {e}");
         }
     }
     Ok(painted)
 }
 
-fn encode_png(rgba: &[u8]) -> Option<Vec<u8>> {
-    if rgba.len() != OUT_W as usize * OUT_H as usize * 4 {
-        return None;
-    }
+/// Into memory, at a fixed size and format, so nothing here can fail but a bug.
+fn encode_png(rgba: &[u8]) -> Vec<u8> {
+    assert_eq!(rgba.len(), FRAME_BYTES, "not a panel frame");
     let rgb: Vec<u8> = rgba
         .chunks_exact(4)
         .flat_map(|p| [p[0], p[1], p[2]])
@@ -306,10 +289,10 @@ fn encode_png(rgba: &[u8]) -> Option<Vec<u8>> {
     let mut e = png::Encoder::new(&mut out, OUT_W, OUT_H);
     e.set_color(png::ColorType::Rgb);
     e.set_depth(png::BitDepth::Eight);
-    let mut w = e.write_header().ok()?;
-    w.write_image_data(&rgb).ok()?;
-    w.finish().ok()?;
-    Some(out)
+    let mut w = e.write_header().expect("png header");
+    w.write_image_data(&rgb).expect("png data");
+    w.finish().expect("png end");
+    out
 }
 
 /// `LAST_SCREEN` as RGBA top row first, if it is there and is a whole 640x480 picture.

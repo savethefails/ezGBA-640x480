@@ -10,10 +10,11 @@ pub struct Layout {
     pub tracking: f32,
 }
 
-pub fn label_font() -> Option<&'static Font> {
-    static FONT: OnceLock<Option<Font>> = OnceLock::new();
-    FONT.get_or_init(|| Font::from_bytes(LABEL_TTF, FontSettings::default()).ok())
-        .as_ref()
+pub fn label_font() -> &'static Font {
+    static FONT: OnceLock<Font> = OnceLock::new();
+    FONT.get_or_init(|| {
+        Font::from_bytes(LABEL_TTF, FontSettings::default()).expect("the built-in label font")
+    })
 }
 
 /// Largest whole pixel size at which `text` wraps into `max_lines` or fewer whole words per
@@ -92,7 +93,7 @@ pub fn draw_centred(dst: &mut [u8], dst_w: u32, dst_h: u32, layout: &Layout, col
 /// What a caller needs to dilate a halo out of the type before tinting it.
 pub fn coverage(dst_w: u32, dst_h: u32, layout: &Layout) -> Vec<u8> {
     let mut out = vec![0u8; (dst_w * dst_h) as usize];
-    let Some(font) = label_font() else { return out };
+    let font = label_font();
     let Some(vm) = font.horizontal_line_metrics(layout.px) else {
         return out;
     };
