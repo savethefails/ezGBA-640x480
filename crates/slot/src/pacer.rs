@@ -30,28 +30,20 @@ const PERIOD: Duration = Duration::from_micros(16_800);
 
 pub struct Pacer {
     period: Duration,
-    last_latch: Option<Instant>,
+    last_latch: Instant,
     works: [Duration; WINDOW],
     next: usize,
-    worst: Duration,
-}
-
-impl Default for Pacer {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Pacer {
-    pub fn new() -> Self {
-        // Generous until measured: the first frames wake early rather than miss a latch.
-        let start = Duration::from_millis(10);
+    /// From the first frame's latch. Generous until measured: the first frames wake early
+    /// rather than miss a latch.
+    pub fn new(latch: Instant) -> Self {
         Pacer {
             period: PERIOD,
-            last_latch: None,
-            works: [start; WINDOW],
+            last_latch: latch,
+            works: [Duration::from_millis(10); WINDOW],
             next: 0,
-            worst: start,
         }
     }
 
@@ -63,30 +55,26 @@ impl Pacer {
     /// How long before a latch the work of a frame starts: the slowest recent frame and the
     /// margin.
     pub fn lead(&self) -> Duration {
-        self.worst + MARGIN
+        *self.works.iter().max().unwrap() + MARGIN
     }
 
-    /// When to start the next frame's work. `None` before the first latch, and the latch itself
-    /// when the work would not fit in a refresh at all, which is the old behaviour: start at once.
-    pub fn wake_at(&self) -> Option<Instant> {
-        let latch = self.last_latch?;
-        Some(latch + self.period.saturating_sub(self.lead()))
+    /// When to start the next frame's work: the latch itself when the work would not fit in a
+    /// refresh at all, which is the old behaviour: start at once.
+    pub fn wake_at(&self) -> Instant {
+        self.last_latch + self.period.saturating_sub(self.lead())
     }
 
     /// A frame was submitted after `work` of reading, running and drawing, and its swap returned
     /// at `latch`.
     pub fn swapped(&mut self, work: Duration, latch: Instant) {
-        if let Some(last) = self.last_latch {
-            let gap = latch.saturating_duration_since(last);
-            // One refresh apart, and not a missed latch or a stall: a slow average of those is
-            // the panel's period. Anything else says nothing about the panel.
-            if gap > self.period.mul_f64(0.75) && gap < self.period.mul_f64(1.33) {
-                self.period = self.period.mul_f64(0.95) + gap.mul_f64(0.05);
-            }
+        let gap = latch.saturating_duration_since(self.last_latch);
+        // One refresh apart, and not a missed latch or a stall: a slow average of those is the
+        // panel's period. Anything else says nothing about the panel.
+        if gap > self.period.mul_f64(0.75) && gap < self.period.mul_f64(1.33) {
+            self.period = self.period.mul_f64(0.95) + gap.mul_f64(0.05);
         }
-        self.last_latch = Some(latch);
+        self.last_latch = latch;
         self.works[self.next] = work;
         self.next = (self.next + 1) % WINDOW;
-        self.worst = self.works.iter().copied().max().unwrap_or(work);
     }
 }

@@ -42,11 +42,9 @@ pub fn run() {
     let mut frontend = Frontend::boot(Box::new(platform));
     frontend.upload_faces(&mut compositor);
     // Before the input opens, so the key scan rate it sets is in the trace.
-    slot::latency::start(&root, slot_store::Theme::read(&root).runahead.unwrap_or(1));
+    slot::latency::start(&root, frontend.runahead());
     let mut input = DeviceInput::open(&root);
     let mut boot_picture_done = false;
-    let mut pacer = slot::pacer::Pacer::new();
-    let mut frames = 0u32;
     // One frame on the panel before the first input is read and the first update runs: a boot
     // that carries the bootloader's picture lights the panel on the first update, and has to have
     // drawn something of its own by then.
@@ -55,14 +53,12 @@ pub fn run() {
         eprintln!("slot: {e}");
         return;
     }
-    pacer.swapped(Duration::ZERO, Instant::now());
+    let mut pacer = slot::pacer::Pacer::new(Instant::now());
     loop {
         // Late: asleep through most of the refresh, so the buttons are read just before the
         // latch with only the work of this frame between them and the panel. See `pacer`.
-        if let Some(at) = pacer.wake_at() {
-            if let Some(left) = at.checked_duration_since(Instant::now()) {
-                std::thread::sleep(left);
-            }
+        if let Some(left) = pacer.wake_at().checked_duration_since(Instant::now()) {
+            std::thread::sleep(left);
         }
         let began = Instant::now();
         frontend.advance(&mut input);
@@ -83,7 +79,7 @@ pub fn run() {
         }
         // The core runs on the buttons just read, and this frame draws what it made of them.
         let asked = Instant::now();
-        let came = frontend.kick_and_wait(EMU_WAIT).is_some();
+        let came = frontend.kick_and_wait(EMU_WAIT);
         // A frame that never came is a core out of step with the kicks for a moment (just
         // started, just unpaused) rather than a frame that costs this much, so the wait is not
         // counted as work: it would wake the next half second of frames early for nothing.
@@ -101,19 +97,6 @@ pub fn run() {
         let latch = Instant::now();
         slot::latency::shown(latch.duration_since(submit).as_micros() as u64);
         pacer.swapped(submit.duration_since(began).saturating_sub(stalled), latch);
-        if slot::latency::tracing() {
-            frames += 1;
-            if frames.is_multiple_of(600) {
-                // Missed: refreshes that showed the last frame again because the kicked one
-                // never came. Zero is a game in step with the panel.
-                slot::latency::note(&format!(
-                    "pacer: panel period {:.2} ms, work starts {:.1} ms before the latch, {} missed",
-                    pacer.period().as_secs_f64() * 1e3,
-                    pacer.lead().as_secs_f64() * 1e3,
-                    frontend.take_missed()
-                ));
-            }
-        }
         if let Some(left) = MIN_FRAME.checked_sub(began.elapsed()) {
             std::thread::sleep(left);
         }

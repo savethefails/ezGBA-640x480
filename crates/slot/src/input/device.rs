@@ -93,7 +93,10 @@ pub const POLL_MS: u32 = 10;
 /// it did, for the log: `None` for a node that is not polled at all (it has no `poll`
 /// attribute, and its presses already arrive the moment they happen) or that is already fast.
 pub fn faster_poll(sys: &Path, node: &Path) -> Option<String> {
-    let attr = sys.join(node.file_name()?).join("device").join("poll");
+    let attr = sys
+        .join(node.file_name().expect("an event node has a name"))
+        .join("device")
+        .join("poll");
     let was: u32 = std::fs::read_to_string(&attr).ok()?.trim().parse().ok()?;
     if was <= POLL_MS {
         return None;

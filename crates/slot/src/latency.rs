@@ -50,6 +50,8 @@ static DRAWN: AtomicU64 = AtomicU64::new(0);
 /// The buttons the followed press added, so the emulator frame that carries it can be told from
 /// the frames before it.
 static BITS: AtomicU16 = AtomicU16::new(0);
+/// Refreshes the display waited on a kicked frame that never came, for the pace line.
+static MISSED: AtomicU64 = AtomicU64::new(0);
 static AHEAD: AtomicU8 = AtomicU8::new(0);
 
 // For `pace`: when the emulator last published, and when the frame the display drew was.
@@ -73,8 +75,11 @@ pub fn start(root: &Path, runahead: u8) {
             return;
         }
     };
-    let _ = OUT.set(Mutex::new(file));
-    EPOCH.get_or_init(Instant::now);
+    OUT.set(Mutex::new(file))
+        .expect("latency::start called twice");
+    EPOCH
+        .set(Instant::now())
+        .expect("latency::start called twice");
     ON.store(true, Ordering::Release);
     line(&format!(
         "start: slot {}, run-ahead {runahead}",
@@ -86,14 +91,14 @@ fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
-/// Whether the trace is on, for a caller with numbers of its own to note.
-pub fn tracing() -> bool {
-    on()
-}
-
 /// Microseconds since the trace started, plus one so a stamp is never zero.
 fn now() -> u64 {
-    EPOCH.get_or_init(Instant::now).elapsed().as_micros() as u64 + 1
+    EPOCH
+        .get()
+        .expect("traced before latency::start")
+        .elapsed()
+        .as_micros() as u64
+        + 1
 }
 
 fn line(text: &str) {
@@ -102,6 +107,11 @@ fn line(text: &str) {
         let secs = now() as f64 / 1e6;
         let _ = writeln!(f, "{secs:9.3} {text}");
     }
+}
+
+/// The display waited on a kicked frame that never came, so it shows the last one again.
+pub fn missed() {
+    MISSED.fetch_add(1, Ordering::Relaxed);
 }
 
 /// A line of its own, for things worth having beside the numbers (the key scan rate, say).
@@ -306,10 +316,11 @@ impl Pace {
         }
         let mean = (t - self.first) as f64 / (self.frames - 1) as f64 / 1000.0;
         let text = format!(
-            "pace: {} frames, period {mean:.2} ms (max {:.1}), {} late, swap waited {}, finished frame waited {} before shown",
+            "pace: {} frames, period {mean:.2} ms (max {:.1}), {} late, {} missed, swap waited {}, finished frame waited {} before shown",
             self.frames,
             self.period.max as f64 / 1000.0,
             self.late,
+            MISSED.swap(0, Ordering::Relaxed),
             self.swap.summary(),
             self.idle.summary(),
         );

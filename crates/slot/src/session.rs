@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use slot_input::{Action, Gestures, Millis, RawEvent};
 use slot_retro::Rumble;
@@ -22,9 +22,6 @@ pub const RUMBLE_HOLD_MS: Millis = 100;
 
 pub struct Session {
     root: PathBuf,
-    /// Refreshes whose kicked frame never came while a game was running, since last taken. A
-    /// frame missed is one the display shows twice. See `Session::take_missed`.
-    missed: std::cell::Cell<u32>,
     app: App,
     emu: Option<EmuHandle>,
     /// Opened once and outliving every cart. The cart clicks home while it is still on its
@@ -57,7 +54,6 @@ impl Session {
             eprintln!("slot: audio: {e}");
         }
         Session {
-            missed: std::cell::Cell::new(0),
             app: App::boot(&root),
             root,
             emu: None,
@@ -526,36 +522,22 @@ impl Session {
 
     /// The switcher pauses the game rather than dimming a live one. Paused publishes no
     /// frames, so the compositor keeps showing the last one behind the cards.
-    /// The frontend has shown a frame and fed the buttons for the next one: the core runs its
-    /// next present now. See `EmuHandle::kick`.
-    pub fn kick(&self) {
-        if let Some(emu) = &self.emu {
-            emu.kick();
-        }
-    }
-
     /// Kicks the core and waits, at most `timeout`, for the frame it makes from the buttons just
-    /// fed, so the display can draw that frame in this refresh. Answers how long the wait took,
-    /// or `None` when there is no running core to wait on: on the shelf, or while it is paused,
-    /// it publishes nothing, and waiting would only waste the refresh.
-    pub fn kick_and_wait(&self, timeout: Duration) -> Option<Duration> {
-        let emu = self.emu.as_ref()?;
+    /// fed, so the display can draw that frame in this refresh. Answers whether it came; false
+    /// too when there is no running core to wait on: on the shelf, or while it is paused, it
+    /// publishes nothing, and waiting would only waste the refresh.
+    pub fn kick_and_wait(&self, timeout: Duration) -> bool {
+        let Some(emu) = &self.emu else { return false };
         let since = emu.published_count();
         emu.kick();
         if emu.observed_speed() == Speed::Paused {
-            return None;
+            return false;
         }
-        let began = Instant::now();
         let came = emu.wait_published(since, timeout);
         if !came {
-            self.missed.set(self.missed.get().saturating_add(1));
+            crate::latency::missed();
         }
-        came.then(|| began.elapsed())
-    }
-
-    /// How many refreshes, since the last call, waited for a frame that never came.
-    pub fn take_missed(&self) -> u32 {
-        self.missed.replace(0)
+        came
     }
 
     fn sync_speed(&self) {

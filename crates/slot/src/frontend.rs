@@ -519,22 +519,15 @@ impl Frontend {
         self.start.elapsed().as_millis() as Millis
     }
 
-    /// Called once a frame by the device loop, after the swap and the input it fed: the core's
-    /// next frame starts now, on the freshest buttons, in step with the display.
-    pub fn frame_shown(&self) {
-        self.session.kick();
-    }
-
     /// Kicks the core on the buttons just fed and waits, at most `timeout`, for the frame it
     /// makes, so this refresh can draw it. See `Session::kick_and_wait`.
-    pub fn kick_and_wait(&self, timeout: std::time::Duration) -> Option<std::time::Duration> {
+    pub fn kick_and_wait(&self, timeout: std::time::Duration) -> bool {
         self.session.kick_and_wait(timeout)
     }
 
-    /// Refreshes that waited for a frame that never came, since the last call. See
-    /// `Session::take_missed`.
-    pub fn take_missed(&self) -> u32 {
-        self.session.take_missed()
+    /// Frames to run ahead, as the theme set it at boot.
+    pub fn runahead(&self) -> u8 {
+        self.session.app().runahead()
     }
 
     /// The frame the next boot should open on, taken once.
