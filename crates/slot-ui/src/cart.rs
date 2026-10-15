@@ -86,16 +86,15 @@ pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
 pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
-/// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, and tall enough
-/// that the cart's 128 x 128 picture sits in it at one pixel for one, so the pixel art stays
-/// crisp on the shelf.
-pub const PICO8_CART_W: u32 = 240;
-pub const PICO8_CART_H: u32 = 184;
+/// The faux PICO-8 cart (see `pico8_cart.svg`): a thin frame round the cart's 128 x 128
+/// picture, which sits in it at one pixel for one so the pixel art stays crisp on the shelf.
+/// Narrower than the 240 the other carts are drawn at, and about as tall as a GBA cart.
+pub const PICO8_CART_W: u32 = 148;
+pub const PICO8_CART_H: u32 = 146;
 
-/// The picture, centred across and set low, below a band of plastic like the other carts'
-/// grips.
+/// The picture, centred across, with a little more plastic above it than below.
 pub const PICO8_LABEL_X: u32 = (PICO8_CART_W - 128) / 2;
-pub const PICO8_LABEL_Y: u32 = 38;
+pub const PICO8_LABEL_Y: u32 = 11;
 pub const PICO8_LABEL_W: u32 = 128;
 pub const PICO8_LABEL_H: u32 = 128;
 
@@ -123,7 +122,7 @@ const RIM: u32 = 4;
 /// The same depth of plastic on an object 1.87x as tall.
 const GB_RIM: u32 = 7;
 const SNES_RIM: u32 = 5;
-const PICO8_RIM: u32 = 5;
+const PICO8_RIM: u32 = 4;
 
 pub struct CartFace {
     pub rgba: Vec<u8>,
