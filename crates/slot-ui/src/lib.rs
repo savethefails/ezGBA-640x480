@@ -37,10 +37,11 @@ pub use board::{
 };
 pub use cart::{
     cart_box, cart_face, cart_shadow, clean_label, gb_cart_shadow, gb_label_panel, gb_shell_of,
-    label_colour, label_panel, label_tags, label_text, snes_cart_shadow, CartFace, CART_H, CART_W,
-    GB_CART_H, GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W,
-    LABEL_X, LABEL_Y, SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W, SNES_LABEL_X,
-    SNES_LABEL_Y,
+    label_colour, label_panel, label_tags, label_text, pico8_cart_shadow, snes_cart_shadow,
+    CartFace, CART_H, CART_W, GB_CART_H, GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y,
+    LABEL_H, LABEL_W, LABEL_X, LABEL_Y, PICO8_CART_H, PICO8_CART_W, PICO8_LABEL_H, PICO8_LABEL_W,
+    PICO8_LABEL_X, PICO8_LABEL_Y, SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W,
+    SNES_LABEL_X, SNES_LABEL_Y,
 };
 pub use clock::{clock_label, date_time_text, hhmm, set_clock_hint_face, ClockPicker, Field};
 pub use draw::{Draw, TexId, OUT_H, OUT_W};

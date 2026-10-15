@@ -87,14 +87,27 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                     (crate::gb::title(&rom).unwrap_or_default(), String::new())
                 }
                 // Nothing on the shelf reads a SNES header yet: the label is the file's name.
-                Platform::Snes => (String::new(), String::new()),
+                Platform::Snes | Platform::Pico8 => (String::new(), String::new()),
+            };
+            // A `.p8.png` cart is its own label: PICO-8 prints the cart's picture on it.
+            // A picture in `Labels/PICO8/` still wins, as it does on every other shelf.
+            let label = if label.is_file() {
+                Some(label)
+            } else if platform == Platform::Pico8
+                && rom
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+            {
+                Some(rom.clone())
+            } else {
+                None
             };
             carts.push(Cart {
                 platform,
                 stem: stem.to_string(),
                 title,
                 code,
-                label: label.is_file().then_some(label),
+                label,
                 backdrop: backdrop.is_file().then_some(backdrop),
                 rom,
             });

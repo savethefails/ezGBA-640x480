@@ -650,6 +650,8 @@ impl Session {
                 c @ (Core::Snes9x | Core::Snes9x2005) => c,
                 _ => self.app.snes_core(),
             },
+            // The official PICO-8, the only thing that runs a PICO-8 cart here.
+            Platform::Pico8 => Core::Pico8,
         };
         self.app.set_core(core);
         // `platform` comes straight off the `Cart` the shelf scanned, not re-derived from the
@@ -690,6 +692,8 @@ impl Session {
         );
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
+        // PICO-8 saves by asking another process, far too slowly for every frame.
+        emu.set_history(core != Core::Pico8);
         self.app.set_snapshot(Box::new(emu.snapshot()));
         self.emu = Some(emu);
         crate::latency::note(&format!(

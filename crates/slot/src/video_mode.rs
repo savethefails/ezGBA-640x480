@@ -87,5 +87,8 @@ pub fn fit_for(platform: Platform, mode: VideoMode, snes: SnesPicture) -> Fit {
             SnesPicture::Sharp => Fit::Rows,
             SnesPicture::FourThree => Fit::Aspect(4.0 / 3.0),
         },
+        // PICO-8's 128 x 128 as the biggest square the panel holds: 480 x 480, centred, which
+        // is how PICO-8 lays itself out on a 640 x 480 screen too.
+        Platform::Pico8 => Fit::Aspect(1.0),
     }
 }

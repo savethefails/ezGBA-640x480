@@ -5,7 +5,8 @@ use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
 use crate::silhouette::{
     cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
-    snes_cart_depth, snes_cart_mask, snes_detail_mask, Detail, GbShell,
+    pico8_cart_depth, pico8_cart_mask, pico8_detail_mask, snes_cart_depth, snes_cart_mask,
+    snes_detail_mask, Detail, GbShell,
 };
 use crate::text;
 
@@ -85,6 +86,19 @@ pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
 pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
+/// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, and tall enough
+/// that the cart's 128 x 128 picture sits in it at one pixel for one, so the pixel art stays
+/// crisp on the shelf.
+pub const PICO8_CART_W: u32 = 240;
+pub const PICO8_CART_H: u32 = 184;
+
+/// The picture, centred across and set low, below a band of plastic like the other carts'
+/// grips.
+pub const PICO8_LABEL_X: u32 = (PICO8_CART_W - 128) / 2;
+pub const PICO8_LABEL_Y: u32 = 38;
+pub const PICO8_LABEL_W: u32 = 128;
+pub const PICO8_LABEL_H: u32 = 128;
+
 const PAD: u32 = 10;
 const MAX_LINES: usize = 3;
 /// Three lines have to clear the label's height, and Open Sans Bold sets at about 1.36x
@@ -99,6 +113,8 @@ const GB_MAX_PX: f32 = (GB_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 /// The SNES label is 1.76:1, between the other two, so it is handed both bounds as the Game Boy
 /// one is.
 const SNES_MAX_PX: f32 = (SNES_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
+/// Square, so it is handed both bounds as the Game Boy one is.
+const PICO8_MAX_PX: f32 = (PICO8_LABEL_H - 2 * PAD) as f32 / MAX_LINES as f32;
 const MIN_PX: f32 = 10.0;
 
 /// How far the translucent edge reaches in. Zero at this depth exactly, so a pixel any
@@ -107,6 +123,7 @@ const RIM: u32 = 4;
 /// The same depth of plastic on an object 1.87x as tall.
 const GB_RIM: u32 = 7;
 const SNES_RIM: u32 = 5;
+const PICO8_RIM: u32 = 5;
 
 pub struct CartFace {
     pub rgba: Vec<u8>,
@@ -147,6 +164,7 @@ struct Spec {
 enum Shape {
     Gba,
     Snes,
+    Pico8,
     Gb(GbShell),
 }
 
@@ -156,7 +174,7 @@ enum Shape {
 /// face is rasterised, and both of those happen at boot.
 pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
     match cart.platform {
-        Platform::Gba | Platform::Snes => None,
+        Platform::Gba | Platform::Snes | Platform::Pico8 => None,
         Platform::Gb | Platform::Gbc => Some(match slot_store::gb::class(&cart.rom) {
             Class::ColourOnly => GbShell::Rounded,
             Class::Original | Class::DualMode => GbShell::Notched,
@@ -167,6 +185,9 @@ pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
 fn shape_of(cart: &Cart) -> Shape {
     if cart.platform == Platform::Snes {
         return Shape::Snes;
+    }
+    if cart.platform == Platform::Pico8 {
+        return Shape::Pico8;
     }
     match gb_shell_of(cart) {
         None => Shape::Gba,
@@ -200,6 +221,17 @@ fn spec(shape: Shape) -> Spec {
             max_h: (SNES_LABEL_H - 2 * PAD) as f32,
             rim: SNES_RIM,
         },
+        Shape::Pico8 => Spec {
+            w: PICO8_CART_W,
+            h: PICO8_CART_H,
+            label: (PICO8_LABEL_X, PICO8_LABEL_Y, PICO8_LABEL_W, PICO8_LABEL_H),
+            mask: pico8_cart_mask(),
+            depth: pico8_cart_depth(),
+            detail: pico8_detail_mask(),
+            max_px: PICO8_MAX_PX,
+            max_h: (PICO8_LABEL_H - 2 * PAD) as f32,
+            rim: PICO8_RIM,
+        },
         Shape::Gb(shell) => Spec {
             w: GB_CART_W,
             h: GB_CART_H,
@@ -224,6 +256,7 @@ pub fn cart_box(platform: Platform) -> (u32, u32) {
         Platform::Gba => Shape::Gba,
         Platform::Gb | Platform::Gbc => Shape::Gb(GbShell::Notched),
         Platform::Snes => Shape::Snes,
+        Platform::Pico8 => Shape::Pico8,
     });
     (s.w, s.h)
 }
@@ -255,6 +288,11 @@ pub fn snes_cart_shadow() -> CartFace {
     shadow(SNES_CART_W, SNES_CART_H, snes_cart_mask())
 }
 
+/// The faux PICO-8 cart's outline in black, for the same reason.
+pub fn pico8_cart_shadow() -> CartFace {
+    shadow(PICO8_CART_W, PICO8_CART_H, pico8_cart_mask())
+}
+
 fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for cover in mask {
@@ -268,7 +306,13 @@ pub fn cart_face(cart: &Cart) -> CartFace {
     let shell = shell_for(cart);
     let mut face = shell_face(&s, &shell);
     let (_, _, lw, lh) = s.label;
-    let label = match cart.label.as_deref().and_then(|p| art::cover(p, lw, lh)) {
+    // A `.p8.png` is a picture of a whole cart, with the game's own 128 x 128 picture inside
+    // it: that picture, not the whole cart, is what goes on the label.
+    let load = |p: &std::path::Path| match cart.platform {
+        Platform::Pico8 => art::pico8_label(p, lw, lh),
+        _ => art::cover(p, lw, lh),
+    };
+    let label = match cart.label.as_deref().and_then(load) {
         Some(rgba) => rgba,
         None => generated_label(&s, &label_text(cart)),
     };

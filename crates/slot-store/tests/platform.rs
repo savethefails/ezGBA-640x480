@@ -6,7 +6,7 @@ use slot_store::Platform;
 #[test]
 fn every_platform_has_a_directory() {
     let names: Vec<&str> = Platform::ALL.iter().map(|p| p.dir_name()).collect();
-    assert_eq!(names, vec!["GBA", "GB", "GBC", "SNES"]);
+    assert_eq!(names, vec!["GBA", "GB", "GBC", "SNES", "PICO8"]);
 }
 
 /// One shelf per platform, and the carousel keys its shelves on `Platform` itself. There is no
@@ -17,7 +17,13 @@ fn every_platform_has_a_directory() {
 fn every_platform_is_a_shelf_of_its_own() {
     assert_eq!(
         Platform::ALL,
-        [Platform::Gba, Platform::Gb, Platform::Gbc, Platform::Snes]
+        [
+            Platform::Gba,
+            Platform::Gb,
+            Platform::Gbc,
+            Platform::Snes,
+            Platform::Pico8
+        ]
     );
     for (i, p) in Platform::ALL.iter().enumerate() {
         assert!(

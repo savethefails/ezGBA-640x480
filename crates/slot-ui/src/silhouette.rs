@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
-use crate::cart::{CART_H, CART_W, GB_CART_H, GB_CART_W, SNES_CART_H, SNES_CART_W};
+use crate::cart::{
+    CART_H, CART_W, GB_CART_H, GB_CART_W, PICO8_CART_H, PICO8_CART_W, SNES_CART_H, SNES_CART_W,
+};
 
 const CART_SVG: &str = include_str!("../assets/cart.svg");
 const DETAIL_SVG: &str = include_str!("../assets/cart_detail.svg");
@@ -10,6 +12,8 @@ const GB_DETAIL_SVG: &str = include_str!("../assets/gb_cart_detail.svg");
 const GBC_DETAIL_SVG: &str = include_str!("../assets/gbc_cart_detail.svg");
 const SNES_CART_SVG: &str = include_str!("../assets/snes_cart.svg");
 const SNES_DETAIL_SVG: &str = include_str!("../assets/snes_cart_detail.svg");
+const PICO8_CART_SVG: &str = include_str!("../assets/pico8_cart.svg");
+const PICO8_DETAIL_SVG: &str = include_str!("../assets/pico8_cart_detail.svg");
 
 /// Which of the two Game Pak shell moulds a cart came out of. Nintendo's typology names three
 /// classes and slot draws three plastics, but there are only two shells: a grey 0x00 pak and a
@@ -186,6 +190,34 @@ pub(crate) fn snes_detail_mask() -> &'static Detail {
     MASK.get_or_init(|| {
         rasterise_detail(SNES_DETAIL_SVG, SNES_CART_W, SNES_CART_H)
             .unwrap_or_else(|| Detail::blank(SNES_CART_W, SNES_CART_H))
+    })
+}
+
+/// The faux PICO-8 cart's outline, depth and moulding, the same three the SNES pak has.
+pub(crate) fn pico8_cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_svg(PICO8_CART_SVG, PICO8_CART_W, PICO8_CART_H)
+            .unwrap_or_else(|| vec![255; (PICO8_CART_W * PICO8_CART_H) as usize])
+    })
+}
+
+pub(crate) fn pico8_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| {
+        depth_map(
+            pico8_cart_mask(),
+            PICO8_CART_W as usize,
+            PICO8_CART_H as usize,
+        )
+    })
+}
+
+pub(crate) fn pico8_detail_mask() -> &'static Detail {
+    static MASK: OnceLock<Detail> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail(PICO8_DETAIL_SVG, PICO8_CART_W, PICO8_CART_H)
+            .unwrap_or_else(|| Detail::blank(PICO8_CART_W, PICO8_CART_H))
     })
 }
 

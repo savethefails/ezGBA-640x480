@@ -219,6 +219,25 @@ its own save states, so a game suspended on one starts from its last in-game sav
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
 `Game Name = snes9x` (or `snes9x2005_plus`) to `System/selected_core.ini`.
 
+## PICO-8 games
+
+PICO-8 games stand on the same shelf, each in a cartridge made up for it, since PICO-8 has no
+real ones. A `.p8.png` cart's own picture is its label. The game is drawn at 480×480, four times
+its 128×128, in the middle of the screen.
+
+PICO-8 isn't free and isn't included: it runs on your own copy. Buy it from
+[Lexaloffle](https://www.lexaloffle.com/pico-8.php), download the **Raspberry Pi** zip, and copy
+`pico8_64` and `pico8.dat` from it into `BIOS/pico8/` on the card. Put games in `Games/PICO8/`
+as `.p8.png` or `.p8` files.
+
+B is PICO-8's O button and A is its X. START opens PICO-8's pause menu.
+
+Ejecting or sleeping keeps your place, as it does for every other game, through
+[pico-8-save-states](https://github.com/savethefails/pico-8-save-states), which runs PICO-8
+on `System/pico8_libretro.so`. Saving a state takes PICO-8 a moment, too long to do every
+frame, so rewind and run-ahead are off for PICO-8 games. The first save also writes a page dictionary of about 9 MB to `Saves/pico8/p8ss/`, which later states
+share; keep it with them.
+
 ## Setup
 
 1. Flash **BaseOS for the RG35XXSP**: `baseos-rg35xxsp-<version>.img.zip` from

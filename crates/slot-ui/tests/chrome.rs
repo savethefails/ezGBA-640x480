@@ -66,6 +66,7 @@ fn label_band(c: &Cart) -> (f32, f32) {
         Platform::Gba => (LABEL_Y as f32, LABEL_H as f32),
         Platform::Gb | Platform::Gbc => (GB_LABEL_Y as f32, GB_LABEL_H as f32),
         Platform::Snes => (SNES_LABEL_Y as f32, SNES_LABEL_H as f32),
+        Platform::Pico8 => (slot_ui::PICO8_LABEL_Y as f32, slot_ui::PICO8_LABEL_H as f32),
     }
 }
 

@@ -70,6 +70,7 @@ pub struct Shelf {
     gb_shadow: Option<TexId>,
     gbc_shadow: Option<TexId>,
     snes_shadow: Option<TexId>,
+    pico8_shadow: Option<TexId>,
     /// Which mould each cart in `carts` came out of, `None` for a GBA cart. Worked out once
     /// here because the answer is in the rom's header: asking it while drawing would open a
     /// file on every cart of every frame.
@@ -97,6 +98,7 @@ impl Shelf {
             gb_shadow: None,
             gbc_shadow: None,
             snes_shadow: None,
+            pico8_shadow: None,
             ride: 0.0,
             vel: 0.0,
             held: None,
@@ -126,6 +128,10 @@ impl Shelf {
     /// The SNES Game Pak's outline in black: a shape of its own, not the GBA cart's grown.
     pub fn set_snes_shadow(&mut self, face: TexId) {
         self.snes_shadow = Some(face);
+    }
+
+    pub fn set_pico8_shadow(&mut self, face: TexId) {
+        self.pico8_shadow = Some(face);
     }
 
     pub fn set_gb_shadow(&mut self, shell: GbShell, face: TexId) {
@@ -413,6 +419,7 @@ impl Shelf {
                 // same degrading a cart whose face was never uploaded already gets.
                 let backing = match self.shells.get(i).copied().flatten() {
                     None if cart.platform == Platform::Snes => self.snes_shadow,
+                    None if cart.platform == Platform::Pico8 => self.pico8_shadow,
                     None => self.shadow,
                     Some(GbShell::Notched) => self.gb_shadow,
                     Some(GbShell::Rounded) => self.gbc_shadow,

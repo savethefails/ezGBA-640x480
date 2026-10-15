@@ -62,6 +62,10 @@ pub const GB_CLEAR_SHELL: Shell = shell([0x7c, 0x7a, 0x8a], Finish::Translucent)
 /// The North American SNES Game Pak's light grey, which every cart came in.
 pub const SNES_SHELL: Shell = shell([0x8e, 0x8d, 0x94], Finish::Solid);
 
+/// The faux PICO-8 cart: PICO-8's own dark blue, from its 16 colour palette, so the cart reads
+/// as PICO-8's from across the room.
+pub const PICO8_SHELL: Shell = shell([0x1d, 0x2b, 0x53], Finish::Solid);
+
 /// What plastic this cart shipped in. Which question to ask depends on the platform: a GBA cart
 /// is looked up by the game code in its header, and a Game Boy pak has no such field at all, so
 /// the CGB flag answers instead.
@@ -76,6 +80,7 @@ pub fn shell_for(cart: &Cart) -> Shell {
         Platform::Gba => gba_shell_for(&cart.code),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
         Platform::Snes => SNES_SHELL,
+        Platform::Pico8 => PICO8_SHELL,
     }
 }
 

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18.75 0 62.5 100" width="62.5" height="100">
+  <!-- The PICO-8 shelf's mark. PICO-8 has no machine to draw, so this is the fantasy console
+       as a pocket one: a square screen above a d-pad and the O and X buttons. ezGBA's own
+       drawing, in the same 5:8 box and line weight as the other marks. -->
+  <g fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round">
+    <rect x="22" y="2" width="56" height="96" rx="6"/>
+    <rect x="31" y="11" width="38" height="38"/>
+    <path d="M33 66 H39 V60 H45 V66 H51 V72 H45 V78 H39 V72 H33 Z"/>
+    <circle cx="62" cy="74" r="4"/>
+    <circle cx="70" cy="64" r="4"/>
+  </g>
+</svg>

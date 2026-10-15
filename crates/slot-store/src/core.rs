@@ -15,6 +15,8 @@ pub enum Core {
     /// About twice as fast as `Snes9x` on the SP's cores, which is what lets a SNES game afford
     /// run-ahead. An experiment beside `Snes9x`, not a replacement for it.
     Snes9x2005,
+    /// The official PICO-8, run by `pico8_libretro` (from the pico-8-save-states project).
+    Pico8,
 }
 
 impl Core {
@@ -22,7 +24,13 @@ impl Core {
     /// `migrate_states` walks this rather than spelling the variant list out a second time,
     /// so a third core added here does not also have to be remembered at every call site
     /// that needs to tell a core's own directory apart from a cart's.
-    pub const ALL: [Core; 4] = [Core::Mgba, Core::Gpsp, Core::Snes9x, Core::Snes9x2005];
+    pub const ALL: [Core; 5] = [
+        Core::Mgba,
+        Core::Gpsp,
+        Core::Snes9x,
+        Core::Snes9x2005,
+        Core::Pico8,
+    ];
 
     /// The two a GBA cart can choose between, which are the picker's rows and chips. Every
     /// other console has exactly one core that runs it, and so nothing to pick.
@@ -34,6 +42,7 @@ impl Core {
             Core::Gpsp => "gpsp",
             Core::Snes9x => "snes9x",
             Core::Snes9x2005 => "snes9x2005_plus",
+            Core::Pico8 => "pico8",
         }
     }
 
@@ -51,6 +60,7 @@ impl Core {
             Core::Gpsp => "gpSP",
             Core::Snes9x => "Snes9x",
             Core::Snes9x2005 => "Snes9x 2005",
+            Core::Pico8 => "PICO-8",
         }
     }
 
@@ -60,6 +70,7 @@ impl Core {
             "gpsp" => Some(Core::Gpsp),
             "snes9x" => Some(Core::Snes9x),
             "snes9x2005_plus" => Some(Core::Snes9x2005),
+            "pico8" => Some(Core::Pico8),
             _ => None,
         }
     }

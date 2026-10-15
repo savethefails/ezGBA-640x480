@@ -19,11 +19,20 @@ pub enum Platform {
     Gb,
     Gbc,
     Snes,
+    /// PICO-8, the fantasy console: carts run on the official PICO-8, by way of
+    /// `pico8_libretro`, which the user supplies the PICO-8 half of.
+    Pico8,
 }
 
 impl Platform {
     /// Every variant, once, in the order the shelves are switched through.
-    pub const ALL: [Platform; 4] = [Platform::Gba, Platform::Gb, Platform::Gbc, Platform::Snes];
+    pub const ALL: [Platform; 5] = [
+        Platform::Gba,
+        Platform::Gb,
+        Platform::Gbc,
+        Platform::Snes,
+        Platform::Pico8,
+    ];
 
     /// The card directory this platform's files live under, in `Games/`, `Saves/`, `States/`
     /// and `Labels/` alike. Every platform has one — see the type's own comment.
@@ -33,6 +42,7 @@ impl Platform {
             Platform::Gb => "GB",
             Platform::Gbc => "GBC",
             Platform::Snes => "SNES",
+            Platform::Pico8 => "PICO8",
         }
     }
 
@@ -44,6 +54,8 @@ impl Platform {
             Platform::Gba => &["gba"],
             Platform::Gb | Platform::Gbc => &["gb", "gbc"],
             Platform::Snes => &["sfc", "smc"],
+            // A `.png` only as a `.p8.png`: see `accepts`.
+            Platform::Pico8 => &["p8", "png"],
         }
     }
 
@@ -60,10 +72,23 @@ impl Platform {
             Platform::Gba => (240, 160),
             Platform::Gb | Platform::Gbc => (160, 144),
             Platform::Snes => (256, 224),
+            Platform::Pico8 => (128, 128),
         }
     }
 
     pub fn accepts(self, path: &Path) -> bool {
+        // A PICO-8 cart saved as a picture is `name.p8.png`. Any other picture in the folder
+        // (a screenshot, the box art someone dropped in the wrong place) is not a cart.
+        if self == Platform::Pico8
+            && path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+        {
+            return path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.to_ascii_lowercase().ends_with(".p8"));
+        }
         path.extension()
             .and_then(|e| e.to_str())
             .is_some_and(|ext| {

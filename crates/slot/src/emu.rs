@@ -209,6 +209,10 @@ struct Shared {
     peer_ended: AtomicBool,
     /// Frames to run ahead of the one the game is really on, 0 to 2. See `Worker::run_ahead`.
     runahead: AtomicU8,
+    /// Whether the core's state may be taken every frame or two, for run-ahead and the rewind
+    /// history. Off for a core whose save is a round trip to another process (PICO-8's): it
+    /// saves only when the player's progress is actually being kept.
+    history: AtomicBool,
     /// Set by `EmuHandle::kick` when the frontend has read the buttons for the frame it is about
     /// to show, and waited on by the worker's pacing so the core runs right after the read.
     kick: Mutex<Option<Instant>>,
@@ -259,6 +263,7 @@ impl EmuHandle {
             link_lost: AtomicBool::new(false),
             peer_ended: AtomicBool::new(false),
             runahead: AtomicU8::new(0),
+            history: AtomicBool::new(true),
             kick: Mutex::new(None),
             kicked: Condvar::new(),
             publish_lock: Mutex::new(()),
@@ -344,6 +349,12 @@ impl EmuHandle {
     /// Frames to run ahead, 0 to 2. Read by the worker every present.
     pub fn set_runahead(&self, frames: u8) {
         self.shared.runahead.store(frames.min(2), Ordering::Relaxed);
+    }
+
+    /// Whether run-ahead and the rewind history may take the core's state. See
+    /// `Shared::history`.
+    pub fn set_history(&self, on: bool) {
+        self.shared.history.store(on, Ordering::Relaxed);
     }
 
     /// The frontend has put a frame on the panel and handed over the buttons for the next one.
@@ -853,7 +864,11 @@ impl Worker {
                 // and a netpacket session must never be run twice and wound back, since the
                 // peer would hear every packet the hidden frames sent.
                 let ahead = match speed {
-                    Speed::Normal if !link.is_active() && runahead_on => {
+                    Speed::Normal
+                        if !link.is_active()
+                            && runahead_on
+                            && self.shared.history.load(Ordering::Relaxed) =>
+                    {
                         self.shared.runahead.load(Ordering::Relaxed)
                     }
                     _ => 0,
@@ -945,7 +960,7 @@ impl Worker {
                 // trigger and the first pop of a rewind swallowed the entire stretch in one
                 // step instead of walking back through it.
                 since_snapshot += 1;
-                if since_snapshot >= SNAPSHOT_EVERY {
+                if since_snapshot >= SNAPSHOT_EVERY && self.shared.history.load(Ordering::Relaxed) {
                     since_snapshot = 0;
                     // A core that will not serialize has already said so through the save
                     // path. Rewind is not the place to say it again at 30 Hz. Run-ahead has

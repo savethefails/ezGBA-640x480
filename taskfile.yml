@@ -358,12 +358,28 @@ tasks:
       - file target-device/device/examples/core_bench | grep -q aarch64
       - 'echo "built target-device/device/examples/core_bench, adb push it to /tmp/core_bench"'
 
+  core:pico8:
+    desc: Build the PICO-8 core and its two helpers for the device bundle, in the box the device build uses
+    # The player's own PICO-8 is never part of this: see cores/pico8/README.md.
+    sources:
+      - cores/pico8/**/*
+    generates:
+      - vendor/pico8_libretro.so
+      - vendor/pico8/p8ss.so
+      - vendor/pico8/lib/libSDL2-2.0.so.0
+    cmds:
+      - task: device:sh
+        vars:
+          CMD: make -C cores/pico8 OUT=../../vendor
+      - file vendor/pico8_libretro.so | grep -q aarch64
+      - 'echo "built vendor/pico8_libretro.so and vendor/pico8/"'
+
   dist:device:
     desc: Build the SD2 tree for an H700 device, OUT defaults to ./dist-device
     # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
     # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
-    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, build:device]
+    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, core:pico8, build:device]
     vars:
       OUT: '{{.OUT | default "dist-device"}}'
     cmds:
@@ -388,6 +404,13 @@ tasks:
       - cp vendor/gpsp_libretro.so {{.OUT}}/System/
       - cp vendor/snes9x_libretro.so {{.OUT}}/System/
       - cp vendor/snes9x2005_plus_libretro.so {{.OUT}}/System/
+      # PICO-8's core, and beside it the two files it runs PICO-8 with. PICO-8 itself is the
+      # player's to add, in BIOS/pico8/: see the README's PICO-8 section.
+      - file vendor/pico8_libretro.so | grep -q aarch64
+      - cp vendor/pico8_libretro.so {{.OUT}}/System/
+      - mkdir -p {{.OUT}}/System/pico8/lib
+      - cp vendor/pico8/p8ss.so {{.OUT}}/System/pico8/
+      - cp vendor/pico8/lib/libSDL2-2.0.so.0 {{.OUT}}/System/pico8/lib/
       - cp -r licenses {{.OUT}}/System/licenses
       # snes9x's terms: non-commercial use only, and this licence with its copyright notice
       # beside every copy. The .meta names the libretro/snes9x commit it was built from.
@@ -436,7 +459,7 @@ tasks:
   deploy:device:
     desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard
     # See the note on dist:device: both cores are real now, so both are pushed.
-    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, build:device]
+    deps: [core:device, core:gpsp, core:snes9x, core:snes9x2005, core:pico8, build:device]
     vars:
       SD: '{{.SD | default "/mnt/sdcard"}}'
     cmds:

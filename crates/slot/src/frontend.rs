@@ -13,10 +13,10 @@ use slot_store::{format_stamp, Platform as CartPlatform};
 use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face,
     date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face, menu_face, photo_face,
-    quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face,
-    snes_cart_shadow, socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face,
-    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
-    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    pico8_cart_shadow, quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face,
+    set_clock_hint_face, snes_cart_shadow, socket_face, sticker_face, title_face, toast_face,
+    wallpaper_face, word_face, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow,
+    QuickValue, StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -341,6 +341,9 @@ impl Frontend {
         let snes = snes_cart_shadow();
         let snes = compositor.create_texture(snes.w, snes.h, &snes.rgba);
         self.session.app_mut().set_snes_cart_shadow(snes);
+        let pico8 = pico8_cart_shadow();
+        let pico8 = compositor.create_texture(pico8.w, pico8.h, &pico8.rgba);
+        self.session.app_mut().set_pico8_cart_shadow(pico8);
         // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
         // reserved slot rather than over the fill. The housing tint was only ever needed to
         // hide the bolt inside the fill it sat on; out here it sits where every other HUD
@@ -538,6 +541,11 @@ impl Frontend {
     /// The frame the next boot should open on, taken once.
     pub fn take_scene(&mut self) -> Option<Vec<u8>> {
         self.scene.take()
+    }
+
+    /// What a test reads the phase and the core's frame from.
+    pub fn session(&self) -> &Session {
+        &self.session
     }
 
     pub fn powering_off(&self) -> bool {

@@ -1085,6 +1085,13 @@ impl App {
         }
     }
 
+    /// The faux PICO-8 cart's outline in black, the same way.
+    pub fn set_pico8_cart_shadow(&mut self, face: TexId) {
+        for (_, shelf) in &mut self.shelves {
+            shelf.set_pico8_shadow(face);
+        }
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
     }

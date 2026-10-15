@@ -16,18 +16,22 @@ use std::path::{Path, PathBuf};
 ///
 /// Parents come before their children: `ensure` creates each in turn, and so does the test
 /// harness's own root.
-pub const DIRS: [&str; 15] = [
+pub const DIRS: [&str; 18] = [
     "BIOS",
+    // Where the player's own PICO-8 goes: it is licensed, so it never ships on the card.
+    "BIOS/pico8",
     "Games",
     "Games/GBA",
     "Games/GB",
     "Games/GBC",
     "Games/SNES",
+    "Games/PICO8",
     "Labels",
     "Labels/GBA",
     "Labels/GB",
     "Labels/GBC",
     "Labels/SNES",
+    "Labels/PICO8",
     "Saves",
     "States",
     "System",

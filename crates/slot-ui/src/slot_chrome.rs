@@ -84,7 +84,11 @@ pub fn housing() -> [f32; 4] {
 /// belong to the theme, only the colour it tints towards does.
 pub fn scrim() -> [f32; 3] {
     let c = theme().scrim;
-    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]
+    [
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+    ]
 }
 
 pub fn opening() -> [f32; 4] {
