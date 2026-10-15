@@ -3,7 +3,8 @@ use crate::power::{screen_brightness, screen_rect, screen_rect_in};
 use crate::quad::Quad;
 use crate::shaders::{GAME_FRAG, RECT_VERT};
 use crate::surface::{
-    fit, game_rect, grid, scaler, set_source_size, Fit, GfxError, Scaler, OUT_H, OUT_W,
+    canvas, fit, grid, live_rect, scaler, set_source_size, ui_origin, Fit, GfxError, Scaler, OUT_H,
+    OUT_W,
 };
 
 /// The GBA's own picture: the size the live texture starts at, and the only one the LCD3x
@@ -15,7 +16,7 @@ pub const SRC_H: u32 = 160;
 /// source at exactly 3x both ways, which a 640 wide panel never is, so on the RG35XXSP it is
 /// off whichever shape the picture is.
 fn grille_fits() -> bool {
-    let (_, _, w, h) = game_rect();
+    let (_, _, w, h) = live_rect();
     crate::surface::source_size() == (SRC_W, SRC_H) && w == SRC_W * 3 && h == SRC_H * 3
 }
 
@@ -39,6 +40,8 @@ pub struct GamePass {
     u_keep: gl::types::GLint,
     u_even: gl::types::GLint,
     u_tone: gl::types::GLint,
+    /// The size of what is drawn into: the canvas for the live game, the composite for a still.
+    u_target: gl::types::GLint,
     /// Whether the LCD3x grille is drawn. See `set_grille`.
     grille: bool,
     /// A compositor with nobody driving it is a screen that is on.
@@ -75,6 +78,7 @@ impl GamePass {
             u_keep,
             u_even,
             u_tone,
+            u_target,
         );
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
@@ -82,11 +86,8 @@ impl GamePass {
             gl::UseProgram(prog);
             gl::Uniform1i(crate::gl::uniform_location(prog, "u_game"), 0);
             gl::Uniform1i(crate::gl::uniform_location(prog, "u_mask"), 1);
-            gl::Uniform2f(
-                crate::gl::uniform_location(prog, "u_target"),
-                OUT_W as f32,
-                OUT_H as f32,
-            );
+            u_target = crate::gl::uniform_location(prog, "u_target");
+            gl::Uniform2f(u_target, OUT_W as f32, OUT_H as f32);
             u_rect = crate::gl::uniform_location(prog, "u_rect");
             u_src = crate::gl::uniform_location(prog, "u_src");
             u_bright = crate::gl::uniform_location(prog, "u_bright");
@@ -116,6 +117,7 @@ impl GamePass {
             u_keep,
             u_even,
             u_tone,
+            u_target,
             grille: true,
             power: 1.0,
             size: (SRC_W, SRC_H),
@@ -173,8 +175,20 @@ impl GamePass {
         set_source_size(self.size);
     }
 
+    /// The live game, placed against the whole canvas rather than the composite's area in it.
     pub fn draw(&self, quad: &Quad) {
+        let (cw, ch) = canvas();
+        let (ox, oy) = ui_origin();
+        unsafe {
+            gl::Viewport(0, 0, cw as i32, ch as i32);
+            gl::UseProgram(self.prog);
+            gl::Uniform2f(self.u_target, cw as f32, ch as f32);
+        }
         self.draw_source(self.game, quad, self.size, screen_rect(self.power));
+        unsafe {
+            gl::Viewport(ox as i32, oy as i32, OUT_W as i32, OUT_H as i32);
+            gl::Uniform2f(self.u_target, OUT_W as f32, OUT_H as f32);
+        }
     }
 
     /// The same pass over a still: a saved shot, filtered at draw time as the game is rather

@@ -29,7 +29,7 @@ pub fn run() {
             return;
         }
     };
-    let mut compositor = match Compositor::new(&surface) {
+    let mut compositor = match Compositor::for_panel(&surface) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("slot: {e}");
