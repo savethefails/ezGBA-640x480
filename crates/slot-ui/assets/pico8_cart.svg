@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 146">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 184">
   <!-- A PICO-8 cart, which has no real plastic: ezGBA's own faux cartridge, built round the
-       picture PICO-8 prints on every .p8.png. Only just bigger than the cart's 128 x 128
-       picture, which sits on it at exactly one pixel for one, so it stands about as tall as a
-       GBA cart and narrower. The top left corner is cut away, as on the cart PICO-8 draws
-       around a .p8.png; the other corners are rounded off. -->
-  <path d="M16 0 H142 Q148 0 148 6 V140 Q148 146 142 146 H6 Q0 146 0 140 V16 Z" fill="#fff"/>
+       picture PICO-8 prints on every .p8.png. As wide as the other carts, so the row keeps its
+       width, and tall enough that the cart's 128 x 128 picture sits on it at exactly one pixel
+       for one. The top left corner is cut away, as on the cart PICO-8 draws around a .p8.png;
+       the other corners are rounded off. -->
+  <path d="M20 0 H230 Q240 0 240 10 V174 Q240 184 230 184 H10 Q0 184 0 174 V20 Z" fill="#fff"/>
 </svg>
