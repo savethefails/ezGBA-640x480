@@ -76,6 +76,7 @@ jobs:
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
           file "$out/System/snes9x_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
+          test -f "$out/System/ags-net"
           # snes9x's terms: its licence and copyright notice beside every copy.
           test -f "$out/System/licenses/snes9x-LICENSE.txt"
           # GPL-2.0 section 3(a): the release does not ship without gpSP's corresponding
