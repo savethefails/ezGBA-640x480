@@ -799,8 +799,10 @@ impl Worker {
                         // The host's machine, once it is whole. Restored here rather than in
                         // `cable.rs`, which holds no core and never should.
                         if let Some(state) = c.take_state() {
+                            // Only an mGBA pair has a BIOS to compare: a SNES state is raw structs,
+                            // and its bytes 4..8 are a CPU register that differs on every machine.
                             let own = core.serialize().unwrap_or_default();
-                            if !link_state::same_bios(&state, &own) {
+                            if link_state::is_pair(&state) && !link_state::same_bios(&state, &own) {
                                 eprintln!("slot: cable: the host runs another GBA BIOS");
                                 self.shared.bios_mismatch.store(true, Ordering::Relaxed);
                             } else {

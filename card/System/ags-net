@@ -3,6 +3,7 @@
 # helper. The host runs an open access point on channel 6 as 10.42.0.1, the joiner associates
 # as 10.42.0.2 (crates/slot/src/link_net.rs). BaseOS loads the driver and raises wlan0 at boot,
 # so warm only waits for it and cool leaves it: unloading is what its slow-reset radios fail on.
+# The joiner turns power saving off; the host, as the access point, never dozes.
 # Exit 3 is a joiner whose search found no host; anything else nonzero is the radio.
 set -u
 IF=wlan0
@@ -66,6 +67,10 @@ case "${2:-}" in
 	join)
 		up 0
 		completed 300 || { down; exit 3; }
+		# A dozing station gets the host's packets only at its beacons, 100 ms apart, which is
+		# twice the cable's whole delay: every frame would wait on one. Not fatal, only slow.
+		wpa_cli -p $RUN -i $IF set ps 0 | grep -qx OK \
+			|| echo "ags-net: $IF would not stop power saving, expect stalls" >&2
 		ip addr add 10.42.0.2/24 dev $IF || { down; exit 1; }
 		;;
 	*) echo "usage: ags-net link host|join|warm|cool|down" >&2; exit 2 ;;

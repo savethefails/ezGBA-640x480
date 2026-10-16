@@ -181,3 +181,63 @@ fn the_joiners_buttons_reach_the_hosts_second_port_frame_for_frame() {
     assert_eq!(idle, again, "the same buttons gave two different machines");
     assert_ne!(idle, pressed, "player 2's buttons never reached the game");
 }
+
+/// snes9x2005 as the joiner, taking in a host's machine that is somewhere else. A SNES state is
+/// the core's structs copied out raw, so bytes 4..8, where mGBA keeps its BIOS checksum, are a
+/// CPU register here: read as a BIOS, every SNES host looked like another one and no joiner ever
+/// restored.
+#[test]
+fn a_snes_joiner_restores_a_host_somewhere_else() {
+    use slot_retro::RetroCore;
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let rom = dir.path().join("two-pad.sfc");
+    std::fs::write(&rom, two_pad_rom()).unwrap();
+
+    let host_state = {
+        let mut core = LibretroCore::open(&dylib).expect("the vendored core would not open");
+        core.load(&rom).expect("the ROM would not load");
+        for f in 0..37u16 {
+            core.run_frame(ButtonMask(f));
+        }
+        core.serialize().expect("the core would not serialize")
+    };
+
+    let core = LibretroCore::open(&dylib).expect("the vendored core would not open");
+    let emu = EmuHandle::spawn(
+        Box::new(core),
+        rom.clone(),
+        Arc::new(Ring::new(1 << 14)),
+        None,
+        None,
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while emu.state() == CoreState::Loading {
+        assert!(Instant::now() < deadline, "the core never settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    emu.set_speed(Speed::Normal);
+    let wire = Arc::new(Mutex::new(Wire::default()));
+    wire.lock().unwrap().to_host = cable::state_packets(&host_state);
+    emu.begin_cable(1, Box::new(HostEnd(wire.clone())));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !wire
+        .lock()
+        .unwrap()
+        .to_test
+        .contains(&cable::ready_packet().to_vec())
+    {
+        assert!(
+            !emu.bios_mismatch(),
+            "a SNES host was refused as another BIOS"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the joiner never said it was ready"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    emu.end_link();
+}
