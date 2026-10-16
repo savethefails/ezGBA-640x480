@@ -155,6 +155,12 @@ fn a_joiner_runs_the_hosts_machine_and_not_its_own() {
 #[test]
 fn a_peer_that_never_speaks_stalls_rather_than_guessing() {
     let wire = Arc::new(Mutex::new(Wire::default()));
+    // A joiner that said it was running the host's game and then went quiet. Until it says so
+    // nothing can be called lost: see `a_joiner_still_taking_in_the_state_is_not_lost`.
+    wire.lock()
+        .unwrap()
+        .b
+        .push_back(slot::cable::ready_packet().to_vec());
     let lonely = spawn(Arc::new(Ring::new(4096)));
     lonely.begin_cable(
         0,
@@ -180,4 +186,51 @@ fn a_peer_that_never_speaks_stalls_rather_than_guessing() {
         "it ran {} frames with nobody on the other end",
         lonely.linked_frames()
     );
+}
+
+/// A joiner that takes longer than `QUIET_FRAMES` to arrive and restore the host's machine is
+/// still getting ready, not gone. On hardware the megabyte crossing WiFi took over a second, and
+/// both ends called the other lost a second into every link.
+#[test]
+fn a_joiner_still_taking_in_the_state_is_not_lost() {
+    let wire = Arc::new(Mutex::new(Wire::default()));
+    let host = spawn(Arc::new(Ring::new(4096)));
+    let join = spawn(Arc::new(Ring::new(4096)));
+    host.begin_cable(
+        0,
+        Box::new(End {
+            wire: wire.clone(),
+            first: true,
+        }),
+    );
+    host.set_speed(Speed::Normal);
+    // Twice `QUIET_FRAMES` at 60 Hz with the joiner not yet running.
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !host.link_lost(),
+        "the host called a joiner lost before it was ready"
+    );
+
+    join.begin_cable(
+        1,
+        Box::new(End {
+            wire: wire.clone(),
+            first: false,
+        }),
+    );
+    join.set_speed(Speed::Normal);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while host.linked_frames() < 30 || join.linked_frames() < 30 {
+        assert!(
+            Instant::now() < deadline,
+            "the pair never got going: host {} / joiner {} linked frames",
+            host.linked_frames(),
+            join.linked_frames()
+        );
+        assert!(
+            !host.link_lost() && !join.link_lost(),
+            "a late joiner ended the link"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

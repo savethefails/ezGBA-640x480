@@ -1009,10 +1009,19 @@ impl Worker {
                                     None => {
                                         cable_stalls += 1;
                                         c.stall();
-                                        self.shared.link_lost.store(
-                                            c.stalled() >= cable::QUIET_FRAMES,
-                                            Ordering::Relaxed,
-                                        );
+                                        // Only once both ends run the agreed machine: before
+                                        // that every present stalls by design while the joiner
+                                        // takes in and restores a megabyte (see `Cable::armed`).
+                                        let lost = c.armed() && c.stalled() >= cable::QUIET_FRAMES;
+                                        if lost && c.stalled() == cable::QUIET_FRAMES {
+                                            eprintln!(
+                                                "slot: cable: player {} lost its peer: {} presents without its buttons for frame {}",
+                                                c.player(),
+                                                c.stalled(),
+                                                c.frame()
+                                            );
+                                        }
+                                        self.shared.link_lost.store(lost, Ordering::Relaxed);
                                         break;
                                     }
                                 }

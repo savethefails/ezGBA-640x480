@@ -181,6 +181,7 @@ impl Cable {
     pub fn accept(&mut self, buf: &[u8]) -> bool {
         match buf.first() {
             Some(&KIND_READY) => {
+                eprintln!("slot: cable: the joiner is running the host's game, session under way");
                 self.peer_ready = true;
                 return true;
             }

@@ -160,12 +160,9 @@ fn run(sub: &str) -> bool {
 /// it rather than waiting for a window the player has already given up on.
 #[cfg(feature = "device")]
 pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
-    let mut child = ags_net()
-        .arg(role.arg())
-        .spawn()
-        .map_err(|e| {
-            RadioFail::Radio(format!("ags-net link {} would not start: {e}", role.arg()))
-        })?;
+    let mut child = ags_net().arg(role.arg()).spawn().map_err(|e| {
+        RadioFail::Radio(format!("ags-net link {} would not start: {e}", role.arg()))
+    })?;
     loop {
         if cancel.is_cancelled() {
             let _ = child.kill();
