@@ -163,6 +163,24 @@ fn the_autosave_repeats_rather_than_firing_once() {
     assert_eq!(flushes.load(Ordering::Relaxed), 2);
 }
 
+/// PICO-8 saves by stopping in another process for a second or so, so there is no autosave to
+/// hitch the game every minute: its state is kept on the power button, the lid and eject.
+#[test]
+fn a_pico8_game_is_not_autosaved_but_still_flushes_on_power() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let (snapshot, flushes) = counting();
+    let mut a = app_playing_with(d.path(), "Emerald", snapshot);
+    a.set_core(Core::Pico8);
+    a.tick_ms(180_000);
+    assert_eq!(flushes.load(Ordering::Relaxed), 0, "PICO-8 was autosaved");
+    a.apply(Action::PowerTap);
+    assert_eq!(
+        flushes.load(Ordering::Relaxed),
+        1,
+        "the power button saved nothing"
+    );
+}
+
 /// The invariant is 60 s since the state was last durable, not 60 s since the last
 /// autosave, so a lid close in between moves the deadline with it.
 #[test]

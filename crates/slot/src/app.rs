@@ -4463,6 +4463,11 @@ impl App {
     /// with their syncs, is what held the frame loop long enough to drop frames every minute.
     fn autosave(&mut self) {
         self.autosave_at = self.now() + AUTOSAVE_MS;
+        // PICO-8 saves by stopping in another process for a second or so, which every minute
+        // is a hitch in the game. Its state is kept on eject and sleep, as every game's is.
+        if self.core == Core::Pico8 {
+            return;
+        }
         self.settle_saves();
         let (Some(root), Some(snapshot), Some(cart)) = (&self.root, &self.snapshot, self.seated())
         else {
