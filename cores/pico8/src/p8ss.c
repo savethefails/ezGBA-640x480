@@ -151,14 +151,20 @@ static void arena_init(void)
 {
 	if (arena)
 		return;
-	/* A fixed hint keeps the arena at the same address across runs. */
-	void *hint = (void *)(uintptr_t)(sizeof(void *) == 8 ? 0x5a0000000000ULL : 0x60000000UL);
+	/* A fixed hint keeps the arena at the same address across runs, which a state
+	 * loaded into a later run needs. It has to exist on the smallest address space
+	 * there is: arm64 kernels built for 39-bit addresses (the H700's) end user space
+	 * at 0x7fffffffff, and a hint past that is ignored for a random address. 360 GB
+	 * is under that, and above where the executable and its heap are put. */
+	void *hint = (void *)(uintptr_t)(sizeof(void *) == 8 ? 0x5a00000000ULL : 0x60000000UL);
 	arena = mmap(hint, ARENA_RESERVE, PROT_READ | PROT_WRITE,
 		     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 	if (arena == MAP_FAILED) {
 		arena = NULL;
 		return;
 	}
+	if (arena != hint)
+		LOG("arena at %p, not %p: states will not load into a later run", (void *)arena, hint);
 	ah = (struct arena_hdr *)arena;
 	memset(ah, 0, sizeof *ah);
 	ah->top = ((uintptr_t)arena + sizeof *ah + ALIGN - 1) & ~(uintptr_t)(ALIGN - 1);
