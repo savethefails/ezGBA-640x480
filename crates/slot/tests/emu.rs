@@ -678,6 +678,12 @@ fn the_cores_outbound_queue_reaches_the_transport() {
     let emu = spawn();
     let (mut here, there) = paired_links();
     emu.begin_link(1, Box::new(there));
+    // Waited on rather than assumed, the same way the inbound half above does it. A packet
+    // pushed before the session is actually live is a packet from before the session:
+    // `Cmd::BeginLink` empties both queues on its way in (see
+    // `beginning_a_link_clears_what_the_last_session_left_behind`), so pushing into the race
+    // would be testing the clear rather than the pump.
+    assert!(wait_for(|| emu.net().is_active()), "begin_link never took");
 
     emu.net().push_outbound(b"from the core".to_vec());
     let got = wait_for_packet(|| here.try_recv());
@@ -1117,6 +1123,80 @@ fn a_kick_a_frame_brings_the_present_right_after_it() {
     );
 }
 
+/// Once in step, a kick that comes a few milliseconds late still gets its own present. The
+/// device loop's button read moves a little from refresh to refresh; before, a kick more than
+/// 1 ms late found the worker already running a frame on the old buttons, and the display
+/// showed one frame twice and then skipped one. Every fourth kick here is 3 ms late, at the
+/// SP's 16.8 ms period.
+#[test]
+fn a_late_kick_in_step_still_gets_its_own_present() {
+    let emu = spawn();
+    let period = Duration::from_micros(16_800);
+    let mut next = Instant::now();
+    let (mut prompt, mut kicks) = (0, 0);
+    for i in 0..180 {
+        next += period;
+        let late = if i % 4 == 3 {
+            Duration::from_millis(3)
+        } else {
+            Duration::ZERO
+        };
+        std::thread::sleep((next + late).saturating_duration_since(Instant::now()));
+        let since = emu.published_count();
+        emu.kick();
+        let kicked = Instant::now();
+        let came = emu.wait_published(since, Duration::from_millis(12));
+        if i >= 60 {
+            kicks += 1;
+            if came && kicked.elapsed() < Duration::from_millis(4) {
+                prompt += 1;
+            }
+        }
+    }
+    assert!(
+        prompt * 10 >= kicks * 9,
+        "only {prompt} of {kicks} presents followed their kick"
+    );
+}
+
+/// Waiting longer for a late kick never makes the game follow a display that cannot keep up: kicked
+/// at half the panel's rate, it still runs close to its own speed rather than at the kicks'.
+#[test]
+fn a_display_at_half_rate_does_not_halve_the_game() {
+    let emu = spawn();
+    std::thread::sleep(Duration::from_millis(100));
+    let before = emu.published_count();
+    let began = Instant::now();
+    let mut next = began;
+    while began.elapsed() < Duration::from_secs(1) {
+        next += Duration::from_micros(33_600);
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+        emu.kick();
+    }
+    let ran = emu.published_count() - before;
+    assert!(ran >= 45, "{ran} frames in a second of kicks at 30 Hz");
+}
+
+/// In step, then the kicks stop (the display went to the shelf, say): the game carries on at its
+/// own speed rather than waiting on kicks that are not coming.
+#[test]
+fn kicks_that_stop_leave_the_game_on_its_own_clock() {
+    let emu = spawn();
+    let mut next = Instant::now();
+    for _ in 0..60 {
+        next += Duration::from_micros(16_800);
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+        emu.kick();
+    }
+    let before = emu.published_count();
+    std::thread::sleep(Duration::from_secs(1));
+    let ran = emu.published_count() - before;
+    assert!(
+        (50..=70).contains(&ran),
+        "{ran} frames in a second without kicks"
+    );
+}
+
 /// The display kicks and waits for the frame the kick asked for, so it can draw it in the same
 /// refresh; with nothing coming the wait gives up at its timeout instead of holding the display.
 #[test]
@@ -1137,4 +1217,131 @@ fn the_display_can_wait_for_the_frame_it_kicked_for() {
     let began = Instant::now();
     assert!(!emu.wait_published(since, Duration::from_millis(30)));
     assert!(began.elapsed() >= Duration::from_millis(30));
+}
+
+/// A packet the core produced between two sessions must not open the next one.
+///
+/// `netpacket_send` (slot-retro's `libretro.rs`) pushes whatever the core hands it onto the
+/// outbound queue without asking whether a session is running, and `RetroCore::stop_link` is a
+/// no-op for a core that registered no `stop` — libretro documents that callback as OPTIONAL —
+/// so a core that goes on believing a session is live goes on producing traffic for it. The
+/// ending's own `Link::clear` empties the queues on the way out; without the matching clear on
+/// the way in, anything produced *after* that lands here and is handed to the next peer as its
+/// first traffic, which is the same failure the ending's clear exists to prevent, on the other
+/// side of the same seam.
+///
+/// Pushed directly rather than through a core, for the same reason
+/// `ending_a_link_clears_stale_packets_for_the_next_session` does: `MockCore` has no session of
+/// its own to keep believing in.
+#[test]
+fn beginning_a_link_clears_what_the_last_session_left_behind() {
+    let emu = spawn();
+    let (_here, there) = paired_links();
+    emu.begin_link(0, Box::new(there));
+    assert!(wait_for(|| emu.net().is_active()), "begin_link never took");
+
+    emu.end_link();
+    assert!(wait_for(|| !emu.net().is_active()), "end_link never took");
+
+    // The core still talking to a session that has already ended. Ordered before the command
+    // below and applied on the same thread in the order it was sent, so this is genuinely
+    // waiting in the queue when the next session begins rather than racing it there.
+    emu.net()
+        .push_outbound(b"the core did not hear the session end".to_vec());
+    emu.net().push_inbound(b"and neither did this".to_vec());
+
+    let (mut here, there) = paired_links();
+    emu.begin_link(1, Box::new(there));
+    assert!(
+        wait_for(|| emu.net().is_active()),
+        "the second begin_link never took"
+    );
+    // Several presents, so anything the worker was going to flush has had every chance to.
+    std::thread::sleep(Duration::from_millis(100));
+
+    assert_eq!(
+        here.try_recv(),
+        None,
+        "the last session's traffic opened this one, to a peer that never asked for it"
+    );
+    assert_eq!(
+        emu.net().take_inbound(),
+        None,
+        "a packet from before this session was waiting for its core"
+    );
+}
+
+/// An ending asked for in the same present the cart leaves the slot in still reaches the wire.
+///
+/// `stop` is only read at the top of the worker's loop, so a command sent while a present is
+/// running sits in the channel until the next pass — and if the handle is dropped in between,
+/// that pass never comes and the receiver goes with it. `Cmd::EndLink` is the single seam every
+/// ending passes through and its whole job is to say goodbye before the wire goes: lost here,
+/// the peer learns of a deliberate ending from a FIN and the other player is told they were
+/// abandoned instead.
+///
+/// Forced rather than raced. The core holds the worker inside one `run_frame` for long enough
+/// that the ending and the drop provably land in the same present, which is the interleaving
+/// this is about — timing it against a mock frame that costs nothing would be a coin toss.
+#[test]
+fn an_ending_asked_for_in_the_last_present_still_reaches_the_peer() {
+    struct Bye {
+        order: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl LinkChannel for Bye {
+        fn send(&mut self, _flags: i32, _buf: &[u8]) {}
+        fn try_recv(&mut self) -> Option<Vec<u8>> {
+            None
+        }
+        fn send_end(&mut self) {
+            self.order.lock().expect("order").push("bye");
+        }
+    }
+    impl Drop for Bye {
+        fn drop(&mut self) {
+            self.order.lock().expect("order").push("drop");
+        }
+    }
+
+    let (emu, _log) = spawn_probe(Duration::from_millis(400));
+    emu.set_speed(Speed::Normal);
+    let order = Arc::new(Mutex::new(Vec::new()));
+    emu.begin_link(
+        0,
+        Box::new(Bye {
+            order: order.clone(),
+        }),
+    );
+    // Observed at most a couple of milliseconds after the command was applied, which is the
+    // top of a present whose frame then holds the worker for the next 400 ms — so everything
+    // below lands inside that one present.
+    assert!(wait_for(|| emu.net().is_active()), "begin_link never took");
+
+    emu.end_link();
+    drop(emu);
+
+    assert_eq!(
+        *order.lock().expect("order"),
+        vec!["bye", "drop"],
+        "the cart leaving took the goodbye with it: the peer was never told the link ended"
+    );
+}
+
+/// The same seam, for the other command a caller cannot go without. A flush that asks for the
+/// player's state in the present the cart leaves in gets a closed channel and writes nothing,
+/// which is their position lost — so the worker answers what is still queued before it goes.
+#[test]
+fn a_state_asked_for_in_the_last_present_is_still_answered() {
+    let (emu, _log) = spawn_probe(Duration::from_millis(400));
+    emu.set_speed(Speed::Normal);
+    // Far enough in that the worker is inside a frame rather than at the top of its loop.
+    std::thread::sleep(Duration::from_millis(100));
+
+    let state = emu.request_state();
+    drop(emu);
+
+    assert!(
+        state.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "a flush racing the cart out of the slot was never answered"
+    );
 }

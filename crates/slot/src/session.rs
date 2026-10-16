@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use slot_input::{Action, Gestures, Millis, RawEvent};
 use slot_retro::Rumble;
@@ -16,6 +16,10 @@ use crate::persist;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
+/// How long the motor keeps running after the core last asked for it: long enough to ride
+/// through the frames between a game's pulses, short enough that a stop is still felt as one.
+pub const RUMBLE_HOLD_MS: Millis = 100;
+
 pub struct Session {
     root: PathBuf,
     app: App,
@@ -30,6 +34,10 @@ pub struct Session {
     /// What the motor was last set to. On the device that setting is a write to hardware and
     /// the core asks for the same value most frames.
     motor: u16,
+    /// The last rumble the core asked for and when. A core sets its motor per frame and lets
+    /// go between, so short gaps in what it asks for are held across rather than chattering
+    /// the motor off and on. See `RUMBLE_HOLD_MS`.
+    pulse: Option<(Millis, u16)>,
     /// A reload for a link is underway: the core in the slot was spawned for it, and `App` is
     /// waiting to hear whether it loaded. See `reload_for_link`.
     reloading: bool,
@@ -55,6 +63,7 @@ impl Session {
             rewinding: false,
             fast: false,
             motor: 0,
+            pulse: None,
             reloading: false,
             greeting_pcm: None,
         }
@@ -337,6 +346,9 @@ impl Session {
 
     pub fn update(&mut self, dt: f32) {
         self.bridge_link(|app| app.update(dt));
+        if let Some(emu) = &self.emu {
+            emu.set_volume(self.app.output_volume());
+        }
         // The wire a link that just came up runs over. `App` holds a session's own
         // bookkeeping and never a transport (see `App::link`), so this is the hop that
         // carries one to the emulator thread — the mirror of `bridge_link`'s own hop for the
@@ -344,7 +356,13 @@ impl Session {
         // a frame the game is running again.
         if let Some((client_id, transport)) = self.app.take_link_transport() {
             match &self.emu {
-                Some(emu) => emu.begin_link(client_id, transport),
+                // Which route carries it is decided by whether a port was loaded for: the cable
+                // is the only one that opens the core in link mode, so `link_player` is the one
+                // thing that can tell the two apart by the time the wire arrives.
+                Some(emu) => match self.app.link_player() {
+                    Some(player) => emu.begin_cable(player, transport),
+                    None => emu.begin_link(client_id, transport),
+                },
                 // No core to carry it. Dropping the transport closes the socket, which is
                 // the only honest thing to do with a session that has nowhere to run.
                 None => eprintln!("slot: link: a transport arrived with no core to run it"),
@@ -367,7 +385,9 @@ impl Session {
         // wraps. That timeout stays underneath this for every ending nobody could send word
         // about: a crash, a flat battery, an SP carried out of range.
         if self.app.link_active() {
-            if self.emu.as_ref().is_some_and(EmuHandle::peer_ended) {
+            if self.emu.as_ref().is_some_and(EmuHandle::bios_mismatch) {
+                self.bridge_link(|app| app.bios_mismatch());
+            } else if self.emu.as_ref().is_some_and(EmuHandle::peer_ended) {
                 self.bridge_link(|app| app.peer_ended());
             } else if self.emu.as_ref().is_some_and(EmuHandle::link_lost) {
                 self.app.peer_lost();
@@ -398,8 +418,19 @@ impl Session {
     /// rumble being off in the quick menu: the game rumbles on as far as the emulator knows, and
     /// the motor is only ever told 0.
     fn sync_rumble(&mut self) {
-        let want = match &self.emu {
+        let asked = match &self.emu {
             Some(emu) if self.playing() && self.app.rumble_enabled() => emu.rumble().strength(),
+            _ => {
+                self.pulse = None;
+                return self.rumble(0);
+            }
+        };
+        let now = self.app.now();
+        if asked > 0 {
+            self.pulse = Some((now, asked));
+        }
+        let want = match self.pulse {
+            Some((at, strength)) if now.saturating_sub(at) < RUMBLE_HOLD_MS => strength,
             _ => 0,
         };
         self.rumble(want);
@@ -491,27 +522,22 @@ impl Session {
 
     /// The switcher pauses the game rather than dimming a live one. Paused publishes no
     /// frames, so the compositor keeps showing the last one behind the cards.
-    /// The frontend has shown a frame and fed the buttons for the next one: the core runs its
-    /// next present now. See `EmuHandle::kick`.
-    pub fn kick(&self) {
-        if let Some(emu) = &self.emu {
-            emu.kick();
-        }
-    }
-
     /// Kicks the core and waits, at most `timeout`, for the frame it makes from the buttons just
-    /// fed, so the display can draw that frame in this refresh. Answers how long the wait took,
-    /// or `None` when there is no running core to wait on: on the shelf, or while it is paused,
-    /// it publishes nothing, and waiting would only waste the refresh.
-    pub fn kick_and_wait(&self, timeout: Duration) -> Option<Duration> {
-        let emu = self.emu.as_ref()?;
+    /// fed, so the display can draw that frame in this refresh. Answers whether it came; false
+    /// too when there is no running core to wait on: on the shelf, or while it is paused, it
+    /// publishes nothing, and waiting would only waste the refresh.
+    pub fn kick_and_wait(&self, timeout: Duration) -> bool {
+        let Some(emu) = &self.emu else { return false };
         let since = emu.published_count();
         emu.kick();
         if emu.observed_speed() == Speed::Paused {
-            return None;
+            return false;
         }
-        let began = Instant::now();
-        emu.wait_published(since, timeout).then(|| began.elapsed())
+        let came = emu.wait_published(since, timeout);
+        if !came {
+            crate::latency::missed();
+        }
+        came
     }
 
     fn sync_speed(&self) {
@@ -676,22 +702,32 @@ impl Session {
         // all. The quick menu that sets it is only ever open on the shelf, with the core already
         // dropped, so the cart going in now is always the first to see a change made there — the
         // same way `sync_speed` picks up the fast forward settings.
-        let opened = open_core(&self.root, core, serial, self.app.colour_correction());
+        let player = self.app.link_player();
+        let opened = open_core(
+            &self.root,
+            core,
+            serial,
+            self.app.colour_correction(),
+            player,
+        );
         // Whether the emulator about to run is the one the state directory is named after.
         // Only this line knows: everything downstream sees a `Box<dyn RetroCore>` that looks
         // the same either way. `App` needs it because it is about to be told whether the core
         // refused the resume above, and a refusal from the mock standing in for a missing dylib
         // means something entirely different from a refusal by the cart's own core.
         self.app.set_named_core(opened.named);
-        let emu = EmuHandle::spawn(
-            opened.core,
-            rom,
-            self.sink.ring(),
-            persist::read_sav(&self.root, platform, stem),
-            resume,
-        );
+        let sav = persist::read_sav(&self.root, platform, stem);
+        let ring = self.sink.ring();
+        // Game Boy link mode keeps no link state: only a GBA pair is wrapped and unwrapped.
+        let emu = match player.filter(|_| platform == Platform::Gba) {
+            Some(p) => EmuHandle::spawn_linked(opened.core, rom, ring, sav, resume, p),
+            None => EmuHandle::spawn(opened.core, rom, ring, sav, resume),
+        };
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
+        // L2 never rewinds on this build (see `Gestures::down`), so a rewind trail is a
+        // serialize every other present that nothing can ever read back.
+        emu.set_rewind_recording(false);
         // PICO-8 saves by asking another process, far too slowly for every frame.
         emu.set_history(core != Core::Pico8);
         self.app.set_snapshot(Box::new(emu.snapshot()));

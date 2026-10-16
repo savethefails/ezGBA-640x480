@@ -14,14 +14,17 @@ pub struct Cart {
     pub stem: String,
     pub rom: PathBuf,
     pub label: Option<PathBuf>,
-    /// A full-panel picture for this cart, shown behind the shelf while it is selected.
-    /// Same lookup as `label` but under `Backdrops`, and just as optional: most carts
-    /// will not have one, and the shelf falls back to its ordinary random wallpaper.
-    pub backdrop: Option<PathBuf>,
+    /// A picture of this cart's box (or its title screen, or anything else), shown above the
+    /// shelf while it is selected. Same lookup as `label` but under `Images`, and just as
+    /// optional: most carts will not have one, and the space above the row stays empty.
+    pub box_art: Option<PathBuf>,
     pub title: String,
     /// The four character header game code, empty when the rom has none. A Game Boy cart has
     /// no equivalent field, so this is always empty for `Platform::Gb` and `Platform::Gbc`.
     pub code: String,
+    /// The shell the player chose for this cart in `cart_shell.ini`, or `None` for the one the
+    /// built-in table picks. See `cart_shell`.
+    pub shell: Option<crate::ShellChoice>,
 }
 
 #[derive(Debug)]
@@ -48,17 +51,36 @@ impl From<std::io::Error> for StoreError {
 /// An unmounted card or a card with no library is an empty shelf, not a boot failure — and so
 /// is a platform folder that does not exist, which is the normal state of a card with no
 /// Colour carts.
+///
+/// A platform folder that exists and cannot be read is not a boot failure either, and this is
+/// the one place that has to decide that. The only caller is `App::boot`, which does
+/// `scan(root).unwrap_or_default()` — so an `Err` out of here is not an error message anywhere,
+/// it is every cart on the card gone from the shelf. One folder being unreadable says nothing
+/// about the other two, exactly as `migrate_platforms` already argues at length for the sweeps,
+/// so a folder that will not open costs the player that folder and nothing else. Same for a
+/// single directory entry that will not stat: it costs that one cart.
 pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
+    let read = |file: &str| std::fs::read_to_string(root.join(file)).unwrap_or_default();
+    let shells = crate::cart_shell::layered(
+        &read(crate::CART_SHELL_FILE),
+        &read(crate::LABELS_SHELL_FILE),
+    );
     let mut carts = Vec::new();
     for platform in Platform::ALL {
         let dir = root.join("Games").join(platform.dir_name());
         let entries = match std::fs::read_dir(&dir) {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                eprintln!("slot: scan: {}: {e}", dir.display());
+                continue;
+            }
         };
         for entry in entries {
-            let rom = entry?.path();
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let rom = entry.path();
             // The folder decides the platform; the extension decides whether this is a cart at
             // all. A `.gba` under `GB/` is neither, and is passed over in silence.
             if is_hidden(&rom) || !rom.is_file() || !platform.accepts(&rom) {
@@ -71,8 +93,8 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 .join("Labels")
                 .join(platform.dir_name())
                 .join(format!("{stem}.png"));
-            let backdrop = root
-                .join("Backdrops")
+            let box_art = root
+                .join("Images")
                 .join(platform.dir_name())
                 .join(format!("{stem}.png"));
             let (title, code) = match platform {
@@ -108,13 +130,51 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 title,
                 code,
                 label,
-                backdrop: backdrop.is_file().then_some(backdrop),
+                box_art: box_art.is_file().then_some(box_art),
+                shell: shells.get(&crate::cart_shell::key(stem)).copied(),
                 rom,
             });
         }
     }
-    carts.sort_by(|a, b| (a.platform as u8, &a.stem).cmp(&(b.platform as u8, &b.stem)));
+    carts.sort_by(|a, b| {
+        (a.platform as u8, sort_key(&a.stem)).cmp(&(b.platform as u8, sort_key(&b.stem)))
+    });
     Ok(carts)
+}
+
+/// Where a title files on the shelf: digits first, then A to Z, and case ignored.
+///
+/// Plain byte order put `apple` after `Zebra`, because every lowercase letter sorts above every
+/// uppercase one, so a card's row depended on how its files happened to be capitalised.
+///
+/// The group runs ahead of the text rather than being folded into it, so that one digit-led title
+/// cannot land between two letters however it is spelled, and anything led by neither, a bracket
+/// or a quote, files after both rather than silently first.
+pub fn sort_key(stem: &str) -> (u8, String) {
+    (group_of(stem), stem.to_uppercase())
+}
+
+fn group_of(stem: &str) -> u8 {
+    match stem.chars().find(|c| !c.is_whitespace()) {
+        Some(c) if c.is_ascii_digit() => 0,
+        Some(c) if c.is_alphabetic() => 1,
+        _ => 2,
+    }
+}
+
+/// The letter a title is filed under, for skipping a row a letter at a time. Every digit-led
+/// title shares one bucket, and so does everything led by neither a digit nor a letter: a row of
+/// thirty carts has few enough of either that giving each its own stop would be a stop that moves
+/// by one, which is what the shoulder buttons are already for.
+pub fn initial(stem: &str) -> char {
+    match group_of(stem) {
+        1 => stem
+            .chars()
+            .find(|c| !c.is_whitespace())
+            .and_then(|c| c.to_uppercase().next())
+            .unwrap_or('#'),
+        _ => '#',
+    }
 }
 
 /// A leading dot is card metadata rather than content, and every folder on the card is read

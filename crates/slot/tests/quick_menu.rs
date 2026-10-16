@@ -158,7 +158,7 @@ fn a_menu_press_on_the_shelf_opens_and_closes_the_menu() {
 #[test]
 fn the_arrows_change_nothing_on_a_row_that_opens() {
     let (d, mut a, _) = on_carousel();
-    let before = std::fs::read(d.path().join("System/slot.state")).expect("read slot.state");
+    let before = std::fs::read(d.path().join("Config/slot.state")).expect("read slot.state");
     for row in [QuickRow::DateTime, QuickRow::About] {
         open_at(&mut a, row);
         press(&mut a, Btn::Left);
@@ -167,7 +167,7 @@ fn the_arrows_change_nothing_on_a_row_that_opens() {
         a.apply(Action::QuickMenu);
     }
     assert_eq!(
-        std::fs::read(d.path().join("System/slot.state")).expect("read slot.state"),
+        std::fs::read(d.path().join("Config/slot.state")).expect("read slot.state"),
         before,
         "an arrow on a row that opens wrote the card"
     );
@@ -419,7 +419,7 @@ fn on_carousel_with_theme(theme: &str) -> (TempDir, App) {
         },
     )
     .expect("write slot.state");
-    std::fs::write(d.path().join("System/theme.txt"), theme).expect("write theme.txt");
+    std::fs::write(d.path().join("Config/theme.txt"), theme).expect("write theme.txt");
     let (a, _) = app_booting_at(d.path(), CLOCK_IS_SET);
     (d, a)
 }
@@ -451,7 +451,7 @@ fn the_look_rows_show_what_theme_txt_says() {
 #[test]
 fn the_arrows_change_the_look_and_write_it_to_theme_txt() {
     let (d, mut a) = on_carousel_with_theme("# my card\nscrim #112233\ngrid on\n");
-    let theme = || std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    let theme = || std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap();
 
     open_at(&mut a, QuickRow::Picture);
     press(&mut a, Btn::Right);
@@ -582,7 +582,7 @@ fn the_run_ahead_row_steps_and_is_kept_on_the_card() {
         press(&mut a, Btn::Right);
     }
     assert_eq!(a.quick_value(QuickRow::RunAhead), Some(QuickValue::Ahead2));
-    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    let theme = std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap();
     assert_eq!(theme, "runahead 2\n");
     assert_eq!(slot_store::Theme::read(d.path()).runahead, Some(2));
 }
@@ -613,7 +613,7 @@ fn the_scaler_and_sharpness_rows_step_and_are_kept_on_the_card() {
         Some(QuickValue::Sharp05)
     );
     press(&mut a, Btn::Right);
-    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    let theme = std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap();
     assert_eq!(theme, "sharpness 1.0\nscaler shimmerless\n");
     let again = slot_store::Theme::read(d.path());
     assert_eq!(again.sharpness, 1.0);
@@ -635,7 +635,7 @@ fn the_snes_picture_row_chooses_whole_rows_or_4_3() {
         a.quick_value(QuickRow::SnesPicture),
         Some(QuickValue::FourThree)
     );
-    let theme = std::fs::read_to_string(d.path().join("System/theme.txt")).unwrap();
+    let theme = std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap();
     assert_eq!(theme, "snes-picture 4:3\n");
     assert_eq!(
         slot_store::Theme::read(d.path()).snes_picture,

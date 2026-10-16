@@ -83,12 +83,10 @@ fn the_hud_draws_a_dark_plate_behind_itself() {
 
 #[test]
 fn muted_volume_uses_the_muted_icon() {
-    // Turned down to nothing, silenced, and neither: three states and three glyphs. Zero and
-    // muted draw the same empty bar, so the glyph is the only thing carrying the difference.
-    assert_eq!(HudKind::Volume.icon(0, false), Icon::VolumeZero);
-    assert_eq!(HudKind::Volume.icon(0, true), Icon::VolumeMuted);
-    assert_eq!(HudKind::Volume.icon(40, true), Icon::VolumeMuted);
-    assert_eq!(HudKind::Volume.icon(40, false), Icon::Volume);
+    assert_eq!(HudKind::Volume.icon(0, false, false), Icon::VolumeZero);
+    assert_eq!(HudKind::Volume.icon(0, true, false), Icon::VolumeMuted);
+    assert_eq!(HudKind::Volume.icon(40, true, false), Icon::VolumeMuted);
+    assert_eq!(HudKind::Volume.icon(40, false, false), Icon::Volume);
 }
 
 #[test]
@@ -253,4 +251,12 @@ fn the_link_badge_outranks_fast_forward() {
         })
         .collect();
     assert_eq!(texes, vec![TexId::from_raw(903)]);
+}
+
+#[test]
+fn volume_on_headphones_shows_headphones() {
+    assert_eq!(HudKind::Volume.icon(40, false, true), Icon::Headphones);
+    assert_eq!(HudKind::Volume.icon(0, false, true), Icon::Headphones);
+    assert_eq!(HudKind::Volume.icon(40, true, true), Icon::HeadphonesMuted);
+    assert_eq!(HudKind::Brightness.icon(4, false, true), Icon::Brightness);
 }

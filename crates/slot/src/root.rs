@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 ///
 /// Parents come before their children: `ensure` creates each in turn, and so does the test
 /// harness's own root.
-pub const DIRS: [&str; 18] = [
+pub const DIRS: [&str; 19] = [
     "BIOS",
     // Where the player's own PICO-8 goes: it is licensed, so it never ships on the card.
     "BIOS/pico8",
+    "Config",
     "Games",
     "Games/GBA",
     "Games/GB",
@@ -42,6 +43,10 @@ pub const DIRS: [&str; 18] = [
 pub fn ensure(root: &Path) {
     for sub in DIRS {
         let _ = std::fs::create_dir_all(root.join(sub));
+    }
+    // Before anything reads a setting: a card from before `Config/` has them in `System/`.
+    if let Err(e) = slot_store::move_config(root) {
+        eprintln!("slot: config: {e}");
     }
 }
 

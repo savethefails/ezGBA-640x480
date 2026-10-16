@@ -75,9 +75,13 @@ pub struct SlotState {
     pub brightness: u8,
     pub blue_light: u8,
     pub volume: u8,
+    /// Speaker and headphones keep their own level and their own silence, swapped in the
+    /// moment the jack changes. These are the headphones'.
+    pub volume_hp: u8,
     /// Silence on top of the level rather than instead of it, so unmuting gives back the
     /// number the user last chose.
     pub muted: bool,
+    pub muted_hp: bool,
     /// Whether anyone has ever confirmed the wall clock. The marker for slot's own first
     /// launch, and the one field a fresh card must read as false.
     pub clock_set: bool,
@@ -128,7 +132,9 @@ impl Default for SlotState {
             brightness: 5,
             blue_light: 0,
             volume: 60,
+            volume_hp: 60,
             muted: false,
+            muted_hp: false,
             clock_set: false,
             utc_offset_min: 0,
             rumble: true,
@@ -144,7 +150,7 @@ impl Default for SlotState {
 }
 
 fn state_path(root: &Path) -> PathBuf {
-    root.join("System").join("slot.state")
+    root.join(crate::CONFIG_DIR).join("slot.state")
 }
 
 pub fn read_slot_state(root: &Path) -> SlotState {
@@ -157,13 +163,15 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngreeted={}\nshelf_cart={}\nshelf_platform={}\nwallpaper={}\n",
+        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nvolume_hp={}\nmuted={}\nmuted_hp={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngreeted={}\nshelf_cart={}\nshelf_platform={}\nwallpaper={}\n",
         s.cart.as_deref().unwrap_or(""),
         s.cart_platform.map_or(String::new(), platform_key),
         s.brightness,
         s.blue_light,
         s.volume,
+        s.volume_hp,
         s.muted as u8,
+        s.muted_hp as u8,
         s.clock_set as u8,
         s.utc_offset_min,
         s.rumble as u8,
@@ -175,7 +183,12 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.shelf_platform.map_or(String::new(), platform_key),
         s.wallpaper.as_deref().unwrap_or(""),
     );
-    atomic_write(&state_path(root), text.as_bytes())
+    let path = state_path(root);
+    // `Config/` is new to cards from before it, and is not worth a lost cart over.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    atomic_write(&path, text.as_bytes())
 }
 
 /// The lines every build has written are all or nothing. A file missing one of those, or
@@ -192,7 +205,9 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut brightness = None;
     let mut blue_light = None;
     let mut volume = None;
+    let mut volume_hp = None;
     let mut muted = None;
+    let mut muted_hp = None;
     let mut clock_set = None;
     let mut utc_offset_min = None;
     let mut rumble = None;
@@ -213,7 +228,9 @@ fn parse(text: &str) -> Option<SlotState> {
             "brightness" => brightness = Some(level(value, BRIGHTNESS_MAX)?),
             "blue_light" => blue_light = Some(level(value, BLUE_LIGHT_MAX)?),
             "volume" => volume = Some(level(value, VOLUME_MAX)?),
+            "volume_hp" => volume_hp = Some(level(value, VOLUME_MAX)?),
             "muted" => muted = Some(level(value, 1)? == 1),
+            "muted_hp" => muted_hp = Some(level(value, 1)? == 1),
             "clock_set" => clock_set = Some(level(value, 1)? == 1),
             "utc_offset_min" => utc_offset_min = Some(offset(value)?),
             "rumble" => rumble = flag(value),
@@ -241,7 +258,9 @@ fn parse(text: &str) -> Option<SlotState> {
         brightness: brightness?,
         blue_light: blue_light?,
         volume: volume?,
+        volume_hp: volume_hp.or(volume)?,
         muted: muted?,
+        muted_hp: muted_hp.or(muted)?,
         clock_set: clock_set?,
         utc_offset_min: utc_offset_min?,
         rumble: rumble.unwrap_or(fallback.rumble),

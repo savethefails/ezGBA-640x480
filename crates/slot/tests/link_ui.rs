@@ -102,19 +102,21 @@ fn select_and_menu_open_the_link_screen_on_host() {
     assert!(matches!(app.phase(), Phase::Playing { .. }));
 }
 
-/// mGBA cannot link, so the screen stays shut, and the banner says what would open it.
+/// mGBA links by running both machines in step, so the screen opens on its own cable rather
+/// than sending the player to another core.
 #[test]
-fn the_link_screen_does_not_open_under_mgba_and_says_to_switch() {
+fn the_link_screen_opens_under_mgba_on_its_own_cable() {
     let (mut app, _d) = playing_on(Core::Mgba);
     app.apply(Action::GameMenu);
-    assert!(
-        !app.game_menu_open(),
-        "an mGBA cart was offered a link it cannot make"
+    assert_eq!(
+        app.game_menu(),
+        Some(GameMenu::Pick(LinkRow::Host)),
+        "mGBA did not offer the link it carries"
     );
     assert_eq!(
         app.toast(),
-        Some(slot_ui::Toast::NeedsGpsp),
-        "the press did nothing and said nothing"
+        None,
+        "it opened the screen and banished it too"
     );
 }
 
@@ -289,7 +291,7 @@ fn a_cancelled_link_says_nothing_and_returns_to_the_game() {
 fn a_link_that_comes_up_holds_linked_for_a_second_then_hands_the_game_back() {
     let (mut app, _d) = playing_on(Core::Gpsp);
     app.apply(Action::GameMenu);
-    let port = 45907;
+    let port = common::free_port();
     let far = std::thread::spawn(move || TcpLink::host("127.0.0.1", port).expect("host"));
     std::thread::sleep(Duration::from_millis(150));
     app.start_link(
@@ -338,7 +340,7 @@ fn a_link_that_comes_up_holds_linked_for_a_second_then_hands_the_game_back() {
 fn a_peer_lost_during_the_hold_closes_the_screen_and_breaks_the_badge() {
     let (mut app, _d) = playing_on(Core::Gpsp);
     app.apply(Action::GameMenu);
-    let port = 45912;
+    let port = common::free_port();
     let far = std::thread::spawn(move || TcpLink::host("127.0.0.1", port).expect("host"));
     std::thread::sleep(Duration::from_millis(150));
     app.start_link(
@@ -658,7 +660,7 @@ fn the_open_menu_pauses_the_game_underneath_it() {
 #[test]
 fn a_started_link_reaches_the_emulator_thread_with_its_transport() {
     let (mut s, _d, mut now) = session_playing_on_gpsp();
-    let port = 45911;
+    let port = common::free_port();
     let far = std::thread::spawn(move || TcpLink::host("127.0.0.1", port).expect("host"));
     std::thread::sleep(Duration::from_millis(150));
     s.app_mut().start_link(
@@ -719,7 +721,7 @@ fn a_button_the_menu_is_using_never_reaches_the_game() {
 #[test]
 fn a_dropped_peer_breaks_the_badge_and_ends_the_session_end_to_end() {
     let (mut s, _d, mut now) = session_playing_on_gpsp();
-    let port = 45913;
+    let port = common::free_port();
     let far = std::thread::spawn(move || TcpLink::host("127.0.0.1", port).expect("host"));
     std::thread::sleep(Duration::from_millis(150));
     s.app_mut().start_link(
@@ -794,7 +796,7 @@ fn a_dropped_peer_breaks_the_badge_and_ends_the_session_end_to_end() {
 #[test]
 fn a_peer_that_ends_the_link_ends_this_session_without_waiting_out_the_timeout() {
     let (mut s, _d, mut now) = session_playing_on_gpsp();
-    let port = 45914;
+    let port = common::free_port();
     let far = std::thread::spawn(move || TcpLink::host("127.0.0.1", port).expect("host"));
     std::thread::sleep(Duration::from_millis(150));
     s.app_mut().start_link(
@@ -1086,6 +1088,9 @@ fn select_on_pick_switches_the_hardware_and_the_cart_keeps_it() {
 /// reload and A starts the link exactly as it always has.
 #[test]
 fn a_in_the_mode_the_game_already_runs_starts_the_link_straight_away() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = playing_on(Core::Gpsp);
     app.apply(Action::GameMenu);
     app.apply(Action::GbaDown(Btn::Right));
@@ -1107,6 +1112,9 @@ fn a_in_the_mode_the_game_already_runs_starts_the_link_straight_away() {
 /// reload would bring a link up over a game still in the old mode.
 #[test]
 fn a_in_a_switched_mode_asks_for_the_game_to_reload_first() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     assert_eq!(
         app.take_link_reload(),
@@ -1148,6 +1156,9 @@ fn a_in_a_switched_mode_asks_for_the_game_to_reload_first() {
 /// from the step it has been showing since A rather than starting its animation again.
 #[test]
 fn the_reload_finishing_starts_the_link() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     let Some(GameMenu::Working { since, .. }) = app.game_menu() else {
         panic!("A did not start working: {:?}", app.game_menu());
@@ -1176,6 +1187,9 @@ fn the_reload_finishing_starts_the_link() {
 /// instead of linking, the way a cancelled start does.
 #[test]
 fn b_during_the_reload_hands_the_game_back_once_it_finishes() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     app.take_link_reload().expect("no reload asked for");
     app.apply(Action::GbaDown(Btn::B));
@@ -1197,6 +1211,9 @@ fn b_during_the_reload_hands_the_game_back_once_it_finishes() {
 /// choice with it, and the game is handed back with the shake every refusal gets.
 #[test]
 fn a_reload_that_fails_goes_back_to_the_mode_the_game_came_from() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     app.set_link_sprites(fake_link_sprites());
     assert_eq!(app.take_link_reload(), Some(("Emerald".to_string(), "rfu")));
@@ -1236,6 +1253,9 @@ fn a_reload_that_fails_goes_back_to_the_mode_the_game_came_from() {
 /// sitting seated with no core behind it.
 #[test]
 fn a_game_that_loads_in_neither_mode_comes_back_out_refused() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     app.take_link_reload().expect("no reload asked for");
     app.link_reload_failed();
@@ -1263,6 +1283,9 @@ fn a_game_that_loads_in_neither_mode_comes_back_out_refused() {
 /// seated cart with no core behind it.
 #[test]
 fn a_lid_shut_over_a_game_that_loads_in_neither_mode_opens_onto_the_shelf() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = switched_and_picked();
     app.take_link_reload().expect("no reload asked for");
     app.apply(Action::LidClose);
@@ -1287,6 +1310,9 @@ fn a_lid_shut_over_a_game_that_loads_in_neither_mode_opens_onto_the_shelf() {
 /// never runs. SELECT is refused with the shake, the adapter stays, and A links straight away.
 #[test]
 fn select_is_refused_where_gpsp_would_link_the_same_either_way() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let d = common::tmp_root_with_carts(&["Zzz"]);
     // "Mario Golf" sorts before "Zzz", so `Action::Insert` seats it.
     common::write_retail_header(&d, "Mario Golf", "MARIO GOLF", "BMGE");
@@ -1318,6 +1344,9 @@ fn select_is_refused_where_gpsp_would_link_the_same_either_way() {
 /// away, and has to be loaded again to link by cable.
 #[test]
 fn a_reloads_only_for_a_serial_the_core_was_not_loaded_with() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = playing_on(Core::Gpsp);
     app.set_link_loaded("rfu");
     app.apply(Action::GameMenu);
@@ -1372,6 +1401,9 @@ impl Snapshot for RefusedResume {
 /// stays on Pick, and the mode the game already runs still links.
 #[test]
 fn a_switch_is_refused_over_a_resume_the_core_would_not_take() {
+    // Only one test in this process may have a live link at a time: they all share the
+    // one port the product reads, so a host here and a joiner there connect to each other.
+    let _link = common::link_port_lock();
     let (mut app, _d) = playing_on(Core::Gpsp);
     app.set_snapshot(Box::new(RefusedResume));
     app.apply(Action::GameMenu);
@@ -1712,36 +1744,38 @@ fn a_cart_gpsp_carries_still_opens_the_link_screen() {
 /// a refusal they could not reach from here. The cart's own answer is the one that survives a
 /// switch, so it is the one the banner gives.
 #[test]
-fn a_cart_nothing_can_link_is_refused_whatever_core_is_selected() {
-    for core in [Core::Mgba, Core::Gpsp] {
+fn a_cart_gpsp_cannot_link_is_refused_on_gpsp_and_carried_by_mgbas_cable() {
+    let refused = |core, open: bool| {
         let d = common::tmp_root_with_carts(&["Apotris", "Zzz"]);
         common::write_retail_header(&d, "Apotris", "APOTRIS", "2ATE");
         let mut app = seated_on(&d, core);
         app.apply(Action::GameMenu);
-        assert!(
-            !app.game_menu_open(),
-            "{core:?} offered a link screen for a cart nothing can link"
-        );
         assert_eq!(
-            app.toast(),
-            Some(Toast::NoLink),
-            "{core:?} answered a cart nothing can link with the wrong banner"
+            app.game_menu_open(),
+            open,
+            "{core:?} answered Apotris with the wrong screen"
         );
-    }
+        app.toast()
+    };
+    // gpSP speaks named protocols and has none for this cart, so there is nothing to reach.
+    assert_eq!(refused(Core::Gpsp, false), Some(Toast::NoLink));
+    // mGBA does not speak the game's protocol at all; it runs both machines in step, which
+    // carries every cart, Apotris included.
+    assert_eq!(refused(Core::Mgba, true), None);
 }
 
 /// The other half of the order, and the half that keeps "switch to gpSP" worth saying: a cart
 /// gpSP really can link, sitting on mGBA, is still told which core would carry it. Without this
 /// the refusal above passes just as well with `Toast::NeedsGpsp` deleted outright.
 #[test]
-fn a_cart_gpsp_can_link_still_says_to_switch_to_it() {
+fn a_wireless_adapter_cart_on_mgba_still_says_to_switch_to_gpsp() {
     let d = common::tmp_root_with_carts(&["Emerald", "Zzz"]);
-    common::write_retail_header(&d, "Emerald", "POKEMON RUBY", "AXVE");
+    common::write_retail_header(&d, "Emerald", "POKEMON EMER", "BPEE");
     let mut app = seated_on(&d, Core::Mgba);
     app.apply(Action::GameMenu);
     assert!(
         !app.game_menu_open(),
-        "mGBA opened a link screen it has no netpacket interface for"
+        "mGBA offered a cable to a cart that talks to the Wireless Adapter"
     );
     assert_eq!(
         app.toast(),
@@ -1761,20 +1795,24 @@ fn a_cart_gpsp_can_link_still_says_to_switch_to_it() {
 /// Both cores, because neither is an excuse. The platform check sits ahead of the core check, so
 /// a device somehow sitting on gpSP with a Game Boy cart is refused the screen just the same.
 #[test]
-fn the_link_shortcut_on_a_game_boy_cart_says_no_link_support() {
-    for core in [Core::Mgba, Core::Gpsp] {
+fn a_game_boy_cart_links_on_mgba_and_is_refused_on_gpsp() {
+    for (core, open) in [(Core::Mgba, true), (Core::Gpsp, false)] {
         let d = common::tmp_root_with_gb_carts(&["Pokemon Red", "Zzz"]);
         let mut app = seated_on_platform(&d, core, Platform::Gb);
         app.apply(Action::GameMenu);
-        assert!(
-            !app.game_menu_open(),
-            "{core:?} offered a Game Boy cart a link screen"
+        assert_eq!(
+            app.game_menu_open(),
+            open,
+            "{core:?} answered a Game Boy cart with the wrong screen"
         );
         assert_ne!(
             app.toast(),
             Some(Toast::NeedsGpsp),
             "{core:?} told a Game Boy cart to switch to gpSP, which cannot run it at all"
         );
+        if open {
+            continue;
+        }
         assert_eq!(
             app.toast(),
             Some(Toast::NoLink),
@@ -1920,4 +1958,91 @@ fn the_shortcut_still_opens_the_screen_when_nothing_is_linked() {
     app.apply(Action::GameMenu);
     assert!(app.game_menu_open());
     assert_eq!(app.toast(), None);
+}
+
+/// A SNES cart on the card. `scan` reads the platform off the folder, so the bytes only have to
+/// be a file.
+fn snes_root(stems: &[&str]) -> TempDir {
+    let d = common::tmp_root();
+    for stem in stems {
+        let path = d.path().join(format!("Games/SNES/{stem}.sfc"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, vec![0u8; 0x8000]).unwrap();
+    }
+    d
+}
+
+/// A SNES game links as two pads on one console, the cable trading them every frame, so both
+/// SNES cores open the screen on the cable, and nothing in the banner sends the player elsewhere.
+#[test]
+fn a_snes_cart_opens_the_link_screen_on_either_snes_core() {
+    for core in [Core::Snes9x2005, Core::Snes9x] {
+        let d = snes_root(&["Super Bomberman", "Zzz"]);
+        let mut app = seated_on_platform(&d, core, Platform::Snes);
+        app.apply(Action::GameMenu);
+        assert_eq!(
+            app.game_menu(),
+            Some(GameMenu::Pick(LinkRow::Host)),
+            "{core:?} did not offer a SNES link"
+        );
+        assert_eq!(
+            app.toast(),
+            None,
+            "{core:?} raised a banner over the screen"
+        );
+        assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+    }
+}
+
+/// There is one route for a SNES link, so SELECT has nothing to switch to and the screen stays
+/// on the cable rather than drawing a Wireless Adapter the core has no use for.
+#[test]
+fn select_on_a_snes_link_screen_is_refused() {
+    let d = snes_root(&["Super Bomberman", "Zzz"]);
+    let mut app = seated_on_platform(&d, Core::Snes9x2005, Platform::Snes);
+    app.apply(Action::GameMenu);
+    select(&mut app);
+    assert!(app.refusal_active(app.now()), "SELECT was not refused");
+    assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+}
+
+/// mGBA's cable is its only route too: a Wireless Adapter on its screen is a mode it cannot run.
+#[test]
+fn select_on_an_mgba_link_screen_is_refused() {
+    let (mut app, _d) = playing_on(Core::Mgba);
+    app.set_link_sprites(fake_link_sprites());
+    app.apply(Action::GameMenu);
+    select(&mut app);
+    assert!(app.refusal_active(app.now()), "SELECT was not refused");
+    assert_eq!(drawn_hardware(&app), LinkKind::Cable);
+}
+
+/// A on a SNES screen starts the link straight away: no core option to load, so no reload. The
+/// role is the port this device plays, host on the first and joiner on the second, which is
+/// what sends the wire down the cable route when it arrives.
+#[test]
+fn a_on_a_snes_link_screen_starts_at_once_on_the_picked_port() {
+    let _link = common::link_port_lock();
+    for (row, port) in [(LinkRow::Host, 0u8), (LinkRow::Join, 1u8)] {
+        let d = snes_root(&["Super Bomberman", "Zzz"]);
+        let mut app = seated_on_platform(&d, Core::Snes9x2005, Platform::Snes);
+        app.apply(Action::GameMenu);
+        if row == LinkRow::Join {
+            app.apply(Action::GbaDown(Btn::Right));
+        }
+        app.apply(Action::GbaDown(Btn::A));
+        assert_eq!(
+            app.take_link_reload(),
+            None,
+            "{row:?}: a SNES link reloaded the game"
+        );
+        assert_eq!(
+            app.link_player(),
+            Some(port),
+            "{row:?} plays the wrong port"
+        );
+        assert!(reaches_waiting(&mut app), "{row:?}: A started no link");
+        app.apply(Action::GbaDown(Btn::B));
+        settle(&mut app);
+    }
 }

@@ -148,8 +148,7 @@ fn queue() -> &'static Sender<RadioJob> {
 /// fail a link: `ags-net link host` loads the driver itself if this did not.
 #[cfg(feature = "device")]
 fn run(sub: &str) -> bool {
-    std::process::Command::new("ags-net")
-        .arg("link")
+    ags_net()
         .arg(sub)
         .status()
         .is_ok_and(|status| status.success())
@@ -161,13 +160,9 @@ fn run(sub: &str) -> bool {
 /// it rather than waiting for a window the player has already given up on.
 #[cfg(feature = "device")]
 pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
-    let mut child = std::process::Command::new("ags-net")
-        .arg("link")
-        .arg(role.arg())
-        .spawn()
-        .map_err(|e| {
-            RadioFail::Radio(format!("ags-net link {} would not start: {e}", role.arg()))
-        })?;
+    let mut child = ags_net().arg(role.arg()).spawn().map_err(|e| {
+        RadioFail::Radio(format!("ags-net link {} would not start: {e}", role.arg()))
+    })?;
     loop {
         if cancel.is_cancelled() {
             let _ = child.kill();
@@ -201,10 +196,17 @@ pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
 /// it, and a teardown that can fail is a teardown callers skip.
 #[cfg(feature = "device")]
 pub fn down() {
-    let _ = std::process::Command::new("ags-net")
-        .arg("link")
-        .arg("down")
-        .status();
+    let _ = ags_net().arg("down").status();
+}
+
+/// `ags-net link`. BaseOS ships no `ags-net`, so ezGBA carries its own as `System/ags-net`, run
+/// by the shell because the card keeps no executable bit, and relative to the card's root
+/// because that is where BaseOS starts slot.
+#[cfg(feature = "device")]
+fn ags_net() -> std::process::Command {
+    let mut cmd = std::process::Command::new("/bin/sh");
+    cmd.args(["System/ags-net", "link"]);
+    cmd
 }
 
 /// No radio to bring up anywhere but the device, and nothing to shell out to. A host build

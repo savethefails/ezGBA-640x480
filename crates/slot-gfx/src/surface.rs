@@ -203,20 +203,17 @@ impl Tone {
     };
 }
 
-impl Default for Tone {
-    fn default() -> Self {
-        Tone::NEUTRAL
-    }
-}
-
 static TONE_GAMMA: AtomicU32 = AtomicU32::new(0x3f80_0000);
 static TONE_SATURATION: AtomicU32 = AtomicU32::new(0x3f80_0000);
 static TONE_CONTRAST: AtomicU32 = AtomicU32::new(0x3f80_0000);
 
 pub fn set_tone(tone: Tone) {
-    TONE_GAMMA.store(tone.gamma.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
-    TONE_SATURATION.store(tone.saturation.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
-    TONE_CONTRAST.store(tone.contrast.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
+    for v in [tone.gamma, tone.saturation, tone.contrast] {
+        assert!((0.5..=2.0).contains(&v), "tone out of range: {tone:?}");
+    }
+    TONE_GAMMA.store(tone.gamma.to_bits(), Ordering::Relaxed);
+    TONE_SATURATION.store(tone.saturation.to_bits(), Ordering::Relaxed);
+    TONE_CONTRAST.store(tone.contrast.to_bits(), Ordering::Relaxed);
 }
 
 pub fn tone() -> Tone {
@@ -314,11 +311,12 @@ pub fn set_fit(fit: Fit) {
 
 pub fn fit() -> Fit {
     match FIT.load(Ordering::Relaxed) {
+        0 => Fit::Gba,
         1 => Fit::Whole,
         2 => Fit::Aspect(f32::from_bits(FIT_ASPECT.load(Ordering::Relaxed))),
         3 => Fit::Fill,
         4 => Fit::Rows,
-        _ => Fit::Gba,
+        n => unreachable!("FIT {n}"),
     }
 }
 
@@ -337,6 +335,55 @@ pub fn source_size() -> (u32, u32) {
 /// game pass scales with Pixel AA or sharp-shimmerless (see `GAME_FRAG`).
 pub fn game_rect() -> (u32, u32, u32, u32) {
     fit().rect(source_size())
+}
+
+/// What the frame is drawn into: the composite's own 640x480, or a panel larger than it (the
+/// RG CubeXX's 720x720). On a larger panel the menus keep a 640x480 area in the middle, at
+/// `ui_origin`, and only the live game reaches past it. Set once, by the compositor.
+static CANVAS: AtomicU32 = AtomicU32::new((OUT_W << 16) | OUT_H);
+
+pub fn canvas() -> (u32, u32) {
+    let packed = CANVAS.load(Ordering::Relaxed);
+    (packed >> 16, packed & 0xffff)
+}
+
+pub(crate) fn set_canvas((w, h): (u32, u32)) {
+    assert!(
+        w >= OUT_W && h >= OUT_H,
+        "a {w}x{h} canvas cannot hold the composite"
+    );
+    CANVAS.store((w << 16) | h, Ordering::Relaxed);
+}
+
+/// Where the composite's 640x480 sits on the canvas, from its top left.
+pub fn ui_origin() -> (u32, u32) {
+    let (w, h) = canvas();
+    ((w - OUT_W) / 2, (h - OUT_H) / 2)
+}
+
+/// Where the live game goes on the canvas. On the composite's own size, its place in the
+/// composite. On a larger panel, the whole panel's: a SNES picture at its 8:7 as large as it
+/// fits, and anything else at the largest whole multiple of its frame, both centred. The
+/// picture settings are the 640x480 panel's, and are not asked here.
+pub fn live_rect() -> (u32, u32, u32, u32) {
+    let (cw, ch) = canvas();
+    if (cw, ch) == (OUT_W, OUT_H) {
+        return game_rect();
+    }
+    let centred = |w: u32, h: u32| ((cw - w) / 2, (ch - h) / 2, w, h);
+    match fit() {
+        // A square picture (PICO-8's) as the largest square there is. Every other shape is a
+        // SNES picture, which on such a panel is drawn at the console's own 8:7.
+        Fit::Aspect(1.0) => centred(cw.min(ch), cw.min(ch)),
+        Fit::Rows | Fit::Aspect(_) if cw * 7 <= ch * 8 => centred(cw, cw * 7 / 8),
+        Fit::Rows | Fit::Aspect(_) => centred(ch * 8 / 7, ch),
+        _ => {
+            let (w, h) = source_size();
+            let s = (cw / w).min(ch / h);
+            assert!(s > 0, "a {w}x{h} frame on a {cw}x{ch} panel");
+            centred(w * s, h * s)
+        }
+    }
 }
 
 #[derive(Debug)]

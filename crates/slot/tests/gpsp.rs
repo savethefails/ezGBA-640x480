@@ -504,6 +504,7 @@ fn a_gpsp_carts_resume_is_read_from_its_own_core_directory_through_the_session()
     // Past the autosave deadline, the cheapest way to get the core's own counter written
     // back out through the path the binary uses, same as `play.rs`'s `counter_after`.
     s.app_mut().tick_ms(60_000);
+    s.app_mut().settle_saves();
 
     let state = persist::read_resume(d.path(), Platform::Gba, Core::Gpsp, "Emerald")
         .expect("nothing resumed");
@@ -569,6 +570,7 @@ fn a_gpsp_cart_runs_the_dylib_planted_under_its_own_name_through_the_session() {
     // Past the autosave deadline, so the planted core's own (large, real) state is what
     // gets written back through the path the binary uses.
     s.app_mut().tick_ms(60_000);
+    s.app_mut().settle_saves();
 
     let state = persist::read_resume(d.path(), Platform::Gba, Core::Gpsp, "Emerald")
         .expect("nothing resumed");
@@ -619,6 +621,7 @@ fn changing_the_ini_mid_session_does_not_move_a_seated_carts_autosave() {
     std::fs::remove_file(d.path().join(SELECTED_CORE_FILE)).unwrap();
 
     s.app_mut().tick_ms(60_000);
+    s.app_mut().settle_saves();
 
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Gpsp, "Emerald")
@@ -774,7 +777,7 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
         .join(slot::core::dylib_name(Core::Gpsp));
     std::fs::copy(&mgba, &planted).expect("plant a dylib under gpSP's name");
 
-    let mut core = slot::core::open_core(d.path(), Core::Gpsp, "auto", false).core;
+    let mut core = slot::core::open_core(d.path(), Core::Gpsp, "auto", false, None).core;
     core.load(&d.path().join("Games/GBA/Probe.gba"))
         .expect("the planted core refused the test rom");
     core.run_frame(ButtonMask::default());

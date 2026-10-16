@@ -18,18 +18,14 @@ fn run(p: &mut Pacer, from: Instant, frames: u32, gap: Duration, work: Duration)
     t
 }
 
-#[test]
-fn nothing_to_wait_for_before_the_first_latch() {
-    assert_eq!(Pacer::new().wake_at(), None);
-}
-
 /// The work starts as late as it can and still finish before the next latch, with the margin.
 #[test]
 fn the_work_starts_late_in_the_refresh() {
-    let mut p = Pacer::new();
-    let last = run(&mut p, Instant::now(), 40, us(16_800), MS(8));
+    let now = Instant::now();
+    let mut p = Pacer::new(now);
+    let last = run(&mut p, now, 40, us(16_800), MS(8));
     assert_eq!(p.lead(), MS(8) + MARGIN);
-    let wake = p.wake_at().unwrap();
+    let wake = p.wake_at();
     let before_next = (last + p.period()) - wake;
     assert_eq!(before_next, MS(8) + MARGIN);
 }
@@ -38,8 +34,9 @@ fn the_work_starts_late_in_the_refresh() {
 /// about it.
 #[test]
 fn the_period_is_learnt_and_stalls_are_ignored() {
-    let mut p = Pacer::new();
-    let t = run(&mut p, Instant::now(), 200, us(16_900), MS(5));
+    let now = Instant::now();
+    let mut p = Pacer::new(now);
+    let t = run(&mut p, now, 200, us(16_900), MS(5));
     assert!(
         (p.period().as_micros() as i64 - 16_900).abs() < 20,
         "{:?}",
@@ -54,8 +51,9 @@ fn the_period_is_learnt_and_stalls_are_ignored() {
 /// One slow frame wakes the next half second early, and is then forgotten.
 #[test]
 fn a_slow_frame_is_forgotten() {
-    let mut p = Pacer::new();
-    let t = run(&mut p, Instant::now(), 40, us(16_800), MS(6));
+    let now = Instant::now();
+    let mut p = Pacer::new(now);
+    let t = run(&mut p, now, 40, us(16_800), MS(6));
     let t = run(&mut p, t, 1, us(16_800), MS(12));
     assert_eq!(p.lead(), MS(12) + MARGIN);
     run(&mut p, t, 32, us(16_800), MS(6));
@@ -65,7 +63,8 @@ fn a_slow_frame_is_forgotten() {
 /// Work that cannot fit in a refresh starts at once, which is how the loop always ran.
 #[test]
 fn work_longer_than_a_refresh_starts_at_once() {
-    let mut p = Pacer::new();
-    let last = run(&mut p, Instant::now(), 40, us(16_800), MS(20));
-    assert_eq!(p.wake_at(), Some(last));
+    let now = Instant::now();
+    let mut p = Pacer::new(now);
+    let last = run(&mut p, now, 40, us(16_800), MS(20));
+    assert_eq!(p.wake_at(), last);
 }

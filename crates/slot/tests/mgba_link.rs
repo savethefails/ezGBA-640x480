@@ -1172,3 +1172,199 @@ fn the_cable_is_plugged_in_after_a_load_and_after_a_restore() {
         "after a restore, player 1's GBA read what a lone GBA reads: no cable"
     );
 }
+
+/// The session's own state swap, which is how two devices come to simulate the same machine: a
+/// link-mode core serializes its pair, and another link-mode core loads it. On hardware this came
+/// back as `unserialize refused` with the whole 1,057,876 bytes across, so the question is whether
+/// the container is at fault or the core that received it was never in link mode.
+#[test]
+fn a_link_states_travels_between_two_link_mode_cores() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = rom("mgba-link-multiplayer.gba", multiplayer_rom());
+
+    let mut host = link_core(&dylib, 0);
+    host.load(&rom).expect("link mode refused the rom");
+    let state = host.serialize().expect("the host would not serialize");
+    assert!(
+        state.starts_with(b"SLK1"),
+        "the host produced something that is not a link state"
+    );
+    // One libretro core to a process, so the host goes before the joiner arrives.
+    drop(host);
+
+    let mut joiner = link_core(&dylib, 1);
+    joiner.load(&rom).expect("link mode refused the rom");
+    joiner
+        .unserialize(&state)
+        .expect("a link-mode core refused a link state from its own build");
+}
+
+/// And the failure the device saw, reproduced deliberately: a core that is *not* in link mode
+/// cannot take a link state, because it is expecting one GBA's worth and this is two.
+#[test]
+fn a_single_core_refuses_a_link_state() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = rom("mgba-link-multiplayer.gba", multiplayer_rom());
+
+    let mut host = link_core(&dylib, 0);
+    host.load(&rom).expect("link mode refused the rom");
+    let state = host.serialize().expect("the host would not serialize");
+    drop(host);
+
+    let mut single = single_core(&dylib);
+    single.load(&rom).expect("load");
+    assert!(
+        single.unserialize(&state).is_err(),
+        "a single GBA took a state holding two"
+    );
+}
+
+/// The swap against a real commercial cart with a real save, which is where it failed on
+/// hardware. `a_link_states_travels_between_two_link_mode_cores` proves the same thing on a
+/// synthetic rom; this proves the cart and its save are not what made the difference. The BIOS
+/// was, and `apply_link_options` pins it now.
+#[test]
+fn the_card_cart_link_state_travels_between_two_link_mode_cores() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let card = common::repo_root().join("sdcard/Games/GBA/Advance Wars.gba");
+    let sav = common::repo_root().join("sdcard/Saves/GBA/Advance Wars.sav");
+    if !card.exists() {
+        eprintln!("no card cart on this machine, skipping");
+        return;
+    }
+    let save = std::fs::read(&sav).ok();
+
+    let mut host = link_core(&dylib, 0);
+    host.load(&card).expect("link mode refused the cart");
+    if let Some(s) = &save {
+        host.load_save_ram(s)
+            .expect("the host refused its own save");
+    }
+    let state = host.serialize().expect("the host would not serialize");
+    eprintln!("host state {} bytes", state.len());
+    drop(host);
+
+    let mut joiner = link_core(&dylib, 1);
+    joiner.load(&card).expect("link mode refused the cart");
+    if let Some(s) = &save {
+        joiner
+            .load_save_ram(s)
+            .expect("the joiner refused its own save");
+    }
+    joiner
+        .unserialize(&state)
+        .expect("the joiner refused the host's link state");
+}
+
+/// Each device skips both the picture and the sound of the console it never shows, and the two
+/// devices skip *different* consoles. That is only safe if skipping cannot change the machine, so
+/// this asks the machine. Identical inputs from both sides have to leave byte-identical state, or
+/// two SPs would drift apart the moment a race started and no test below this one would notice.
+///
+/// It guards the audio skip as much as the video one: the mixing deliberately still runs, because
+/// `GBAAudioSerialize` carries `chA.samples` and `chB.samples`, and only the write into an output
+/// ring nobody drains is dropped. If that line ever moved to cover the mixing, this fails.
+#[test]
+fn skipping_the_peers_picture_and_sound_does_not_change_the_machine() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = rom("mgba-link-multiplayer.gba", multiplayer_rom());
+    let script = [
+        ButtonMask(ButtonMask::A),
+        ButtonMask(ButtonMask::B),
+        ButtonMask::default(),
+        ButtonMask(ButtonMask::A | ButtonMask::B),
+    ];
+
+    let run = |player: u8| {
+        let mut core = link_core(&dylib, player);
+        core.load(&rom).expect("link mode refused the rom");
+        for i in 0..240 {
+            core.run_frame_linked(script[i % script.len()], script[(i + 1) % script.len()]);
+        }
+        core.serialize().expect("no link state")
+    };
+
+    let as_host = run(0);
+    let as_joiner = run(1);
+    assert_eq!(
+        as_host.len(),
+        as_joiner.len(),
+        "the two ends produced link states of different sizes"
+    );
+    assert_eq!(
+        as_host, as_joiner,
+        "the two ends ran the same inputs to different machines: skipping the peer's picture is \
+         not state-safe, and two devices would drift apart in a race"
+    );
+}
+
+fn ready(emu: &slot::emu::EmuHandle) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while emu.state() == slot::emu::CoreState::Loading {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the core never settled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(emu.state(), slot::emu::CoreState::Ready);
+}
+
+/// Reloading a game into link mode keeps the player's progress rather than refusing it.
+#[test]
+fn a_link_mode_worker_resumes_a_one_gba_state() {
+    use slot::audio::AudioSink;
+    use slot::persist::Snapshot;
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = rom("mgba-link-resume.gba", common::gba_rom());
+    let one = single_state(&dylib, &rom, 30);
+
+    let emu = slot::emu::EmuHandle::spawn_linked(
+        Box::new(link_core(&dylib, 0)),
+        rom,
+        slot::audio::StubSink::new().ring(),
+        None,
+        Some(one),
+        0,
+    );
+    ready(&emu);
+    assert!(
+        emu.snapshot().resume_trusted(),
+        "link mode refused the one-GBA resume"
+    );
+}
+
+/// What a link-mode worker writes to the card is the local player's GBA, so the game resumes
+/// once it is loaded on its own again.
+#[test]
+fn a_link_mode_workers_state_resumes_on_a_single_core() {
+    use slot::audio::AudioSink;
+    use slot::persist::Snapshot;
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = rom("mgba-link-leave.gba", common::gba_rom());
+
+    let emu = slot::emu::EmuHandle::spawn_linked(
+        Box::new(link_core(&dylib, 1)),
+        rom.clone(),
+        slot::audio::StubSink::new().ring(),
+        None,
+        None,
+        1,
+    );
+    ready(&emu);
+    let state = emu.snapshot().state().expect("no state");
+    drop(emu);
+    assert_ne!(&state[..4], b"SLK1");
+
+    let mut single = single_core(&dylib);
+    single.load(&rom).expect("load");
+    single
+        .unserialize(&state)
+        .expect("a single GBA refused the link-mode worker's state");
+}

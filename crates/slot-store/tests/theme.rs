@@ -126,7 +126,7 @@ fn grid_depth_is_read_as_a_percentage() {
 #[test]
 fn write_theme_setting_changes_one_line_and_keeps_the_rest() {
     let d = tempfile::tempdir().unwrap();
-    let path = d.path().join("System/theme.txt");
+    let path = d.path().join("Config/theme.txt");
     let read = || std::fs::read_to_string(&path).unwrap();
 
     slot_store::write_theme_setting(d.path(), "grid", "lcd").unwrap();

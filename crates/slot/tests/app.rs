@@ -33,7 +33,8 @@ fn app_with_carts(stems: &[&str]) -> App {
                 stem: (*stem).to_string(),
                 rom: format!("Games/GBA/{stem}.gba").into(),
                 label: None,
-                backdrop: None,
+                box_art: None,
+                shell: None,
                 code: String::new(),
                 title: stem.to_uppercase(),
             })
@@ -343,7 +344,8 @@ fn app_with_platforms(carts: &[(Platform, &str)]) -> App {
                 )
                 .into(),
                 label: None,
-                backdrop: None,
+                box_art: None,
+                shell: None,
                 code: String::new(),
                 title: stem.to_uppercase(),
             })
@@ -2056,5 +2058,44 @@ fn a_cart_with_no_line_reads_as_actual_size() {
         s.app().fit(),
         GB_ACTUAL,
         "a cart with no line did not open at actual size"
+    );
+}
+
+fn slot_letter_alpha(a: &App, tex: TexId) -> f32 {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    out.iter()
+        .find_map(|d| match *d {
+            Draw::Tex { tex: t, alpha, .. } if t == tex => Some(alpha),
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
+/// Up and Down jump a letter along the row, and the letter shows faintly in the slot, then
+/// fades. Jumping to the letter already printed shows it again.
+#[test]
+fn a_letter_jump_shows_the_letter_in_the_slot_and_fades() {
+    let mut a = app_with_carts(&["Alpha", "Bravo"]);
+    let face = TexId::from_raw(77);
+    assert_eq!(a.slot_letter(), None, "a letter showed before any jump");
+
+    a.apply(Action::GbaDown(Btn::Down));
+    assert_eq!(a.slot_letter(), Some('B'));
+    a.set_slot_letter_face(face, 20);
+    a.update(1.0 / 60.0);
+    a.update(0.5);
+    assert!(slot_letter_alpha(&a, face) > 0.0, "the letter never showed");
+    a.update(5.0);
+    assert_eq!(slot_letter_alpha(&a, face), 0.0, "the letter never faded");
+
+    a.apply(Action::GbaDown(Btn::Left));
+    a.apply(Action::GbaDown(Btn::Down));
+    assert_eq!(a.slot_letter(), Some('B'));
+    a.update(1.0 / 60.0);
+    a.update(0.5);
+    assert!(
+        slot_letter_alpha(&a, face) > 0.0,
+        "jumping to the letter already printed did not show it again"
     );
 }

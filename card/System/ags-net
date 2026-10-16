@@ -1,0 +1,77 @@
+#!/bin/sh
+# `ags-net link host|join|warm|cool|down` for BaseOS, which ships the radio but not AGS-102's
+# helper. The host runs an open access point on channel 6 as 10.42.0.1, the joiner associates
+# as 10.42.0.2 (crates/slot/src/link_net.rs). BaseOS loads the driver and raises wlan0 at boot,
+# so warm only waits for it and cool leaves it: unloading is what its slow-reset radios fail on.
+# The joiner turns power saving off; the host, as the access point, never dozes.
+# Exit 3 is a joiner whose search found no host; anything else nonzero is the radio.
+set -u
+IF=wlan0
+SSID=ezgba-link
+FREQ=2437
+RUN=/run/ezgba-link
+
+[ "${1:-}" = link ] || { echo "usage: ags-net link host|join|warm|cool|down" >&2; exit 2; }
+
+# Waits up to ten seconds for wlan0, and `completed` up to `$1` tenths for the supplicant.
+iface() {
+	n=0
+	while [ ! -d /sys/class/net/$IF ]; do
+		[ $n -lt 100 ] || { echo "ags-net: no $IF" >&2; exit 1; }
+		sleep 0.1; n=$((n + 1))
+	done
+}
+completed() {
+	n=0
+	until wpa_cli -p $RUN -i $IF status 2>/dev/null | grep -qx wpa_state=COMPLETED; do
+		[ $n -lt "$1" ] || return 1
+		sleep 0.1; n=$((n + 1))
+	done
+}
+down() {
+	wpa_cli -p $RUN -i $IF terminate >/dev/null 2>&1
+	n=0
+	while [ -e $RUN/$IF ] && [ $n -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+	ip addr flush dev $IF 2>/dev/null
+}
+# $1 is the network block's mode (2 = access point, 0 = station), $2 the address to take.
+up() {
+	iface
+	down
+	rfkill unblock wifi 2>/dev/null
+	ip link set $IF up || exit 1
+	mkdir -p $RUN
+	cat > $RUN/conf <<CONF
+ctrl_interface=$RUN
+ap_scan=1
+network={
+	ssid="$SSID"
+	mode=$1
+	frequency=$FREQ
+	scan_freq=$FREQ
+	key_mgmt=NONE
+}
+CONF
+	wpa_supplicant -B -i $IF -D nl80211 -c $RUN/conf || exit 1
+}
+
+case "${2:-}" in
+	warm) iface ;;
+	cool) ;;
+	down) down ;;
+	host)
+		up 2
+		completed 50 || { down; echo "ags-net: access point did not start" >&2; exit 1; }
+		ip addr add 10.42.0.1/24 dev $IF || { down; exit 1; }
+		;;
+	join)
+		up 0
+		completed 300 || { down; exit 3; }
+		# A dozing station gets the host's packets only at its beacons, 100 ms apart, which is
+		# twice the cable's whole delay: every frame would wait on one. Not fatal, only slow.
+		wpa_cli -p $RUN -i $IF set ps 0 | grep -qx OK \
+			|| echo "ags-net: $IF would not stop power saving, expect stalls" >&2
+		ip addr add 10.42.0.2/24 dev $IF || { down; exit 1; }
+		;;
+	*) echo "usage: ags-net link host|join|warm|cool|down" >&2; exit 2 ;;
+esac

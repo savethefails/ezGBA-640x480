@@ -1,4 +1,5 @@
 mod art;
+pub use art::{contain, cover};
 mod backdrop;
 mod barcode;
 mod battery;
@@ -36,12 +37,12 @@ pub use board::{
     SLIDE_SHARE, SLIDE_UP, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 pub use cart::{
-    cart_box, cart_face, cart_shadow, clean_label, gb_cart_shadow, gb_label_panel, gb_shell_of,
-    label_colour, label_panel, label_tags, label_text, pico8_cart_shadow, snes_cart_shadow,
-    CartFace, CART_H, CART_W, GB_CART_H, GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y,
-    LABEL_H, LABEL_W, LABEL_X, LABEL_Y, PICO8_CART_H, PICO8_CART_W, PICO8_LABEL_H, PICO8_LABEL_W,
-    PICO8_LABEL_X, PICO8_LABEL_Y, SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W,
-    SNES_LABEL_X, SNES_LABEL_Y,
+    cart_box, cart_face, cart_face_with, cart_shadow, clean_label, gb_cart_shadow, gb_label_panel,
+    gb_shell_of, label_colour, label_panel, label_size, label_tags, label_text, mould_of,
+    pico8_cart_shadow, scale_label, snes_cart_shadow, CartFace, Mould, CART_H, CART_W, GB_CART_H,
+    GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
+    PICO8_CART_H, PICO8_CART_W, PICO8_LABEL_H, PICO8_LABEL_W, PICO8_LABEL_X, PICO8_LABEL_Y,
+    SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W, SNES_LABEL_X, SNES_LABEL_Y,
 };
 pub use clock::{clock_label, date_time_text, hhmm, set_clock_hint_face, ClockPicker, Field};
 pub use draw::{Draw, TexId, OUT_H, OUT_W};
@@ -69,15 +70,16 @@ pub use quick_menu::{
     QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 pub use refusal::Refusal;
-pub use shelf::{foot_y, rest_y, Shelf};
+pub use shelf::{box_art_at, box_art_space, foot_y, rest_y, BoxArt, Shelf};
 pub use shell::{
-    gba_shell_for, lookup_order_is_exact_then_family_then_default, shell_for, table_keys, Finish,
-    Shell, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, GB_CLEAR_SHELL,
+    gb_table_shells, gba_shell_for, lookup_order_is_exact_then_family_then_default, shell_for,
+    table_keys, Finish, Shell, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, GB_CLEAR_SHELL,
+    SNES_SHELL,
 };
 pub use silhouette::{gb_silhouette, silhouette, GbShell};
 pub use slot_chrome::{
-    draw_empty_slot, ease, edge, housing, opening, recess, scrim, set_theme, theme, SlotChrome,
-    ALERT_PX, LIP_H, MOUTH_H, MOUTH_W,
+    draw_empty_slot, draw_slot_name, ease, edge, housing, opening, recess, scrim, set_theme, theme,
+    SlotChrome, ALERT_PX, LIP_H, MOUTH_H, MOUTH_W,
 };
 pub use starting::{stamp_starting, PillAt};
 pub use sticker::{

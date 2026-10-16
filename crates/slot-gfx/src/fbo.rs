@@ -3,7 +3,9 @@ use crate::grade::blue_light_gain;
 use crate::pipeline::GamePass;
 use crate::quad::Quad;
 use crate::shaders::{BLIT_FRAG, BLIT_VERT};
-use crate::surface::{blit_is_whole, blit_rect, GfxError, Surface, OUT_H, OUT_W};
+use crate::surface::{
+    blit_is_whole, blit_rect, canvas, set_canvas, ui_origin, GfxError, Surface, OUT_H, OUT_W,
+};
 
 /// Backdrop behind everything drawn into the offscreen target. Distinct from the black
 /// letterbox so the blit rect is visible even with nothing else on screen.
@@ -28,12 +30,32 @@ pub struct Compositor {
 }
 
 impl Compositor {
+    /// Drawn at the composite's own 640x480, and presented at whatever whole multiple the
+    /// window holds.
     pub fn new(surface: &dyn Surface) -> Result<Self, GfxError> {
+        Self::with_canvas(surface, (OUT_W, OUT_H))
+    }
+
+    /// For a device's panel: a panel larger than the composite (the RG CubeXX's 720x720) is
+    /// drawn at its own size, the menus in the middle of it and the game placed against all of
+    /// it, and presented one to one. Any other panel is `new`.
+    pub fn for_panel(surface: &dyn Surface) -> Result<Self, GfxError> {
+        let (w, h) = surface.window_size();
+        let canvas = if w >= OUT_W && h >= OUT_H {
+            (w, h)
+        } else {
+            (OUT_W, OUT_H)
+        };
+        Self::with_canvas(surface, canvas)
+    }
+
+    fn with_canvas(surface: &dyn Surface, (cw, ch): (u32, u32)) -> Result<Self, GfxError> {
+        set_canvas((cw, ch));
         crate::gl::load(surface);
         let blit = crate::shaders::program(BLIT_VERT, BLIT_FRAG)?;
         // Nearest and clamped: at a whole multiple the blit is an integer multiply, never a
         // resample. `fit_to` switches it to linear for a smaller panel.
-        let tex = crate::gl::texture(OUT_W, OUT_H, gl::NEAREST, gl::CLAMP_TO_EDGE, gl::RGBA, None);
+        let tex = crate::gl::texture(cw, ch, gl::NEAREST, gl::CLAMP_TO_EDGE, gl::RGBA, None);
         unsafe {
             let mut fbo = 0;
             gl::GenFramebuffers(1, &mut fbo);
@@ -162,12 +184,13 @@ impl Compositor {
     pub fn read_frame(&self) -> Vec<u8> {
         let stride = OUT_W as usize * 4;
         let mut buf = vec![0u8; stride * OUT_H as usize];
+        let (ox, oy) = ui_origin();
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
             gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
             gl::ReadPixels(
-                0,
-                0,
+                ox as i32,
+                oy as i32,
                 OUT_W as i32,
                 OUT_H as i32,
                 gl::RGBA,
@@ -185,15 +208,22 @@ impl Compositor {
     pub fn begin_frame(&mut self) {
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
-            gl::Viewport(0, 0, OUT_W as i32, OUT_H as i32);
+            let (cw, ch) = canvas();
+            gl::Viewport(0, 0, cw as i32, ch as i32);
             gl::ClearColor(BACKDROP[0], BACKDROP[1], BACKDROP[2], BACKDROP[3]);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+            let (ox, oy) = ui_origin();
+            gl::Viewport(ox as i32, oy as i32, OUT_W as i32, OUT_H as i32);
         }
     }
 
     pub fn end_frame(&mut self, window: (u32, u32)) {
         self.fit_to(window);
-        let (x, y, w, h) = blit_rect(window, self.shake);
+        let (x, y, w, h) = match canvas() {
+            (OUT_W, OUT_H) => blit_rect(window, self.shake),
+            // The panel's own size, one to one.
+            (cw, ch) => (self.shake.round() as i32, 0, cw as i32, ch as i32),
+        };
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, window.0 as i32, window.1 as i32);

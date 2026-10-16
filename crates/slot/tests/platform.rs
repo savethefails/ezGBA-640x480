@@ -41,6 +41,7 @@ fn seat_and_autosave(root: &Path) {
     }
 
     s.app_mut().tick_ms(60_000);
+    s.app_mut().settle_saves();
 }
 
 /// The requirement Task 4 exists for, checked where it is actually decided: `session.rs` reads

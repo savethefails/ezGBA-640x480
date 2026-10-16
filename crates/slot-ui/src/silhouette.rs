@@ -15,6 +15,14 @@ const SNES_DETAIL_SVG: &str = include_str!("../assets/snes_cart_detail.svg");
 const PICO8_CART_SVG: &str = include_str!("../assets/pico8_cart.svg");
 const PICO8_DETAIL_SVG: &str = include_str!("../assets/pico8_cart_detail.svg");
 
+/// Moulded lettering, one greyscale mask a cart, at the size of the cart's own canvas: white is
+/// the raised letters. Slot's, which it rasterised from Gill Sans and Futura; cut to ezGBA's
+/// canvases rather than scaled to them, since the two outlines agree everywhere above the label
+/// and the lettering sits in the shoulder there.
+const GBA_LETTERING: &[u8] = include_bytes!("../assets/lettering_gba.png");
+const GB_LETTERING: &[u8] = include_bytes!("../assets/lettering_gb.png");
+const GBC_LETTERING: &[u8] = include_bytes!("../assets/lettering_gbc.png");
+
 /// Which of the two Game Pak shell moulds a cart came out of. Nintendo's typology names three
 /// classes and slot draws three plastics, but there are only two shells: a grey 0x00 pak and a
 /// black 0x80 pak share one mould, and a clear 0xc0 pak has its own. The arms are named for
@@ -141,8 +149,10 @@ impl Detail {
 pub(crate) fn detail_mask() -> &'static Detail {
     static MASK: OnceLock<Detail> = OnceLock::new();
     MASK.get_or_init(|| {
-        rasterise_detail(DETAIL_SVG, CART_W, CART_H)
-            .unwrap_or_else(|| Detail::blank(CART_W, CART_H))
+        let mut detail = rasterise_detail(DETAIL_SVG, CART_W, CART_H)
+            .unwrap_or_else(|| Detail::blank(CART_W, CART_H));
+        emboss(&mut detail, GBA_LETTERING, CART_W, CART_H);
+        detail
     })
 }
 
@@ -166,9 +176,64 @@ pub(crate) fn gb_detail_mask(shell: GbShell) -> &'static Detail {
         GbShell::Rounded => (&ROUNDED, GBC_DETAIL_SVG),
     };
     lock.get_or_init(|| {
-        rasterise_detail(svg, GB_CART_W, GB_CART_H)
-            .unwrap_or_else(|| Detail::blank(GB_CART_W, GB_CART_H))
+        let mut detail = rasterise_detail(svg, GB_CART_W, GB_CART_H)
+            .unwrap_or_else(|| Detail::blank(GB_CART_W, GB_CART_H));
+        let lettering = match shell {
+            GbShell::Notched => GB_LETTERING,
+            GbShell::Rounded => GBC_LETTERING,
+        };
+        emboss(&mut detail, lettering, GB_CART_W, GB_CART_H);
+        // The class C shoulder is smooth, but the plate the lettering sits on ends in one
+        // moulded step beneath it.
+        if shell == GbShell::Rounded {
+            let y = GBC_PLATE_STEP;
+            for x in GBC_PLATE_X.0..GBC_PLATE_X.1 {
+                detail.shadow[(y * GB_CART_W + x) as usize] = 200;
+                detail.highlight[((y + 1) * GB_CART_W + x) as usize] = 160;
+            }
+        }
+        detail
     })
+}
+
+/// Where the step under the class C lettering runs, in canvas pixels.
+const GBC_PLATE_STEP: u32 = 52;
+const GBC_PLATE_X: (u32, u32) = (72, 168);
+
+/// Raises `png`'s letters out of the shell: each letter is lit along its upper left and shaded
+/// along its lower right, which is how a moulded feature standing proud of the plastic reads
+/// with the light where every other feature has it. Nothing happens for a mask that will not
+/// decode or is not this canvas's size, which leaves the cart as it was without the letters.
+fn emboss(detail: &mut Detail, png: &[u8], w: u32, h: u32) {
+    let Some(mask) = decode_mask(png, w, h) else {
+        return;
+    };
+    let at = |x: i32, y: i32| -> u8 {
+        if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+            0
+        } else {
+            mask[(y as u32 * w + x as u32) as usize]
+        }
+    };
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let (here, before) = (at(x, y), at(x - 1, y - 1));
+            let i = (y as u32 * w + x as u32) as usize;
+            detail.highlight[i] = detail.highlight[i].saturating_add(here.saturating_sub(before));
+            detail.shadow[i] = detail.shadow[i].saturating_add(before.saturating_sub(here));
+        }
+    }
+}
+
+fn decode_mask(png: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let grey =
+        info.color_type == png::ColorType::Grayscale && info.bit_depth == png::BitDepth::Eight;
+    (grey && (info.width, info.height) == (w, h)).then(|| buf[..(w * h) as usize].to_vec())
 }
 
 /// The SNES Game Pak's outline, depth and moulding: one shell, so one of each.

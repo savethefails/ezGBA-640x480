@@ -167,14 +167,14 @@ fn without_a_picture_the_resume_is_unchanged() {
     );
 }
 
-/// The shelf boot has no picture to carry: it is drawn as it is.
+/// The shelf boot has no picture to carry, so handing it one is a bug.
 #[test]
+#[should_panic(expected = "a boot picture outside a resume")]
 fn a_boot_to_the_shelf_takes_no_picture() {
     let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
     let mut a = boot(d.path());
     assert!(!a.resuming_at_boot());
     a.set_boot_still(slot_gfx::TexId::from_raw(STILL));
-    assert!(!a.boot_still_up());
 }
 
 /// A resume that does not end in the game drops the picture and plays as it always did.

@@ -67,10 +67,12 @@ pub enum HudKind {
 impl HudKind {
     /// Silence is a state, not a low level: a bar at zero looks the same as a bar that has
     /// not been dragged down yet, so the glyph is what has to say it.
-    pub fn icon(self, value: u8, muted: bool) -> Icon {
+    pub fn icon(self, value: u8, muted: bool, headphones: bool) -> Icon {
         match self {
             HudKind::Brightness => Icon::Brightness,
             HudKind::BlueLight => Icon::BlueLight,
+            HudKind::Volume if headphones && muted => Icon::HeadphonesMuted,
+            HudKind::Volume if headphones => Icon::Headphones,
             HudKind::Volume if muted => Icon::VolumeMuted,
             HudKind::Volume if value == 0 => Icon::VolumeZero,
             HudKind::Volume => Icon::Volume,
@@ -168,6 +170,7 @@ pub struct Hud {
     /// Silenced rather than turned down. The bar is empty either way, so this is the only
     /// thing that can tell the two apart on screen.
     muted: bool,
+    headphones: bool,
     ff: FfState,
     /// The last thing the HUD said, and when. On its own clock rather than the bar's: the
     /// two are triggered by different actions and either can outlive the other.
@@ -230,7 +233,11 @@ impl Hud {
 
     /// The glyph on the bar, whether or not a face for it has been uploaded.
     pub fn glyph(&self) -> Icon {
-        self.kind.icon(self.value, self.muted)
+        self.kind.icon(self.value, self.muted, self.headphones)
+    }
+
+    pub fn set_headphones(&mut self, on: bool) {
+        self.headphones = on;
     }
 
     /// The fast-forward glyph, which is not the same question as what the badge is actually

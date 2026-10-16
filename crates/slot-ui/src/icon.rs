@@ -23,10 +23,12 @@ pub enum Icon {
     Rewind,
     Alert,
     Charging,
+    Headphones,
+    HeadphonesMuted,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 10] = [
+    pub const ALL: [Icon; 12] = [
         Icon::Volume,
         Icon::VolumeZero,
         Icon::VolumeMuted,
@@ -37,6 +39,8 @@ impl Icon {
         Icon::Rewind,
         Icon::Alert,
         Icon::Charging,
+        Icon::Headphones,
+        Icon::HeadphonesMuted,
     ];
 
     /// Position in `ALL`, which is the order faces are uploaded in. Sound only while `ALL` is
@@ -65,6 +69,8 @@ impl Icon {
             // Inside the capsule rather than beside it, so the gauge and the percent never
             // move when a cable goes in.
             Icon::Charging => '\u{f0e7}',
+            Icon::Headphones => '\u{f025}',
+            Icon::HeadphonesMuted => '\u{f07ce}',
         }
     }
 }

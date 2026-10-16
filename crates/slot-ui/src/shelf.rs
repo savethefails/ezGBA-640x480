@@ -1,7 +1,7 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::{Cart, Platform};
 
-use crate::cart::{cart_box, gb_shell_of, label_colour, label_text, CART_W};
+use crate::cart::{cart_box, label_colour, label_text, mould_of, Mould, CART_W};
 use crate::hud::Millis;
 use crate::silhouette::GbShell;
 use crate::slot_chrome::draw_empty_slot;
@@ -49,18 +49,62 @@ const SLOTS: i32 = 3;
 
 /// Before the first repeat. Long enough that a press meaning one cart cannot become two.
 const REPEAT_DELAY_MS: Millis = 400;
-/// Between repeats after that. Fast enough to cross a thirty cart library, slow enough to
-/// stop on one.
-const REPEAT_MS: Millis = 110;
+/// Between repeats, and they get shorter the longer a direction is held.
+///
+/// A single flat rate has to answer two questions with one number: fast enough to cross a long
+/// library, slow enough to stop on the cart you meant. Those pull opposite ways, and at thirty
+/// carts the flat 110 ms this used to be was the wrong answer to the first one. Holding longer
+/// is the signal that the player is travelling rather than choosing, so the rate reads it: the
+/// first repeats stay at the old 110 ms, where stopping on one cart is what matters, and a hold
+/// that keeps going winds down to 50 ms, which crosses thirty carts in about two seconds.
+///
+/// The last entry is the floor and repeats stay there for as long as the direction is held.
+/// Nothing here accelerates a *tap*: each press starts the sequence again from the top, so a
+/// row of deliberate single presses is paced exactly as it always was.
+const REPEAT_MS: [Millis; 4] = [110, 85, 65, 50];
+
+/// Box art keeps this far from the top of the screen and from the sides.
+const BOX_ART_MARGIN: f32 = 8.0;
+const BOX_ART_SIDE: f32 = 16.0;
+/// And this far above the top of the selected cart, so the two read as separate objects.
+const BOX_ART_GAP: f32 = 10.0;
+
+/// The space box art has over a selected cart of `platform` on a row lowered by `lower`: from
+/// just under the top of the screen to just over the cart, the width of the screen less its
+/// sides, as `(x, y, w, h)`. A Game Boy pak stands taller than a GBA cart, so it leaves less.
+pub fn box_art_space(platform: Platform, lower: f32) -> (f32, f32, f32, f32) {
+    let (_, ch) = cart_box(platform);
+    let cart_top = rest_y(ch as f32) + lower;
+    let h = (cart_top - BOX_ART_GAP - BOX_ART_MARGIN).max(1.0);
+    (
+        BOX_ART_SIDE,
+        BOX_ART_MARGIN,
+        OUT_W as f32 - 2.0 * BOX_ART_SIDE,
+        h,
+    )
+}
+
+/// Art of `w` by `h`, scaled to fit `space`, centred in it, as `(x, y)`.
+pub fn box_art_at(space: (f32, f32, f32, f32), w: u32, h: u32) -> (f32, f32) {
+    let (x, y, sw, sh) = space;
+    (
+        (x + (sw - w as f32) / 2.0).round(),
+        (y + (sh - h as f32) / 2.0).round(),
+    )
+}
+
+/// A cart's box art on the GPU, and the size it was scaled to.
+pub type BoxArt = (TexId, u32, u32);
 
 pub struct Shelf {
     pub carts: Vec<Cart>,
     pub index: usize,
     pub scroll: f32,
     faces: Vec<TexId>,
-    /// One background per cart, in the same order as `carts`. `None` where a cart has
-    /// no dedicated backdrop of its own, which falls back to the ordinary random one.
-    backdrops: Vec<Option<TexId>>,
+    /// One picture per cart, in the same order as `carts`, with the size it was scaled to.
+    /// `None` where a cart has no box art, and for one that has but is not loaded: only those
+    /// around the selection are.
+    box_art: Vec<Option<BoxArt>>,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture per *mould* rather
     /// than one for the row: a row can hold GBA carts or Game Boy paks, the two Game Pak shells
     /// differ at their top corners, and all three are different objects. Backing of the wrong
@@ -71,29 +115,31 @@ pub struct Shelf {
     gbc_shadow: Option<TexId>,
     snes_shadow: Option<TexId>,
     pico8_shadow: Option<TexId>,
-    /// Which mould each cart in `carts` came out of, `None` for a GBA cart. Worked out once
-    /// here because the answer is in the rom's header: asking it while drawing would open a
-    /// file on every cart of every frame.
-    shells: Vec<Option<GbShell>>,
+    /// Which mould each cart in `carts` came out of. Worked out once here because the answer is
+    /// in the rom's header: asking it while drawing would open a file on every cart of every
+    /// frame.
+    moulds: Vec<Mould>,
     /// The presses added up, in the same continuous coordinate `scroll` lives in, so it counts
     /// laps rather than wrapping. This is what the spring aims at — see `scroll_target` — because
     /// it is the only thing that remembers which button was pressed once the row has wrapped.
     ride: f32,
     vel: f32,
-    /// The direction being held and when it next repeats. Repeat lives here rather than in
-    /// the gesture layer so nothing in game starts auto firing.
-    held: Option<(i32, Millis)>,
+    /// The direction being held, when it next repeats, and how many repeats it has already
+    /// fired. Repeat lives here rather than in the gesture layer so nothing in game starts auto
+    /// firing, and the count lives with it because the rate is a function of how long this one
+    /// hold has been going: a new press resets it, which is what keeps taps unaccelerated.
+    held: Option<(i32, Millis, usize)>,
 }
 
 impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
-            shells: carts.iter().map(gb_shell_of).collect(),
+            moulds: carts.iter().map(mould_of).collect(),
+            box_art: vec![None; carts.len()],
             carts,
             index: 0,
             scroll: 0.0,
             faces: Vec::new(),
-            backdrops: Vec::new(),
             shadow: None,
             gb_shadow: None,
             gbc_shadow: None,
@@ -145,13 +191,28 @@ impl Shelf {
         self.faces = faces;
     }
 
-    pub fn set_backdrops(&mut self, backdrops: Vec<Option<TexId>>) {
-        self.backdrops = backdrops;
+    /// Hands cart `i` its box art, and back the texture it had, if any.
+    pub fn set_box_art(&mut self, i: usize, art: BoxArt) -> Option<TexId> {
+        self.box_art
+            .get_mut(i)
+            .and_then(|b| b.replace(art))
+            .map(|(tex, _, _)| tex)
     }
 
-    /// The backdrop for whichever cart is currently selected, if it has one of its own.
-    pub fn current_backdrop(&self) -> Option<TexId> {
-        self.backdrops.get(self.index).copied().flatten()
+    pub fn take_box_art(&mut self, i: usize) -> Option<TexId> {
+        self.box_art
+            .get_mut(i)
+            .and_then(Option::take)
+            .map(|(tex, _, _)| tex)
+    }
+
+    pub fn box_art(&self, i: usize) -> Option<BoxArt> {
+        self.box_art.get(i).copied().flatten()
+    }
+
+    /// The box art for whichever cart is currently selected, if it is loaded.
+    pub fn current_box_art(&self) -> Option<BoxArt> {
+        self.box_art(self.index)
     }
 
     /// In `hints` order.
@@ -176,6 +237,88 @@ impl Shelf {
         self.step(1);
     }
 
+    /// Up and Down: to the first cart of the next letter, or the previous one.
+    ///
+    /// The row is a ring, so the last letter's Down reaches the first letter by carrying on
+    /// forwards rather than by turning round, and the first letter's Up reaches the last the same
+    /// way. That costs a long slide once round a big row, which is the honest picture of what the
+    /// press asked for; turning round instead would show the row travelling one way while the
+    /// player pressed the other.
+    ///
+    /// Up goes to the *start* of the previous letter rather than to the cart before this one, so
+    /// a row stopped halfway through the Ms lands on the first M rather than stepping back into
+    /// the Ls. Pressed again from there it does reach the Ls, because by then it is already at
+    /// the letter's start.
+    pub fn jump_next_letter(&mut self) {
+        self.jump(1);
+    }
+
+    pub fn jump_prev_letter(&mut self) {
+        self.jump(-1);
+    }
+
+    /// The first cart of the letter `from` is filed under.
+    fn start_of_letter(&self, from: usize) -> usize {
+        let n = self.carts.len();
+        let letter = slot_store::initial(&self.carts[from].stem);
+        let mut at = from;
+        for _ in 0..n {
+            let before = (at as i32 - 1).rem_euclid(n as i32) as usize;
+            if slot_store::initial(&self.carts[before].stem) != letter {
+                break;
+            }
+            at = before;
+        }
+        at
+    }
+
+    fn jump(&mut self, dir: i32) {
+        let n = self.carts.len();
+        if n < 2 {
+            return;
+        }
+        let wrap = |i: i32| i.rem_euclid(n as i32) as usize;
+        let here = slot_store::initial(&self.carts[self.index].stem);
+        // A row filed under one letter has nowhere to go, in either direction. Said once here
+        // rather than left to the walks below, which have no previous letter to find and would
+        // wander the ring looking for one.
+        if self
+            .carts
+            .iter()
+            .all(|c| slot_store::initial(&c.stem) == here)
+        {
+            return;
+        }
+        let target = match dir > 0 {
+            true => {
+                let mut at = self.index;
+                for _ in 0..n {
+                    at = wrap(at as i32 + 1);
+                    if slot_store::initial(&self.carts[at].stem) != here {
+                        break;
+                    }
+                }
+                at
+            }
+            false => {
+                let start = self.start_of_letter(self.index);
+                match start == self.index {
+                    true => self.start_of_letter(wrap(start as i32 - 1)),
+                    false => start,
+                }
+            }
+        };
+        // Signed the way the press asked, never the short way round, so the row is never seen
+        // travelling one way while the player is pressing the other.
+        let ahead = (target as i32 - self.index as i32).rem_euclid(n as i32);
+        let delta = match dir > 0 {
+            true => ahead,
+            false => ahead - n as i32,
+        };
+        self.index = target;
+        self.ride += delta as f32;
+    }
+
     pub fn hold_left(&mut self, now: Millis) {
         self.hold(-1, now);
     }
@@ -188,7 +331,7 @@ impl Shelf {
     /// rather than what it produces.
     fn hold(&mut self, by: i32, now: Millis) {
         self.step(by);
-        self.held = Some((by, now + REPEAT_DELAY_MS));
+        self.held = Some((by, now + REPEAT_DELAY_MS, 0));
     }
 
     pub fn release_left(&mut self) {
@@ -202,7 +345,7 @@ impl Shelf {
     /// Only the direction that is being held stops it. Letting go of the other one is a
     /// change of direction the shelf has already acted on.
     fn release(&mut self, by: i32) {
-        if matches!(self.held, Some((held, _)) if held == by) {
+        if matches!(self.held, Some((held, _, _)) if held == by) {
             self.held = None;
         }
     }
@@ -215,14 +358,18 @@ impl Shelf {
     /// Fires the repeat. Due from `now` rather than from the deadline it passed, so a frame
     /// the app was late for costs one cart instead of a burst of catching up.
     pub fn tick(&mut self, now: Millis) {
-        let Some((by, due)) = self.held else {
+        let Some((by, due, fired)) = self.held else {
             return;
         };
         if now < due {
             return;
         }
         self.step(by);
-        self.held = Some((by, now + REPEAT_MS));
+        // Due from `now` rather than from the deadline it passed, and at the rate this hold has
+        // wound down to. `fired` saturates on the last entry, so a long hold settles at the
+        // floor instead of ever reaching zero.
+        let rate = REPEAT_MS[fired.min(REPEAT_MS.len() - 1)];
+        self.held = Some((by, now + rate, fired + 1));
     }
 
     fn step(&mut self, by: i32) {
@@ -411,18 +558,18 @@ impl Shelf {
                 // pak's corners are not a class A/B pak's. See `cart::gb_cart_shadow`.
                 //
                 // Asked for rather than indexed, the way `faces` is asked for eighteen lines
-                // below and for the same reason: `carts` is public, `shells` is not, and a push
+                // below and for the same reason: `carts` is public, `moulds` is not, and a push
                 // through the public field would leave this one entry short. Indexed, that is a
                 // panic inside the draw loop — on the device a black screen and a dead handset,
                 // with no message anywhere — for a row that would otherwise have drawn. A cart
                 // whose mould was never recorded gets the straight sided backing, which is the
                 // same degrading a cart whose face was never uploaded already gets.
-                let backing = match self.shells.get(i).copied().flatten() {
-                    None if cart.platform == Platform::Snes => self.snes_shadow,
-                    None if cart.platform == Platform::Pico8 => self.pico8_shadow,
-                    None => self.shadow,
-                    Some(GbShell::Notched) => self.gb_shadow,
-                    Some(GbShell::Rounded) => self.gbc_shadow,
+                let backing = match self.moulds.get(i).copied() {
+                    None | Some(Mould::Gba) => self.shadow,
+                    Some(Mould::Gb(GbShell::Notched)) => self.gb_shadow,
+                    Some(Mould::Gb(GbShell::Rounded)) => self.gbc_shadow,
+                    Some(Mould::Snes) => self.snes_shadow,
+                    Some(Mould::Pico8) => self.pico8_shadow,
                 };
                 if let Some(tex) = backing {
                     out.push(Draw::Tex {

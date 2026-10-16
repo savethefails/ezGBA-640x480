@@ -1,7 +1,10 @@
 pub mod app;
+pub mod art_cache;
 pub mod audio;
 pub mod boot_picture;
+pub mod box_art;
 pub mod build_info;
+pub mod cable;
 pub mod core;
 pub mod core_picker;
 pub mod drc;
@@ -17,6 +20,7 @@ pub mod link_net;
 pub mod link_radio;
 pub mod link_screen;
 pub mod link_start;
+pub mod link_state;
 pub mod pacer;
 pub mod persist;
 pub mod resample;

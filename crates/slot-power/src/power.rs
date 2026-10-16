@@ -42,6 +42,10 @@ impl Power {
         self.platform.charge()
     }
 
+    pub fn headphones(&self) -> bool {
+        self.platform.headphones()
+    }
+
     pub fn set_led(&mut self, state: LedState) {
         self.platform.set_led(state)
     }

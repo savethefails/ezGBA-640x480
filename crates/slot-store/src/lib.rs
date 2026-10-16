@@ -1,4 +1,6 @@
 mod atomic;
+pub mod cart_shell;
+mod config;
 mod core;
 pub mod gb;
 mod gba;
@@ -8,16 +10,19 @@ mod platform;
 mod ring;
 mod scan;
 mod slot_state;
+pub mod snes;
 mod stamp;
 mod theme;
 
 pub use atomic::atomic_write;
+pub use cart_shell::{Outline, ShellChoice, ShellFinish, CART_SHELL_FILE, LABELS_SHELL_FILE};
+pub use config::{move_config, CONFIG_DIR};
 pub use core::{core_for, read_selected_cores, write_selected_core, Core, SELECTED_CORE_FILE};
 pub use gba::{header_clean, header_code, header_title};
 pub use migrate::{migrate_platforms, migrate_states, MigrationReport};
 pub use platform::Platform;
 pub use ring::{StateEntry, StateRing, RING_MAX};
-pub use scan::{is_hidden, scan, Cart, StoreError};
+pub use scan::{initial, is_hidden, scan, sort_key, Cart, StoreError};
 pub use slot_state::{
     read_slot_state, write_slot_state, SlotState, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS,
     FF_SPEED_DEFAULT, UTC_OFFSET_MAX, UTC_OFFSET_MIN, VOLUME_MAX,
@@ -27,5 +32,5 @@ pub use stamp::{
 };
 pub use theme::{
     write_theme_setting, Aspect, BootPicture, ColourDepth, LcdGrid, Scaling, SnesPicture, Theme,
-    THEME_FILE,
+    Word, THEME_FILE,
 };

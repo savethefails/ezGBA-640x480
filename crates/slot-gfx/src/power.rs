@@ -47,7 +47,7 @@ pub fn screen_brightness(t: f32) -> f32 {
 /// The rect the game layer fills, in offscreen pixels: the game area, collapsing about its
 /// own centre. The line is at the vertical middle of the picture, not at the slot.
 pub fn screen_rect(t: f32) -> (f32, f32, f32, f32) {
-    screen_rect_in(game_rect(), t)
+    screen_rect_in(crate::surface::live_rect(), t)
 }
 
 /// The same collapse about any rect: a still's, which is placed from its own size.

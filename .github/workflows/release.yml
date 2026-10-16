@@ -76,6 +76,12 @@ jobs:
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
           file "$out/System/snes9x_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
+          test -f "$out/System/ags-net"
+          file "$out/System/pico8_libretro.so" | grep -q aarch64
+          test -f "$out/System/pico8/p8ss.so"
+          test -f "$out/System/pico8/lib/libSDL2-2.0.so.0"
+          # PICO-8 itself is the player's own copy and is licensed: it never ships.
+          test -z "$(find "$out" -name 'pico8_64' -o -name 'pico8_dyn' -o -name 'pico8.dat')"
           # snes9x's terms: its licence and copyright notice beside every copy.
           test -f "$out/System/licenses/snes9x-LICENSE.txt"
           # GPL-2.0 section 3(a): the release does not ship without gpSP's corresponding

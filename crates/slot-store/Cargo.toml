@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

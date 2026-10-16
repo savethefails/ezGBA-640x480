@@ -8,12 +8,12 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart,
     ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing,
-    Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, ClockPicker, Draw,
-    FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
+    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, ClockPicker,
+    Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
     QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast,
     BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
     SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
@@ -65,6 +65,12 @@ const POWER_OFF_S: f32 = 0.16;
 const VOLUME_STEP: u8 = 5;
 
 /// Crash insurance, and the only durable write that happens with the game still running.
+/// The letter a jump along the row lands on, shown faintly in the slot: in, held, then out.
+const SLOT_LETTER_IN_MS: Millis = 200;
+const SLOT_LETTER_HOLD_MS: Millis = 1200;
+const SLOT_LETTER_OUT_MS: Millis = 800;
+const SLOT_LETTER_ALPHA: f32 = 0.4;
+
 const AUTOSAVE_MS: Millis = 60_000;
 
 /// A dead battery is a far likelier hard cutoff than anyone holding POWER for eight
@@ -79,6 +85,7 @@ const BATTERY_POLL_MS: Millis = 10_000;
 /// a cable goes in. Ten seconds of a stale bolt on screen, and a stale colour on the LED, is
 /// worse than the read costs — `status` is a short string, far cheaper than the pair.
 const CHARGE_POLL_MS: Millis = 1_000;
+const HEADPHONES_POLL_MS: Millis = 500;
 
 /// Below this the LED goes red. Well clear of `BATTERY_CRITICAL`, since it is a warning with
 /// time to act on it rather than a cutoff.
@@ -130,12 +137,11 @@ const LID_SHADOW_ALPHA: f32 = 0.8;
 
 /// How far the row is pushed down from its old dead-centre rest position, everywhere
 /// the row is drawn: the idle shelf, the core picker, and the insert/eject travel all
-/// pass this same constant. A full-height backdrop and a full-height row used to share
-/// the same middle of the screen, which put the row directly over whatever a box art
-/// backdrop shows there - usually its own title. Passing it everywhere rather than only
-/// on the shelf is what stops the row snapping to a different height the instant a cart
-/// goes in or comes back out.
-const SHELF_ROW_LOWER: f32 = 100.0;
+/// pass this same constant. Lowered, it leaves the top of the screen to the selected cart's
+/// box art (see `box_art`), which is fitted to the space this leaves. Passing it everywhere
+/// rather than only on the shelf is what stops the row snapping to a different height the
+/// instant a cart goes in or comes back out.
+pub const SHELF_ROW_LOWER: f32 = 100.0;
 /// The longest the cart stands on the shelf waiting for its faces before it opens anyway, so a
 /// face that never comes cannot freeze the picker. A fast scroll can leave the worker still
 /// finishing the cart it was already building before it starts on this one, so the cap has to
@@ -546,6 +552,9 @@ pub struct App {
     /// exactly the way `snapshot` is — both are set together and neither is cleared on eject —
     /// which is safe because every reader of either is gated on a cart actually being seated.
     core: Core,
+    /// Which port this device drives once a cable session is loaded for, and `None` whenever the
+    /// seated core is not being opened for one. Read by `Session::spawn_core`.
+    link_player: Option<u8>,
     /// The seated cart's `Platform`, resolved and stored the same way and in the same breath as
     /// `core` — see `set_platform`. Saves and states are filed under it, so a `.gb` and a `.gba`
     /// cart sharing a stem never share a save or a ring either.
@@ -614,6 +623,11 @@ pub struct App {
     /// is what replaced the banner that used to name the shelf over the carts.
     mark_faces: Vec<TexId>,
     shelf_clock: slot_ui::Printed,
+    /// The letter the last jump along the row landed on, its face once the frontend has made
+    /// one, and when that face went up, which is what the fade is timed from.
+    slot_letter: Option<char>,
+    slot_letter_face: slot_ui::Printed,
+    slot_letter_since: Option<Millis>,
     hud: Hud,
     /// How far up the game layer's own screen is. Not a phase: it outlives the insert, since
     /// the cart is home and the chrome is still on screen while the picture arrives.
@@ -630,8 +644,13 @@ pub struct App {
     /// When the state next has to be on the card. Moved by every resume write, not only by
     /// the autosave itself.
     autosave_at: Millis,
+    /// The autosave being written on its own thread, joined before anything else writes the
+    /// resume or the device goes down. See `autosave`.
+    pending_save: Option<std::thread::JoinHandle<()>>,
     battery_at: Millis,
     charge_at: Millis,
+    headphones: bool,
+    headphones_at: Millis,
     /// The last full reading, with its charge half kept current by the fast tick. One
     /// snapshot rather than two values, so nothing on screen can show a percent and a bolt
     /// that never coexisted.
@@ -661,10 +680,11 @@ pub struct App {
 /// a card holding one console's games has always done. The platform beside it names nothing
 /// but the list's shape.
 fn shelves_of(mut carts: Vec<Cart>) -> Vec<(Platform, Shelf)> {
+    // `sort_key`'s order, which is what `Shelf`'s letter jumps step through: digits, then A to Z
+    // with case ignored, then anything led by neither.
     carts.sort_by(|a, b| {
-        a.stem
-            .to_lowercase()
-            .cmp(&b.stem.to_lowercase())
+        slot_store::sort_key(&a.stem)
+            .cmp(&slot_store::sort_key(&b.stem))
             .then(a.stem.cmp(&b.stem))
             .then((a.platform as u8).cmp(&(b.platform as u8)))
     });
@@ -725,6 +745,7 @@ impl App {
             vol_before: Vec::new(),
             snapshot: None,
             core: Core::default(),
+            link_player: None,
             platform: Platform::default(),
             named_core: false,
             video_mode: VideoMode::default(),
@@ -748,6 +769,9 @@ impl App {
             bolt: None,
             mark_faces: Vec::new(),
             shelf_clock: slot_ui::Printed::default(),
+            slot_letter: None,
+            slot_letter_face: slot_ui::Printed::default(),
+            slot_letter_since: None,
             hud: Hud::new(),
             screen: 0.0,
             game_ready: false,
@@ -755,8 +779,11 @@ impl App {
             power: None,
             dozed_at: 0,
             autosave_at: AUTOSAVE_MS,
+            pending_save: None,
             battery_at: BATTERY_POLL_MS,
             charge_at: CHARGE_POLL_MS,
+            headphones: false,
+            headphones_at: 0,
             battery: None,
             last_led: None,
             powering_off: false,
@@ -772,18 +799,7 @@ impl App {
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
         let theme = Theme::read(root);
-        let look = Look {
-            picture: theme.picture,
-            grid: theme.grid,
-            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
-            runahead: theme.runahead.unwrap_or(RUNAHEAD),
-            scaler: theme.scaler,
-            sharpness: theme.sharpness,
-            snes_picture: theme.snes_picture,
-            colour_depth: theme.colour_depth,
-            colour_custom: theme.colour_custom,
-            snes_core: theme.snes_core,
-        };
+        let look = Look::from(&theme);
         look.apply();
         slot_ui::set_theme(theme);
         let mut app = App::new(scan(root).unwrap_or_default());
@@ -855,6 +871,54 @@ impl App {
 
     /// The carousel on screen. Every shelf keeps its own place, so this is only ever "the one
     /// being looked at": nothing may take it for "the library", which is `carts`.
+    /// Up or Down on the shelf: a letter along the row, with the letter it lands on shown in the
+    /// slot. Nothing is shown for a jump that went nowhere.
+    fn jump_letter(&mut self, dir: i32) {
+        let before = self.shelf().index;
+        match dir > 0 {
+            true => self.shelf_mut().jump_next_letter(),
+            false => self.shelf_mut().jump_prev_letter(),
+        }
+        if self.shelf().index == before {
+            return;
+        }
+        let Some(letter) = self.selected_stem().map(slot_store::initial) else {
+            return;
+        };
+        if self.slot_letter != Some(letter) {
+            self.slot_letter_face = slot_ui::Printed::default();
+        }
+        self.slot_letter = Some(letter);
+        // Restarted from the face going up, or now if the face is already the right letter.
+        self.slot_letter_since = self.slot_letter_face.face.map(|_| self.now());
+    }
+
+    /// The letter the slot should show, for the frontend to make a face of.
+    pub fn slot_letter(&self) -> Option<char> {
+        self.slot_letter
+    }
+
+    pub fn set_slot_letter_face(&mut self, face: TexId, w: u32) {
+        self.slot_letter_face = slot_ui::Printed::new(face, w);
+        self.slot_letter_since = Some(self.now());
+    }
+
+    fn slot_letter_alpha(&self) -> f32 {
+        let Some(at) = self.slot_letter_since else {
+            return 0.0;
+        };
+        let t = self.now().saturating_sub(at);
+        let level = if t < SLOT_LETTER_IN_MS {
+            t as f32 / SLOT_LETTER_IN_MS as f32
+        } else if t < SLOT_LETTER_IN_MS + SLOT_LETTER_HOLD_MS {
+            1.0
+        } else {
+            let out = t - SLOT_LETTER_IN_MS - SLOT_LETTER_HOLD_MS;
+            1.0 - (out as f32 / SLOT_LETTER_OUT_MS as f32).min(1.0)
+        };
+        SLOT_LETTER_ALPHA * ease(level)
+    }
+
     fn shelf(&self) -> &Shelf {
         &self.shelves[self.shelf_at].1
     }
@@ -1020,7 +1084,8 @@ impl App {
             QuickRow::RunAhead => Some(match self.look.runahead {
                 0 => QuickValue::Off,
                 1 => QuickValue::Ahead1,
-                _ => QuickValue::Ahead2,
+                2 => QuickValue::Ahead2,
+                n => unreachable!("run-ahead {n}"),
             }),
             QuickRow::ColourDepth => Some(match self.look.colour_depth {
                 ColourDepth::Off => QuickValue::Off,
@@ -1030,7 +1095,8 @@ impl App {
             }),
             QuickRow::SnesCore => Some(match self.look.snes_core {
                 Core::Snes9x => QuickValue::Snes9x,
-                _ => QuickValue::Snes9x2005,
+                Core::Snes9x2005 => QuickValue::Snes9x2005,
+                c => unreachable!("SNES emulator {c:?}"),
             }),
             QuickRow::DateTime | QuickRow::About => None,
         }
@@ -1104,12 +1170,6 @@ impl App {
     /// The wallpaper the last session showed, for a boot that opens on its picture.
     pub fn remembered_wallpaper(&self) -> Option<&str> {
         self.state.wallpaper.as_deref()
-    }
-
-    /// Whether this boot carries the bootloader's picture over: the shelf or the game it
-    /// shows is what slot opens on.
-    pub fn boot_picture_carried(&self) -> bool {
-        self.backlight_held()
     }
 
     pub fn set_bolt_face(&mut self, bolt: TexId) {
@@ -1203,21 +1263,77 @@ impl App {
         }
     }
 
-    /// Same distribution as `set_faces`: one flat list, in `carts` order, handed back out
-    /// one slice per shelf.
-    pub fn set_backdrops(&mut self, backdrops: Vec<Option<TexId>>) {
-        let mut backdrops = backdrops.into_iter();
-        for (_, shelf) in &mut self.shelves {
-            let n = shelf.carts.len();
-            shelf.set_backdrops(backdrops.by_ref().take(n).collect());
+    /// The carts whose box art should be ready, selection first: it and `box_art::AHEAD` either
+    /// side of it on the active shelf, those that have box art at all.
+    pub fn box_art_wants(&self) -> Vec<crate::box_art::Key> {
+        let Some((_, shelf)) = self.shelves.get(self.shelf_at) else {
+            return Vec::new();
+        };
+        let mut wants = Vec::new();
+        for step in 0..=crate::box_art::AHEAD {
+            for off in [step, -step] {
+                if let Some(i) = shelf.cart_at_offset(off) {
+                    let key = (self.shelf_at, i);
+                    if shelf.carts[i].box_art.is_some() && !wants.contains(&key) {
+                        wants.push(key);
+                    }
+                }
+            }
         }
+        wants
     }
 
-    /// The backdrop for whichever cart the active shelf has selected, if it has one of its
-    /// own. `None` falls back to the ordinary random wallpaper, which is what a shelf with
-    /// no shelves at all (an empty card) also gets.
-    pub fn current_backdrop(&self) -> Option<TexId> {
-        self.shelves.get(self.shelf_at)?.1.current_backdrop()
+    pub fn box_art_cart(&self, (shelf, i): crate::box_art::Key) -> Option<&Cart> {
+        self.shelves.get(shelf)?.1.carts.get(i)
+    }
+
+    pub fn box_art_loaded(&self, (shelf, i): crate::box_art::Key) -> bool {
+        self.shelves
+            .get(shelf)
+            .is_some_and(|(_, s)| s.box_art(i).is_some())
+    }
+
+    /// Hands a cart its box art, and back the texture it had, if any.
+    pub fn set_box_art(&mut self, (shelf, i): crate::box_art::Key, art: BoxArt) -> Option<TexId> {
+        self.shelves.get_mut(shelf)?.1.set_box_art(i, art)
+    }
+
+    /// Takes back every box art texture not in `keep`, for reuse.
+    pub fn shed_box_art(&mut self, keep: &[crate::box_art::Key]) -> Vec<TexId> {
+        let mut shed = Vec::new();
+        for (at, (_, shelf)) in self.shelves.iter_mut().enumerate() {
+            for i in 0..shelf.carts.len() {
+                if !keep.contains(&(at, i)) {
+                    shed.extend(shelf.take_box_art(i));
+                }
+            }
+        }
+        shed
+    }
+
+    /// The selected cart's box art, floating in the space over the row, at `alpha`. Nothing
+    /// when it has none or it is not loaded yet.
+    fn draw_box_art(&self, alpha: f32, out: &mut Vec<Draw>) {
+        let Some((_, shelf)) = self.shelves.get(self.shelf_at) else {
+            return;
+        };
+        let (Some((tex, w, h)), Some(cart)) =
+            (shelf.current_box_art(), shelf.carts.get(shelf.index))
+        else {
+            return;
+        };
+        if alpha <= 0.0 {
+            return;
+        }
+        let (x, y) = crate::box_art::place(cart, w, h);
+        out.push(Draw::Tex {
+            x,
+            y,
+            w: w as f32,
+            h: h as f32,
+            tex,
+            alpha,
+        });
     }
 
     /// Handed over when the core is spawned, which is on the way into the slot.
@@ -1435,6 +1551,9 @@ impl App {
     /// call site today.
     pub fn end_link(&mut self) {
         self.link = None;
+        // The core is still in link mode until it is opened again, but nothing is being loaded
+        // for a session any more, so the next cart in does not inherit one.
+        self.link_player = None;
         self.sync_link_badge();
         // `down` ends the session's own network and, on a BaseOS that has it, cools on the
         // way out; the `cool` behind it is for the one that does not, and costs nothing
@@ -1455,6 +1574,19 @@ impl App {
             session.lost_at.get_or_insert(now);
         }
         self.sync_link_badge();
+    }
+
+    /// The host runs another GBA BIOS. Ends like `peer_ended`, saying why.
+    pub fn bios_mismatch(&mut self) {
+        if !self.link_active() {
+            return;
+        }
+        let role = self
+            .link_client_id()
+            .map_or(self.last_role, LinkRow::from_client_id);
+        self.end_link();
+        self.hud.toast(Toast::BiosMismatch, self.now());
+        self.unplug(role);
     }
 
     /// The other player ended the link and sent word before going.
@@ -1535,6 +1667,8 @@ impl App {
         // clock that was never set can be told apart from one that was. Boot has already
         // taken `clock_set` at its word by here, which is exactly the case that leaves a
         // dead RTC with no way back to the one screen that could fix it.
+        self.headphones = power.headphones();
+        self.hud.set_headphones(self.headphones);
         let secs = power.now();
         if matches!(self.phase, Phase::SetClock { .. }) || secs < CLOCK_FLOOR {
             self.phase = clock_screen(secs, 0, false);
@@ -1619,6 +1753,7 @@ impl App {
     }
 
     pub fn restart(&mut self) {
+        self.settle_saves();
         if let Some(power) = &mut self.power {
             power.restart();
         }
@@ -1630,12 +1765,11 @@ impl App {
         matches!(self.phase, Phase::Inserting { resumed: true, .. })
     }
 
-    /// The picture the bootloader showed, as a texture the size of the panel. Taken only while
-    /// a resume is under way: anywhere else there is nothing for it to carry over.
+    /// The picture the bootloader showed, as a texture the size of the panel. Only while a
+    /// resume is under way: anywhere else there is nothing for it to carry over.
     pub fn set_boot_still(&mut self, tex: TexId) {
-        if self.resuming_at_boot() {
-            self.boot_still = Some(tex);
-        }
+        assert!(self.resuming_at_boot(), "a boot picture outside a resume");
+        self.boot_still = Some(tex);
     }
 
     /// Whether the bootloader's picture is still what is drawn.
@@ -1685,6 +1819,17 @@ impl App {
     /// `link_reload_failed`.
     pub fn take_link_reload(&mut self) -> Option<(String, &'static str)> {
         self.link_reload.take()
+    }
+
+    /// The port a cable session is being loaded for. Not `take`n: a reload re-reads it, and it
+    /// stays set for as long as the session does.
+    pub fn link_player(&self) -> Option<u8> {
+        self.link_player
+    }
+
+    /// The seated cart's core.
+    pub fn core(&self) -> Core {
+        self.core
     }
 
     /// The game is loaded again and back where it was. After a switch, the link starts now in
@@ -1750,6 +1895,7 @@ impl App {
     /// Does not return when there is a platform to power off. A unit test has none, and
     /// there the flag is the whole of it.
     pub fn poweroff(&mut self) {
+        self.settle_saves();
         if let Some(power) = &mut self.power {
             power.poweroff();
         }
@@ -1836,6 +1982,12 @@ impl App {
                 // Ahead of the shelf's own movement, so an open picker takes the arrows
                 // before the row of carts underneath it does.
                 _ if self.core_picker.is_some() => self.core_picker_input(action),
+                // Up and Down cross the row a letter at a time, where Left and Right cross it a
+                // cart at a time. A thirty cart library is a long hold on the shoulders and two
+                // presses here. SELECT+Up is brightness and reaches `adjust` before this, so the
+                // chord is unaffected.
+                Action::GbaDown(Btn::Up) => self.jump_letter(-1),
+                Action::GbaDown(Btn::Down) => self.jump_letter(1),
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf_mut().hold_left(now),
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => {
                     self.shelf_mut().hold_right(now)
@@ -1957,93 +2109,59 @@ impl App {
     /// the ends as the bar does. Drawn that way from the next frame, and written to
     /// `System/theme.txt` so the card keeps it and a hand edit there still wins at the next boot.
     fn change_look(&mut self, row: QuickRow, by: i32) {
-        const PICTURES: [Aspect; 2] = [Aspect::FourThree, Aspect::ThreeTwo];
-        const GRIDS: [LcdGrid; 4] = [LcdGrid::Off, LcdGrid::On, LcdGrid::Strict, LcdGrid::Lcd];
         let step = |at: usize, len: usize| (at as i32 + by).clamp(0, len as i32 - 1) as usize;
+        let look = &mut self.look;
         let (name, value) = match row {
             QuickRow::Picture => {
-                let at = PICTURES
-                    .iter()
-                    .position(|p| *p == self.look.picture)
-                    .unwrap_or(0);
-                self.look.picture = PICTURES[step(at, PICTURES.len())];
-                ("picture", aspect_word(self.look.picture).to_string())
+                look.picture = look.picture.step(by);
+                ("picture", look.picture.word().to_string())
             }
             QuickRow::Grid => {
-                let at = GRIDS.iter().position(|g| *g == self.look.grid).unwrap_or(0);
-                self.look.grid = GRIDS[step(at, GRIDS.len())];
-                ("grid", grid_word(self.look.grid).to_string())
+                look.grid = look.grid.step(by);
+                ("grid", look.grid.word().to_string())
             }
             QuickRow::GridDepth => {
                 let depths = QuickValue::DEPTHS;
-                let now = QuickValue::depth(self.look.depth).index() - QuickValue::Depth10.index();
-                self.look.depth = f32::from(depths[step(now, depths.len())]);
-                ("grid-depth", format!("{}", self.look.depth as u8))
+                let now = QuickValue::depth(look.depth).index() - QuickValue::Depth10.index();
+                look.depth = f32::from(depths[step(now, depths.len())]);
+                ("grid-depth", format!("{}", look.depth as u8))
             }
             QuickRow::SnesPicture => {
-                const SNES: [SnesPicture; 2] = [SnesPicture::Sharp, SnesPicture::FourThree];
-                let at = SNES
-                    .iter()
-                    .position(|x| *x == self.look.snes_picture)
-                    .unwrap_or(0);
-                self.look.snes_picture = SNES[step(at, SNES.len())];
-                let word = match self.look.snes_picture {
-                    SnesPicture::Sharp => "sharp",
-                    SnesPicture::FourThree => "4:3",
-                };
-                ("snes-picture", word.to_string())
+                look.snes_picture = look.snes_picture.step(by);
+                ("snes-picture", look.snes_picture.word().to_string())
             }
             QuickRow::Scaler => {
-                const SCALERS: [Scaling; 2] = [Scaling::PixelAa, Scaling::Shimmerless];
-                let at = SCALERS
-                    .iter()
-                    .position(|x| *x == self.look.scaler)
-                    .unwrap_or(0);
-                self.look.scaler = SCALERS[step(at, SCALERS.len())];
-                let word = match self.look.scaler {
-                    Scaling::PixelAa => "pixel-aa",
-                    Scaling::Shimmerless => "shimmerless",
-                };
-                ("scaler", word.to_string())
+                look.scaler = look.scaler.step(by);
+                ("scaler", look.scaler.word().to_string())
             }
             QuickRow::Sharpness => {
                 let steps = QuickValue::SHARPNESS;
-                let now = QuickValue::sharpness(self.look.sharpness).index()
-                    - QuickValue::Sharp05.index();
-                self.look.sharpness = steps[step(now, steps.len())];
-                ("sharpness", format!("{:.1}", self.look.sharpness))
+                let now =
+                    QuickValue::sharpness(look.sharpness).index() - QuickValue::Sharp05.index();
+                look.sharpness = steps[step(now, steps.len())];
+                ("sharpness", format!("{:.1}", look.sharpness))
             }
             QuickRow::RunAhead => {
-                self.look.runahead = step(usize::from(self.look.runahead), 3) as u8;
+                look.runahead = step(usize::from(look.runahead), 3) as u8;
                 crate::latency::note(&format!(
                     "settings: run-ahead set to {}, for the next game started",
-                    self.look.runahead
+                    look.runahead
                 ));
-                ("runahead", self.look.runahead.to_string())
+                ("runahead", look.runahead.to_string())
             }
             QuickRow::ColourDepth => {
-                const DEPTHS: [ColourDepth; 4] = [
-                    ColourDepth::Off,
-                    ColourDepth::Rich,
-                    ColourDepth::Deep,
-                    ColourDepth::Custom,
-                ];
-                let at = DEPTHS
-                    .iter()
-                    .position(|d| *d == self.look.colour_depth)
-                    .unwrap_or(0);
-                self.look.colour_depth = DEPTHS[step(at, DEPTHS.len())];
-                ("colour-depth", self.look.colour_depth.word().to_string())
+                look.colour_depth = look.colour_depth.step(by);
+                ("colour-depth", look.colour_depth.word().to_string())
             }
             QuickRow::SnesCore => {
-                self.look.snes_core = match self.look.snes_core {
-                    Core::Snes9x => Core::Snes9x2005,
-                    _ => Core::Snes9x,
-                };
-                let word = match self.look.snes_core {
-                    Core::Snes9x => "snes9x",
-                    _ => "snes9x2005",
-                };
+                // The menu's order: the fast one first, as it is the default.
+                const SNES_CORES: [Core; 2] = [Core::Snes9x2005, Core::Snes9x];
+                let at = SNES_CORES
+                    .iter()
+                    .position(|c| *c == look.snes_core)
+                    .expect("a SNES core");
+                look.snes_core = SNES_CORES[step(at, SNES_CORES.len())];
+                let word = look.snes_core.as_str();
                 crate::latency::note(&format!(
                     "settings: SNES emulator set to {word}, for the next game started"
                 ));
@@ -2102,8 +2220,8 @@ impl App {
             Action::BrightnessDown => (HudKind::Brightness, s.brightness.saturating_sub(1)),
             Action::BlueLightUp => (HudKind::BlueLight, up(s.blue_light, 1, BLUE_LIGHT_MAX)),
             Action::BlueLightDown => (HudKind::BlueLight, s.blue_light.saturating_sub(1)),
-            Action::VolumeUp => (HudKind::Volume, up(s.volume, VOLUME_STEP, VOLUME_MAX)),
-            Action::VolumeDown => (HudKind::Volume, s.volume.saturating_sub(VOLUME_STEP)),
+            Action::VolumeUp => (HudKind::Volume, up(self.level(), VOLUME_STEP, VOLUME_MAX)),
+            Action::VolumeDown => (HudKind::Volume, self.level().saturating_sub(VOLUME_STEP)),
             _ => return false,
         };
         if kind == HudKind::Volume {
@@ -2112,16 +2230,16 @@ impl App {
         let level = match kind {
             HudKind::Brightness => &mut self.state.brightness,
             HudKind::BlueLight => &mut self.state.blue_light,
+            HudKind::Volume if self.headphones => &mut self.state.volume_hp,
             HudKind::Volume => &mut self.state.volume,
             // The bar is shared with rewind, which is not a level and is never an action.
             HudKind::Rewind => return false,
         };
         let moved = *level != value;
         *level = value;
-        // Turning it up or down is the plainest way to say you want to hear it again.
-        let unmuted = kind == HudKind::Volume && std::mem::take(&mut self.state.muted);
+        let unmuted = kind == HudKind::Volume && std::mem::take(self.muted_mut());
         let (shown, now) = (self.hud_value(kind, value), self.now());
-        self.hud.show(kind, shown, self.state.muted, now);
+        self.hud.show(kind, shown, self.muted(), now);
         if let (HudKind::Brightness, Some(power)) = (kind, &mut self.power) {
             power.set_backlight(value);
         }
@@ -2139,7 +2257,7 @@ impl App {
             self.vol_before.remove(0);
         }
         self.vol_before
-            .push((self.state.volume, self.state.muted, self.now()));
+            .push((self.level(), self.muted(), self.now()));
     }
 
     /// Silence is a state rather than a level, so muting neither moves the number nor is
@@ -2153,13 +2271,14 @@ impl App {
             .find(|(_, _, at)| now.saturating_sub(*at) <= MUTE_CHORD_MS)
             .copied()
         {
-            self.state.volume = volume;
-            self.state.muted = muted;
+            *self.level_mut() = volume;
+            *self.muted_mut() = muted;
         }
         self.vol_before.clear();
-        self.state.muted = !self.state.muted;
+        let muted = !self.muted();
+        *self.muted_mut() = muted;
         self.hud
-            .show(HudKind::Volume, self.output_volume(), self.state.muted, now);
+            .show(HudKind::Volume, self.output_volume(), muted, now);
         self.persist();
     }
 
@@ -2200,20 +2319,48 @@ impl App {
 
     /// The level the user chose, which a mute does not touch.
     pub fn volume(&self) -> u8 {
-        self.state.volume
+        self.level()
+    }
+
+    fn level(&self) -> u8 {
+        if self.headphones {
+            self.state.volume_hp
+        } else {
+            self.state.volume
+        }
+    }
+
+    fn level_mut(&mut self) -> &mut u8 {
+        if self.headphones {
+            &mut self.state.volume_hp
+        } else {
+            &mut self.state.volume
+        }
     }
 
     pub fn muted(&self) -> bool {
-        self.state.muted
+        if self.headphones {
+            self.state.muted_hp
+        } else {
+            self.state.muted
+        }
+    }
+
+    fn muted_mut(&mut self) -> &mut bool {
+        if self.headphones {
+            &mut self.state.muted_hp
+        } else {
+            &mut self.state.muted
+        }
     }
 
     /// What the sink is actually to be set to. The only one of the two the audio path may
     /// read: a muted device at level 70 is silent, not 70.
     pub fn output_volume(&self) -> u8 {
-        if self.state.muted {
+        if self.muted() {
             0
         } else {
-            self.state.volume
+            self.level()
         }
     }
 
@@ -2471,19 +2618,6 @@ impl App {
         !matches!(self.backlight_hold, BacklightHold::Free)
     }
 
-    fn push_boot_still(&self, out: &mut Vec<Draw>) {
-        if let Some(tex) = self.boot_still {
-            out.push(Draw::Tex {
-                x: 0.0,
-                y: 0.0,
-                w: OUT_W as f32,
-                h: OUT_H as f32,
-                tex,
-                alpha: 1.0,
-            });
-        }
-    }
-
     /// The game layer's own power, which answers to the phase rather than to an event: an
     /// insert, a resume and a wake all bring the picture up the same way.
     fn step_screen(&mut self, dt: f32) {
@@ -2533,13 +2667,24 @@ impl App {
             self.on_doze_timeout();
         }
         if self.now() >= self.autosave_at {
-            self.flush_resume();
+            self.autosave();
         }
         if self.now() >= self.battery_at {
             self.battery_at = self.now() + BATTERY_POLL_MS;
             self.battery = self.power.as_ref().and_then(|p| p.battery());
             if let Some(b) = self.battery {
                 self.on_battery(b);
+            }
+        }
+        if self.now() >= self.headphones_at {
+            self.headphones_at = self.now() + HEADPHONES_POLL_MS;
+            let on = self.power.as_ref().is_some_and(|p| p.headphones());
+            if on != self.headphones {
+                self.headphones = on;
+                self.hud.set_headphones(on);
+                let now = self.now();
+                self.hud
+                    .show(HudKind::Volume, self.output_volume(), self.muted(), now);
             }
         }
         // Only the charge half. The percent it is written beside is at most one slow tick
@@ -2696,6 +2841,9 @@ impl App {
         let Some(root) = &self.root else {
             return;
         };
+        if let Some(h) = self.pending_save.take() {
+            let _ = h.join();
+        }
         let ring = StateRing::new(root, self.platform, self.core, stem);
         match ring.retire_resume(&format_stamp(self.wall_secs())) {
             Ok(Some(to)) => eprintln!(
@@ -2814,7 +2962,12 @@ impl App {
             }
             .draw(out),
             Phase::Shelf => {
-                draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                draw_backdrop(self.wallpaper, out);
+                // Out of the way of the lid, which lifts into the same space.
+                let open = self
+                    .core_picker_shown()
+                    .map_or(0.0, |picker| ease(picker.openness(self.now())));
+                self.draw_box_art(1.0 - open, out);
                 match (self.core_picker_shown(), self.selected_stem()) {
                     // The highlighted cart is the picker's to draw while its lid is off, and the
                     // rest of the row makes way for it the way it does for a cart going in.
@@ -2838,7 +2991,14 @@ impl App {
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
                     // art's title sits - is not the part the row sits directly over.
-                    _ => self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out),
+                    _ => {
+                        self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out);
+                        slot_ui::draw_slot_name(
+                            self.slot_letter_face,
+                            self.slot_letter_alpha(),
+                            out,
+                        );
+                    }
                 }
                 draw_footer(
                     self.battery,
@@ -2858,13 +3018,22 @@ impl App {
             }
             // The shelf recedes behind the cart on the way in; on the way out the live
             // game is what darkens, and the compositor has already drawn it.
-            Phase::Inserting { .. } | Phase::Playing { .. } if self.boot_still.is_some() => {
-                self.push_boot_still(out)
+            Phase::Inserting { .. } | Phase::Playing { .. } if let Some(tex) = self.boot_still => {
+                out.push(Draw::Tex {
+                    x: 0.0,
+                    y: 0.0,
+                    w: OUT_W as f32,
+                    h: OUT_H as f32,
+                    tex,
+                    alpha: 1.0,
+                })
             }
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
                 if !resumed {
-                    draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                    draw_backdrop(self.wallpaper, out);
+                    // Gone by the time the cart is in, the way the row recedes.
+                    self.draw_box_art(1.0 - self.seat(), out);
                     self.shelf()
                         .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);
                 }
@@ -2875,7 +3044,8 @@ impl App {
             // other way. Darkening on the way out as well as on the way in was the screen
             // playing the same movement twice rather than reversing it.
             Phase::Ejecting { cart, .. } => {
-                draw_backdrop(self.current_backdrop().or(self.wallpaper), out);
+                draw_backdrop(self.wallpaper, out);
+                self.draw_box_art(1.0 - self.seat(), out);
                 self.shelf()
                     .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);
                 self.chrome(cart, self.seat(), out);
@@ -3489,6 +3659,7 @@ impl App {
     /// the cart recorded as seated, so the next boot resumes it and the end of the
     /// animation retries the clear.
     fn flush_eject(&mut self, stem: &str) {
+        self.settle_saves();
         let (Some(root), Some(snapshot)) = (&self.root, &self.snapshot) else {
             return;
         };
@@ -3738,6 +3909,35 @@ impl App {
         // When slot's mGBA lockstep route lands this becomes the place a Game Boy cart's own link
         // is offered from — mGBA runs the cart and would be running both ends of it — and until
         // then "no link support" is the whole truth.
+        // The core's route first, which is the inversion the long note below already asks for.
+        // mGBA links by running both machines in step rather than by speaking a game's protocol,
+        // so it carries every cart on every platform and `link_carried` is not its question.
+        if self.core == Core::Mgba {
+            // mGBA emulates the cable and nothing else. A cart that talks to the Wireless
+            // Adapter has no cable to be linked by, so gpSP stays the only core that carries
+            // one and the banner still has something true to say.
+            let wireless = self
+                .seated()
+                .is_some_and(|stem| self.link_mode(stem).0 == LinkKind::Wireless);
+            if wireless {
+                self.hud.toast(Toast::NeedsGpsp, self.now());
+                return;
+            }
+            self.link_hardware = LinkKind::Cable;
+            self.radio.ask(RadioJob::Warm);
+            self.game_menu = Some(GameMenu::Pick(self.last_role));
+            return;
+        }
+        // A SNES game links as two controllers on one console: each device runs the whole
+        // machine and the cable trades the pads every frame, so like mGBA's route it carries
+        // every cart. snes9x2005 was checked to run in step from the host's state; full snes9x
+        // is the core RetroArch's own netplay leans on for the same property.
+        if self.cable_links_snes() {
+            self.link_hardware = LinkKind::Cable;
+            self.radio.ask(RadioJob::Warm);
+            self.game_menu = Some(GameMenu::Pick(self.last_role));
+            return;
+        }
         if self.platform != Platform::Gba {
             self.hud.toast(Toast::NoLink, self.now());
             return;
@@ -3940,12 +4140,22 @@ impl App {
         self.link_choices.insert(stem, other);
     }
 
+    /// A SNES cart seated on a SNES core: linked by the emulated cable, two pads on one console.
+    fn cable_links_snes(&self) -> bool {
+        self.platform == Platform::Snes && matches!(self.core, Core::Snes9x | Core::Snes9x2005)
+    }
+
     /// Whether SELECT has anything to switch this cart to: whether the other hardware would load
     /// it with a `gpsp_serial` it is not already on. It would not for a game with no cable
     /// protocol of its own, which loads on `auto` either way and links over the adapter
     /// regardless. Both the press and the legend that advertises it read this, so the screen
     /// never names a key that can only shake.
     fn link_switchable(&self, stem: &str) -> bool {
+        // Only gpSP has two hardwares to choose between. mGBA's cable and a SNES link are one
+        // route each, and gpSP's serial modes mean nothing to either.
+        if self.core != Core::Gpsp {
+            return false;
+        }
         self.auto_link(stem).is_some_and(|(cart, auto)| {
             serial_option(self.link_hardware.other(), auto, &cart.code, &cart.title)
                 != serial_option(self.link_hardware, auto, &cart.code, &cart.title)
@@ -3960,9 +4170,50 @@ impl App {
         let Some(stem) = self.seated().map(str::to_string) else {
             return;
         };
-        let (_, serial) = self.link_mode(&stem);
         // A core nobody reported was loaded on `auto`.
         let loaded = self.link_loaded.unwrap_or("auto");
+        // The in-core cable. mGBA reads `mgba_link` only while a game loads, exactly as gpSP
+        // reads its serial mode, so a core not already in link mode for this port is loaded
+        // again first and the handshake waits for that. There is no mode to switch between
+        // here, so `from` is what is loaded rather than the other of two.
+        if self.core == Core::Mgba {
+            let player = role.client_id() as u8;
+            if self.link_player == Some(player) {
+                return self.start_link(
+                    LinkStarter::spawn(role.role(), link_port()),
+                    role.client_id(),
+                );
+            }
+            if self.snapshot.as_ref().is_some_and(|s| !s.resume_trusted()) {
+                return self.refuse();
+            }
+            self.link_player = Some(player);
+            self.link_reload = Some((stem.clone(), loaded));
+            self.reload = Some(Reload {
+                stem,
+                role,
+                cancelled: false,
+                from: self.link_hardware,
+                from_serial: loaded,
+                fallback: false,
+            });
+            self.game_menu = Some(GameMenu::Working {
+                role,
+                step: LinkStep::Radio,
+                since: self.now(),
+            });
+            return;
+        }
+        // SNES: nothing to load the core with. Port 1 for the host, port 2 for the joiner, and
+        // `link_player` is what sends the wire down the cable route when it arrives.
+        if self.cable_links_snes() {
+            self.link_player = Some(role.client_id() as u8);
+            return self.start_link(
+                LinkStarter::spawn(role.role(), link_port()),
+                role.client_id(),
+            );
+        }
+        let (_, serial) = self.link_mode(&stem);
         if serial == loaded {
             return self.start_link(
                 LinkStarter::spawn(role.role(), link_port()),
@@ -4199,7 +4450,54 @@ impl App {
     ///
     /// Public for the one flush `App` cannot start itself: a reload for a link, which `Session`
     /// carries out and which has to be on the card before the core it reads is dropped.
+    /// Waits for an autosave still being written. Every other write of the resume goes after
+    /// it, so the older state can never land over a newer one.
+    pub fn settle_saves(&mut self) {
+        if let Some(h) = self.pending_save.take() {
+            let _ = h.join();
+        }
+    }
+
+    /// `flush_resume` with the card writes on a thread of their own. The state is taken here,
+    /// which is a moment's round trip to the core; writing it and the battery save to the card,
+    /// with their syncs, is what held the frame loop long enough to drop frames every minute.
+    fn autosave(&mut self) {
+        self.autosave_at = self.now() + AUTOSAVE_MS;
+        self.settle_saves();
+        let (Some(root), Some(snapshot), Some(cart)) = (&self.root, &self.snapshot, self.seated())
+        else {
+            return;
+        };
+        let Some(state) = snapshot.state() else {
+            eprintln!("slot: autosave: the core gave up no state");
+            return;
+        };
+        let (state, sav) = trusted_write(snapshot.as_ref(), state, "autosave");
+        let (root, platform, core, cart) =
+            (root.clone(), self.platform, self.core, cart.to_owned());
+        let write = move || {
+            if let Err(e) = persist::flush(
+                &root,
+                platform,
+                core,
+                &cart,
+                state.as_deref(),
+                sav.as_deref(),
+            ) {
+                eprintln!("slot: autosave: {e}");
+            }
+        };
+        match std::thread::Builder::new()
+            .name("slot-autosave".into())
+            .spawn(write)
+        {
+            Ok(h) => self.pending_save = Some(h),
+            Err(e) => eprintln!("slot: autosave: no writer thread: {e}"),
+        }
+    }
+
     pub fn flush_resume(&mut self) {
+        self.settle_saves();
         // The invariant is 60 s since the state was last durable, not 60 s since the last
         // autosave, so an attempt that had nothing to write still moves the deadline.
         self.autosave_at = self.now() + AUTOSAVE_MS;
@@ -4695,26 +4993,33 @@ struct Look {
     snes_picture: SnesPicture,
     /// The game picture's colour depth, and the card's own values for `Custom`.
     colour_depth: ColourDepth,
-    colour_custom: [Option<f32>; 3],
+    colour_custom: [f32; 3],
     /// The emulator a SNES cart starts on when `selected_core.ini` does not name one. Not how
     /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
     snes_core: Core,
 }
 
+impl From<&Theme> for Look {
+    fn from(theme: &Theme) -> Self {
+        Look {
+            picture: theme.picture,
+            grid: theme.grid,
+            depth: theme.grid_depth.unwrap_or(slot_gfx::GRID_DEPTH),
+            runahead: theme.runahead.unwrap_or(RUNAHEAD),
+            scaler: theme.scaler,
+            sharpness: theme.sharpness,
+            snes_picture: theme.snes_picture,
+            colour_depth: theme.colour_depth,
+            colour_custom: theme.colour_custom,
+            snes_core: theme.snes_core,
+        }
+    }
+}
+
+/// A card that says nothing: the theme's own defaults, so there is one set of them.
 impl Default for Look {
     fn default() -> Self {
-        Look {
-            picture: Aspect::FourThree,
-            grid: LcdGrid::Off,
-            depth: slot_gfx::GRID_DEPTH,
-            runahead: RUNAHEAD,
-            scaler: Scaling::PixelAa,
-            sharpness: 1.0,
-            snes_picture: SnesPicture::Sharp,
-            colour_depth: ColourDepth::Off,
-            colour_custom: [None; 3],
-            snes_core: Core::Snes9x2005,
-        }
+        Look::from(&Theme::default())
     }
 }
 
@@ -4749,22 +5054,5 @@ impl Look {
             saturation,
             contrast,
         });
-    }
-}
-
-/// The words `System/theme.txt` spells these with, which `Theme::parse` reads back.
-fn aspect_word(picture: Aspect) -> &'static str {
-    match picture {
-        Aspect::FourThree => "4:3",
-        Aspect::ThreeTwo => "3:2",
-    }
-}
-
-fn grid_word(grid: LcdGrid) -> &'static str {
-    match grid {
-        LcdGrid::Off => "off",
-        LcdGrid::On => "on",
-        LcdGrid::Strict => "strict",
-        LcdGrid::Lcd => "lcd",
     }
 }
