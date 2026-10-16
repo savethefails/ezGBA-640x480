@@ -1345,3 +1345,43 @@ fn a_state_asked_for_in_the_last_present_is_still_answered() {
         "a flush racing the cart out of the slot was never answered"
     );
 }
+
+/// The display's real period reaches the sound even when it misses a frame now and then. The
+/// SP refreshes every 16.8 ms, 0.8% slower than the 60 Hz the worker paces itself by, and the
+/// drift correction covers only 0.5%: until the period is measured the ring runs dry and the
+/// sound crackles every couple of seconds. The measurement used to need 300 kicked presents in
+/// a row, so a kick missed every second or so, as a busy game (PICO-8 starting up) causes,
+/// kept it from ever landing. Here one kick in 40 is missed.
+#[test]
+fn the_display_period_is_measured_through_an_occasional_missed_kick() {
+    let (emu, sink, heard) = spawn_heard();
+    emu.set_speed(Speed::Normal);
+    let period = Duration::from_micros(16_800);
+    let mut next = Instant::now();
+    let mut kick_for = |presents: u32| {
+        for i in 0..presents {
+            next += period;
+            std::thread::sleep(next.saturating_duration_since(Instant::now()));
+            if i % 40 != 39 {
+                emu.kick();
+            }
+        }
+    };
+    // Long enough for 300 kicked intervals with the misses left out.
+    kick_for(420);
+    let (before, presents) = (heard.load(Ordering::Relaxed), emu.published_count());
+    kick_for(120);
+    let per =
+        (heard.load(Ordering::Relaxed) - before) as f64 / (emu.published_count() - presents) as f64;
+    drop(sink);
+    // The mock's frame of sound at the device's rate, with the drift correction at its top
+    // (the counting device drains everything, so the ring always reads as starved).
+    let unscaled = 32_768.0 / 59.7275 * (59.7275 / 60.0) * 1.005;
+    let scale = per / unscaled;
+    assert!(
+        // 1.008 measured; 1.000 exactly when the period never lands. Presents that miss their
+        // kick play unscaled, and a loaded machine misses more, so the floor sits well below.
+        (1.003..1.012).contains(&scale),
+        "{per:.1} frames a present, {scale:.4} of {unscaled:.1}: the 16.8 ms period never reached the sound"
+    );
+}

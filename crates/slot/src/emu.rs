@@ -114,8 +114,8 @@ const RUNAHEAD_BUDGET: Duration = Duration::from_millis(12);
 /// single heavy scene, or the scheduler, is not reason enough to lose it.
 const RUNAHEAD_STRIKES: u32 = 8;
 
-/// Kicked presents in a row the display's present is measured over, about five seconds: the
-/// audio's base rate while the worker follows the display. The SP's panel refreshes every
+/// Intervals between kicked presents the display's present is measured over, about five
+/// seconds: the audio's base rate while the worker follows the display. The SP's panel refreshes every
 /// 16.80 ms, not 60 Hz, which leaves the core 0.8% short of sound a second; DRC's trim reaches
 /// only half that, so without this the ring runs dry and the sound crackles.
 const RATE_WINDOW: u32 = 300;
@@ -763,10 +763,14 @@ impl Worker {
         // The display's present against `PRESENT`, measured from the kicks: 1.0 until a whole
         // window of them has come, and whenever the presents are not following kicks.
         let mut scale = 1.0f64;
-        // Whether the present under way began on a kick, and the run of kicked presents so
-        // far: when it began and how many. A present on the worker's own clock ends the run.
+        // Whether the present under way began on a kick, and the measurement so far: when the
+        // last kicked present began, and the intervals between kicked presents back to back,
+        // summed and counted. A present on the worker's own clock is left out rather than
+        // starting the window over: a busy game misses a kick now and then, and a window that
+        // needed 300 in a row never landed, leaving the sound short for as long as that went on.
         let mut kicked = false;
-        let mut run: (Instant, u32) = (Instant::now(), 0);
+        let mut last_kick: Option<Instant> = None;
+        let mut window = (Duration::ZERO, 0u32);
         // Kicked presents in a row, for `IN_STEP`.
         let mut streak = 0u32;
         // Run-ahead, while it is still affordable. See `run_ahead`.
@@ -1194,16 +1198,16 @@ impl Worker {
                 (deadline, kicked) = self.wait_for_kick(deadline, steady);
             }
             streak = if kicked { streak.saturating_add(1) } else { 0 };
-            if !kicked {
-                run = (deadline, 0);
-            } else if run.1 == RATE_WINDOW {
+            if let (true, Some(prev)) = (kicked, last_kick) {
+                window = (window.0 + deadline.duration_since(prev), window.1 + 1);
+            }
+            last_kick = kicked.then_some(deadline);
+            if window.1 == RATE_WINDOW {
                 // Clamped to what a panel could plausibly be: a window with a stall in it that
                 // still caught every kick is not a measurement of anything.
-                let present = deadline.duration_since(run.0) / RATE_WINDOW;
+                let present = window.0 / RATE_WINDOW;
                 scale = (present.as_secs_f64() / PRESENT.as_secs_f64()).clamp(0.97, 1.03);
-                run = (deadline, 0);
-            } else {
-                run.1 += 1;
+                window = (Duration::ZERO, 0);
             }
         }
         // Once more, after the flag rather than before it: `stop` is only read at the top of
