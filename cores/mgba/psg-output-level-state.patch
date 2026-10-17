@@ -1,0 +1,35 @@
+diff --git a/src/gb/audio.c b/src/gb/audio.c
+index dd2c80c..7aebe1c 100644
+--- a/src/gb/audio.c
++++ b/src/gb/audio.c
+@@ -1072,6 +1072,12 @@ void GBAudioPSGSerialize(const struct GBAudio* audio, struct GBSerializedPSGStat
+ 	cycles *= 8 * audio->timingFactor;
+ 	STORE_32LE(audio->ch4.lastEvent + cycles, 0, &state->ch4.nextEvent);
+ 
++	// The wave and noise channels' output levels, which nothing else in the state can rebuild:
++	// a load left them at whatever the frames since the save had last set, and the first
++	// samples after it played that. Kept in a reserved word, with bit 31 to tell it from a state
++	// saved before this.
++	STORE_32LE(0x80000000 | (uint8_t) audio->ch3.sample | ((uint8_t) audio->ch4.sample << 8), 0, &state->ch2.reserved[1]);
++
+ 	STORE_32LE(flags, 0, flagsOut);
+ }
+ 
+@@ -1151,6 +1157,17 @@ void GBAudioPSGDeserialize(struct GBAudio* audio, const struct GBSerializedPSGSt
+ 	}
+ 	audio->ch4.nSamples = 0;
+ 	audio->ch4.samples = 0;
++
++	// The square channels' output levels follow from their duty, position and volume, all of
++	// which are back by now, the registers included: the loaders rewrite those first.
++	_updateSquareSample(&audio->ch1);
++	_updateSquareSample(&audio->ch2);
++	uint32_t levels;
++	LOAD_32LE(levels, 0, &state->ch2.reserved[1]);
++	if (levels & 0x80000000) {
++		audio->ch3.sample = (int8_t) (levels & 0xFF);
++		audio->ch4.sample = (int8_t) ((levels >> 8) & 0xFF);
++	}
+ }
+ 
+ void GBAudioSerialize(const struct GBAudio* audio, struct GBSerializedState* state) {
