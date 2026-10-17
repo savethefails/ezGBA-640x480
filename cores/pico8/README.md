@@ -11,4 +11,4 @@ ships with ezGBA. This folder builds the three files that run it:
   every other game.
 
 The source is copied from [savethefails/pico-8-save-states](https://github.com/savethefails/pico-8-save-states)
-at commit f57ae8f: `src/` is its `src/` and `host/` its `host/`. Copy them across again to update.
+at commit f766ecb: `src/` is its `src/` and `host/` its `host/`. Copy them across again to update.

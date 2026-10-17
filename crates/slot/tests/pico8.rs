@@ -244,6 +244,9 @@ fn a_pico8_cart_plays_at_480_and_resumes_after_an_eject() {
     let root = d.path();
     let stem = card(root, &s);
     clocked(root);
+    // The player's switch for the trace: the core appends how PICO-8 kept up to it.
+    let trace = root.join(slot::latency::TRACE_FILE);
+    std::fs::write(&trace, "").unwrap();
 
     let mut r = Run {
         f: Frontend::boot(Box::new(SimPlatform::at(root.to_path_buf()))),
@@ -345,4 +348,11 @@ fn a_pico8_cart_plays_at_480_and_resumes_after_an_eject() {
         r.step();
     }
     assert!(matches!(r.f.session().app().phase(), Phase::Playing { .. }));
+
+    let traced = std::fs::read_to_string(&trace).unwrap();
+    print!("{traced}");
+    assert!(
+        traced.lines().any(|l| l.starts_with("pico8: ")),
+        "the core traced nothing to the card"
+    );
 }

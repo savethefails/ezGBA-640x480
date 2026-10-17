@@ -58,6 +58,10 @@ static char home[PATH_MAX];         /* save/pico8 */
 static char state_path[PATH_MAX];   /* home/p8ss/live.p8ss */
 static char cart[PATH_MAX];
 static unsigned audio_phase;
+/* The card's latency-trace.log, appended to when the player has made one: every 120
+ * frames, how PICO-8 kept up and whether its sound ran out. */
+static FILE *trace;
+static struct { uint64_t last_ns, worst_ns; uint32_t runs, seq, short_, low; } audit;
 
 static void logf_(enum retro_log_level lvl, const char *fmt, ...)
 {
@@ -285,6 +289,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 	enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
 	if (env_cb && !env_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) return false;
 	if (find_dirs() != 0) { LOGE("no system directory"); return false; }
+	char t[PATH_MAX + 32];
+	snprintf(t, sizeof t, "%s/../../latency-trace.log", dir);   /* dir is BIOS/pico8 */
+	if (is_file(t)) trace = fopen(t, "a");
+	audit.low = UINT32_MAX;
 	if (!realpath(game->path, cart)) snprintf(cart, sizeof cart, "%s", game->path);
 	char work[PATH_MAX];
 	snprintf(work, sizeof work, "%s/p8ss", home);
@@ -340,6 +348,8 @@ RETRO_API void retro_unload_game(void)
 	shm = NULL;
 	if (shm_fd >= 0) close(shm_fd);
 	shm_fd = -1;
+	if (trace) fclose(trace);
+	trace = NULL;
 }
 
 RETRO_API void retro_reset(void)
@@ -387,14 +397,34 @@ static void play_audio(void)
 	audio_phase = (P8HOST_RATE + audio_phase) % 60;
 	uint32_t w = __atomic_load_n(&shm->audio_w, __ATOMIC_ACQUIRE), r = shm->audio_r;
 	if (w - r > P8HOST_AUDIO / 2) r = w - n;          /* too far behind: catch up */
+	if (w - r < audit.low) audit.low = w - r;
 	static int16_t last;
 	for (unsigned i = 0; i < n; i++) {
 		int16_t s = last;
+		audit.short_ += r == w;
 		if (r != w) s = last = shm->audio[r++ & (P8HOST_AUDIO - 1)];
 		out[2 * i] = out[2 * i + 1] = s;
 	}
 	__atomic_store_n(&shm->audio_r, r, __ATOMIC_RELEASE);
 	if (audio_batch_cb) audio_batch_cb(out, n);
+}
+
+static void audit_frame(void)
+{
+	if (!trace) return;
+	uint64_t t = now_ns();
+	if (audit.last_ns && t - audit.last_ns > audit.worst_ns) audit.worst_ns = t - audit.last_ns;
+	audit.last_ns = t;
+	if (++audit.runs < 120) return;
+	uint32_t seq = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
+	fprintf(trace, "pico8: %u frames from PICO-8 in 120, longest %.1f ms between frames, "
+		"%u samples short, its sound queue as low as %u\n",
+		(seq - audit.seq) / 2, audit.worst_ns / 1e6, audit.short_, audit.low);
+	fflush(trace);
+	audit.runs = audit.short_ = 0;
+	audit.worst_ns = 0;
+	audit.seq = seq;
+	audit.low = UINT32_MAX;
 }
 
 RETRO_API void retro_run(void)
@@ -406,6 +436,7 @@ RETRO_API void retro_run(void)
 		child_alive();
 		read_frame();
 		play_audio();
+		audit_frame();
 	}
 	if (video_cb) video_cb(frame, P8HOST_W, P8HOST_H, P8HOST_W * 4);
 }

@@ -120,8 +120,9 @@ const RUNAHEAD_STRIKES: u32 = 8;
 /// only half that, so without this the ring runs dry and the sound crackles.
 const RATE_WINDOW: u32 = 300;
 
-/// Frames between traced pacing lines, about five seconds.
-const TRACE_EVERY: u64 = 300;
+/// Presents between traced audio lines, about two seconds: a crackle every second or two has
+/// to land in a line of its own to be told from the ones around it.
+const TRACE_EVERY: u64 = 120;
 
 /// A per-present cap on how many packets the worker will move from the transport into the
 /// core's inbound queue. Real GBA serial hardware never comes close to this in a present's
@@ -760,6 +761,10 @@ impl Worker {
         let mut fast_span: Option<(Instant, Duration)> = None;
         let mut deadline = Instant::now();
         let mut paced = 0u64;
+        // For the traced audio line: since the last one, the emptiest the ring got, the longest
+        // between two presents' sound, how many presents followed a kick, and the device's fault
+        // counts the line before left off at.
+        let mut audit = (usize::MAX, Instant::now(), Duration::ZERO, 0u64, 0u64, 0u64);
         // The display's present against `PRESENT`, measured from the kicks: 1.0 until a whole
         // window of them has come, and whenever the presents are not following kicks.
         let mut scale = 1.0f64;
@@ -1164,11 +1169,26 @@ impl Worker {
                     // Where occupancy actually sits against target is the one thing a
                     // crackle complaint needs and no test can watch on real hardware.
                     paced += 1;
-                    if crate::session::trace() && paced.is_multiple_of(TRACE_EVERY) {
+                    let pushed = Instant::now();
+                    audit.0 = audit.0.min(queued);
+                    audit.2 = audit.2.max(pushed - audit.1);
+                    audit.1 = pushed;
+                    audit.3 += u64::from(kicked);
+                    if paced.is_multiple_of(TRACE_EVERY) {
                         let (dropped, starved) = (ring.overruns(), ring.underruns());
-                        eprintln!(
-                            "slot: audio: {queued}/{target} queued, {dropped} dropped, {starved} starved, kicked {kicked} at {scale:.5}"
+                        let line = format!(
+                            "audio: {queued}/{target} queued (lowest {}), {} dropped, {} starved, longest {:.1} ms between presents, {}/{TRACE_EVERY} kicked, scale {scale:.5}",
+                            audit.0,
+                            dropped - audit.4,
+                            starved - audit.5,
+                            audit.2.as_secs_f64() * 1000.0,
+                            audit.3,
                         );
+                        if crate::session::trace() {
+                            eprintln!("slot: {line}");
+                        }
+                        crate::latency::note(&line);
+                        audit = (usize::MAX, pushed, Duration::ZERO, 0, dropped, starved);
                     }
                 }
             }
