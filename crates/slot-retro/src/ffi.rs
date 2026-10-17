@@ -30,6 +30,27 @@ pub const GET_SAVE_DIRECTORY: c_uint = 31;
 /// than on a fixed cadence. See `LibretroCore::set_frame_skip`.
 pub const SET_AUDIO_BUFFER_STATUS_CALLBACK: c_uint = 62;
 pub const SET_NETPACKET_INTERFACE: c_uint = 78;
+/// `RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE`. Asked by snes9x and snes9x2005 at the top of
+/// every `retro_run`: an `int` of the `AV_ENABLE_*` bits below. It is snes9x's only way to skip
+/// a frame's picture: unlike mGBA, gpSP and snes9x2005 it has no frameskip option and never
+/// registers `SET_AUDIO_BUFFER_STATUS_CALLBACK`. See `LibretroCore::set_frame_skip`.
+pub const GET_AUDIO_VIDEO_ENABLE: c_uint = 47 | 0x10000;
+/// Draw this frame's picture.
+pub const AV_ENABLE_VIDEO: c_int = 1;
+/// The frontend will play this frame's sound.
+pub const AV_ENABLE_AUDIO: c_int = 2;
+/// This frame's state will be loaded over and its sound thrown away, so the core may skip the
+/// sound work altogether. snes9x then does not run its DSP at all. See
+/// `LibretroCore::set_frame_discarded`.
+pub const AV_ENABLE_HARD_DISABLE_AUDIO: c_int = 8;
+/// `RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT`. Asked by snes9x inside `retro_serialize` and
+/// `retro_unserialize`: an `int`, one of the `SAVESTATE_CONTEXT_*` values below. Anything but
+/// normal lets it load without first clearing the screen and every block it is about to fill.
+pub const GET_SAVESTATE_CONTEXT: c_uint = 72 | 0x10000;
+/// A state that may be written out and loaded by another run, or another build.
+pub const SAVESTATE_CONTEXT_NORMAL: c_int = 0;
+/// A state saved moments ago by this same core in this same run, kept in memory: run-ahead's.
+pub const SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE: c_int = 1;
 
 pub const RUMBLE_STRONG: c_uint = 0;
 pub const RUMBLE_WEAK: c_uint = 1;

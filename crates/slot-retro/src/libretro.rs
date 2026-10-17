@@ -65,6 +65,15 @@ struct Host {
     /// `None` when it withdraws it — which both cores do whenever that option is off or set to
     /// a fixed interval. See `RetroCore::set_frame_skip` on this type.
     audio_status: Option<AudioBufferStatusFn>,
+    /// The next frame is not to be drawn: `set_frame_skip`, answered through
+    /// `GET_AUDIO_VIDEO_ENABLE` to the cores that ask that instead of the audio buffer status.
+    skip_video: bool,
+    /// The next frame's state will be loaded over and its sound thrown away:
+    /// `set_frame_discarded`, answered through `GET_AUDIO_VIDEO_ENABLE`.
+    discarded: bool,
+    /// The load under way is run-ahead's: `unserialize_runahead`, answered through
+    /// `GET_SAVESTATE_CONTEXT`.
+    runahead_load: bool,
     /// Core options, keyed as libretro names them. Values are kept as CStrings because the
     /// pointer handed back to the core has to stay valid after the callback returns.
     options: std::collections::HashMap<String, std::ffi::CString>,
@@ -228,6 +237,41 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             }
             let cb = std::ptr::read(data as *const AudioBufferStatusCallback);
             with_host(|h| h.audio_status = cb.callback).is_some()
+        }
+        GET_AUDIO_VIDEO_ENABLE => {
+            if data.is_null() {
+                return false;
+            }
+            // The sound is always wanted, even on a frame that is not drawn: run-ahead's real
+            // frame is the one heard and never the one shown. Only a discarded frame lets the
+            // core skip its sound, since nothing it leaves behind survives the load after it.
+            let Some(av) = with_host(|h| {
+                let mut av = AV_ENABLE_AUDIO;
+                if !h.skip_video {
+                    av |= AV_ENABLE_VIDEO;
+                }
+                if h.discarded {
+                    av |= AV_ENABLE_HARD_DISABLE_AUDIO;
+                }
+                av
+            }) else {
+                return false;
+            };
+            *(data as *mut c_int) = av;
+            true
+        }
+        GET_SAVESTATE_CONTEXT => {
+            if data.is_null() {
+                return false;
+            }
+            let Some(context) = with_host(|h| match h.runahead_load {
+                true => SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE,
+                false => SAVESTATE_CONTEXT_NORMAL,
+            }) else {
+                return false;
+            };
+            *(data as *mut c_int) = context;
+            true
         }
         SET_NETPACKET_INTERFACE => {
             // A NULL pointer is the core withdrawing the interface, which is legal.
@@ -514,6 +558,12 @@ pub struct LibretroCore {
     rom_path: Option<CString>,
     av: AvInfo,
     loaded: bool,
+    /// What the core last said its state needs, asked once per game rather than on every save.
+    /// mGBA and snes9x both answer `retro_serialize_size` by running a whole save to measure it,
+    /// so asking every time doubled what run-ahead's save a frame costs. A state that has grown
+    /// past it (mGBA's carries the save memory, whose size a game can settle late) is refused by
+    /// `retro_serialize`, and the size is asked again then.
+    state_size: Option<usize>,
     _lib: Library,
 }
 
@@ -601,6 +651,9 @@ impl LibretroCore {
             net: Link::default(),
             net_peer: None,
             audio_status: None,
+            skip_video: false,
+            discarded: false,
+            runahead_load: false,
             options: std::collections::HashMap::new(),
             options_dirty: false,
         });
@@ -624,8 +677,18 @@ impl LibretroCore {
                 sample_rate: 0.0,
             },
             loaded: false,
+            state_size: None,
             _lib: lib,
         })
+    }
+
+    fn serialize_at(&mut self, size: usize) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; size];
+        let ok = {
+            let _a = Active::bind(&mut self.host);
+            unsafe { (self.api.serialize)(buf.as_mut_ptr() as *mut c_void, size) }
+        };
+        ok.then_some(buf)
     }
 
     fn unload(&mut self) {
@@ -652,6 +715,7 @@ impl Drop for LibretroCore {
 impl RetroCore for LibretroCore {
     fn load(&mut self, rom: &Path) -> Result<(), CoreError> {
         self.unload();
+        self.state_size = None;
         self.rom = std::fs::read(rom)?;
         self.rom_path = Some(
             CString::new(rom.as_os_str().as_encoded_bytes())
@@ -720,11 +784,21 @@ impl RetroCore for LibretroCore {
     /// off, or it is mGBA in link mode, which returns from `retro_run` before it reads any of
     /// this — so this is silently a no-op rather than something every caller checks for first.
     fn set_frame_skip(&mut self, skip: bool) {
+        // snes9x asks `GET_AUDIO_VIDEO_ENABLE` instead, at the top of the same `retro_run`.
+        self.host.skip_video = skip;
         // Bound like every other call into the core: the callback both cores register only
         // assigns to their own statics, but it is still their code running on this thread and
         // is not promised never to reach back through an environment callback.
         let _a = Active::bind(&mut self.host);
         unsafe { report_audio_status(skip) };
+    }
+
+    /// Answered through `GET_AUDIO_VIDEO_ENABLE`'s hard disable bit, which only the snes9x cores
+    /// ask. snes9x then skips its DSP for the frame, which is most of what a frame's sound costs
+    /// it; snes9x2005 mutes it. Neither leaves the frame's own output behind: snes9x writes
+    /// nothing at all, and snes9x2005's run-ahead patch puts its output side back on the load.
+    fn set_frame_discarded(&mut self, discarded: bool) {
+        self.host.discarded = discarded;
     }
 
     fn video_xrgb8888(&self) -> &[u8] {
@@ -740,20 +814,19 @@ impl RetroCore for LibretroCore {
     }
 
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError> {
-        let size = unsafe { (self.api.serialize_size)() };
+        if let Some(buf) = self.state_size.and_then(|size| self.serialize_at(size)) {
+            return Ok(buf);
+        }
+        let size = {
+            let _a = Active::bind(&mut self.host);
+            unsafe { (self.api.serialize_size)() }
+        };
+        self.state_size = (size > 0).then_some(size);
         if size == 0 {
             return Err(CoreError::State("core reports no state".into()));
         }
-        let mut buf = vec![0u8; size];
-        let ok = {
-            let _a = Active::bind(&mut self.host);
-            unsafe { (self.api.serialize)(buf.as_mut_ptr() as *mut c_void, size) }
-        };
-        if ok {
-            Ok(buf)
-        } else {
-            Err(CoreError::State("serialize refused".into()))
-        }
+        self.serialize_at(size)
+            .ok_or_else(|| CoreError::State("serialize refused".into()))
     }
 
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError> {
@@ -766,6 +839,16 @@ impl RetroCore for LibretroCore {
         } else {
             Err(CoreError::State("unserialize refused".into()))
         }
+    }
+
+    /// Told to the core through `GET_SAVESTATE_CONTEXT` for the length of the one load. snes9x
+    /// then skips clearing its screen and the blocks it is about to fill, which on a Mode 7
+    /// test rom took the load from 0.21 ms to 0.08 ms on an x86 desktop.
+    fn unserialize_runahead(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        self.host.runahead_load = true;
+        let loaded = self.unserialize(data);
+        self.host.runahead_load = false;
+        loaded
     }
 
     fn save_ram(&self) -> Option<Vec<u8>> {
@@ -862,6 +945,9 @@ mod tests {
             net: Link::default(),
             net_peer: None,
             audio_status: None,
+            skip_video: false,
+            discarded: false,
+            runahead_load: false,
             options,
             options_dirty,
         })
@@ -900,6 +986,64 @@ mod tests {
 
         assert!(!ok);
         assert!(var.value.is_null());
+    }
+
+    fn audio_video_enable() -> c_int {
+        let mut av: c_int = -1;
+        let ok =
+            unsafe { environment(GET_AUDIO_VIDEO_ENABLE, &mut av as *mut c_int as *mut c_void) };
+        assert!(ok, "GET_AUDIO_VIDEO_ENABLE went unanswered");
+        av
+    }
+
+    /// snes9x's only way to skip a picture or a frame's sound: the sound is always wanted, the
+    /// picture unless the frame is skipped, and the sound's work may be skipped only on a frame
+    /// that is discarded.
+    #[test]
+    fn audio_video_enable_follows_the_skip_and_the_discard() {
+        let mut host = host_with(HashMap::new(), false);
+        for (skip, discarded, want) in [
+            (false, false, AV_ENABLE_VIDEO | AV_ENABLE_AUDIO),
+            (true, false, AV_ENABLE_AUDIO),
+            (true, true, AV_ENABLE_AUDIO | AV_ENABLE_HARD_DISABLE_AUDIO),
+            (
+                false,
+                true,
+                AV_ENABLE_VIDEO | AV_ENABLE_AUDIO | AV_ENABLE_HARD_DISABLE_AUDIO,
+            ),
+        ] {
+            host.skip_video = skip;
+            host.discarded = discarded;
+            let _active = Active::bind(&mut host);
+            assert_eq!(
+                audio_video_enable(),
+                want,
+                "skip {skip}, discarded {discarded}"
+            );
+        }
+    }
+
+    /// Run-ahead's own load is the only one a core may take a shortcut on: every other load
+    /// may be of a state written out by another run.
+    #[test]
+    fn the_savestate_context_is_run_ahead_only_for_run_ahead_loads() {
+        let mut host = host_with(HashMap::new(), false);
+        for (runahead_load, want) in [
+            (false, SAVESTATE_CONTEXT_NORMAL),
+            (true, SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE),
+        ] {
+            host.runahead_load = runahead_load;
+            let _active = Active::bind(&mut host);
+            let mut context: c_int = -1;
+            let ok = unsafe {
+                environment(
+                    GET_SAVESTATE_CONTEXT,
+                    &mut context as *mut c_int as *mut c_void,
+                )
+            };
+            assert!(ok, "GET_SAVESTATE_CONTEXT went unanswered");
+            assert_eq!(context, want);
+        }
     }
 
     /// `set_option` is what marks `options_dirty`, so the core knows to re-ask; this is the

@@ -11,7 +11,10 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn dylib() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/mgba_libretro.dylib")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../vendor/mgba_libretro.{}",
+        std::env::consts::DLL_EXTENSION
+    ))
 }
 
 fn test_core() -> Option<LibretroCore> {
@@ -171,4 +174,37 @@ fn the_bios_intro_plays_when_a_bios_is_present() {
         lit * 2 > all,
         "{lit} of {all} pixels are lit: the rom is already painting and the intro was skipped"
     );
+}
+
+/// From slot 656ce7e. `LibretroCore` asks the core for its state size once per game, so every
+/// later save is taken at that size: two saves of one frame have to agree, and a state with
+/// zeros after it, as one taken at a size since outgrown would be, has to load as the state.
+#[test]
+fn mgba_states_repeat_and_load_with_trailing_padding() {
+    let _g = lock();
+    let Some(mut c) = test_core() else { return };
+    c.load(&test_rom()).unwrap();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+    let s = c.serialize().unwrap();
+    assert_eq!(
+        c.serialize().unwrap(),
+        s,
+        "a second save of the same frame differed"
+    );
+
+    c.unserialize(&s).unwrap();
+    c.run_frame(ButtonMask::default());
+    let expected = c.video_xrgb8888().to_vec();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+
+    let mut padded = s.clone();
+    padded.extend_from_slice(&[0u8; 4096]);
+    c.unserialize(&padded)
+        .expect("mGBA refused a state with zeros after it");
+    c.run_frame(ButtonMask::default());
+    assert_eq!(c.video_xrgb8888(), expected);
 }
