@@ -181,6 +181,14 @@ takes both down:
   menu, or with `runahead 0`, `1` or `2` in `Config/theme.txt`. Two frames removes more lag
   but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
   always off in a link session.
+
+  The frames run ahead are never heard, and the sound you hear is exactly the sound the game
+  makes with run-ahead off. On mGBA that took three fixes to the emulator, because its save
+  states lost the GBA's tone channels' pitch and left a little of the frame ahead's sound behind
+  (`cores/mgba/`). On snes9x, ezGBA tells the emulator not to draw the real frame, not to work
+  out the frame ahead's sound at all, and to load the state back by its quick path: on a
+  desktop that cut a frame of run-ahead in a Mode 7 test from about 2.5 times a normal frame's
+  work to about 1.6 times.
 - **In step with the screen.** The emulator runs each frame right after the buttons are read
   and just before the frame is shown, instead of on a clock of its own that drifts against
   the screen's, which could leave a press waiting up to a frame longer.
@@ -214,7 +222,11 @@ shared only for free and non-commercially, with its licence beside it (it ships 
 
 SNES games can also run on **snes9x2005_plus**, an older and lighter snes9x (about three
 times as fast on the SP) so that run-ahead fits, and that is the default: choose between the
-two with SNES Emulator in the menu. Put `snes9x2005_plus_libretro.so` in `System/` (from the
+two with SNES Emulator in the menu. snes9x2005 draws some Mode 7 scenes wrongly, Mario Kart's
+track among them, where snes9x draws them right. Run-ahead costs snes9x much less than it did
+(see Responsive controls); whether a game fits on the SP can be timed with `core_bench`'s
+`--runahead 1` (see `crates/slot-retro/examples/core_bench.rs`), against the 12 ms a frame
+after which ezGBA switches run-ahead off. Put `snes9x2005_plus_libretro.so` in `System/` (from the
 **slot** workflow's `snes9x2005` artifact, with its `licenses/` beside it). Each emulator keeps
 its own save states, so a game suspended on one starts from its last in-game save on the other;
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
