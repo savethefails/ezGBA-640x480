@@ -50,6 +50,14 @@ impl Power {
         self.platform.card_read_only()
     }
 
+    pub fn card_log(&self) -> Option<std::path::PathBuf> {
+        self.platform.card_log()
+    }
+
+    pub fn card_kernel_lines(&self) -> Vec<String> {
+        self.platform.card_kernel_lines()
+    }
+
     pub fn set_led(&mut self, state: LedState) {
         self.platform.set_led(state)
     }

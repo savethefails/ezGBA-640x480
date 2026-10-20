@@ -141,6 +141,17 @@ If the battery runs flat, or you keep holding POWER past six seconds so the SP's
 the power itself, slot gets no chance to save,
 and the next start shows the last picture it did save.
 
+### If saving stops working
+
+If a save can't be written, or the SD card turns read-only (which is what the SP does to a
+card it finds damaged), a red band pulses across the middle of the screen: **Can't write to SD
+card. Progress is not being saved.** It stays until a save goes through again. Back up the
+card's `Saves/` and `States/` on a computer and check or replace the card.
+
+Each time the band comes up or goes away, ezGBA notes why on the SP's own storage, along with
+the game in the slot and the system's messages about the card. At the next start it copies those
+notes to `Logs/slot-card.log` on the card.
+
 ## The RG35XXSP's 640×480 screen
 
 Everything is drawn for 640×480 directly, not made for another screen and shrunk to fit:

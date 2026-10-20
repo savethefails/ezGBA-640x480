@@ -5,6 +5,7 @@ pub mod boot_picture;
 pub mod box_art;
 pub mod build_info;
 pub mod cable;
+pub mod card_log;
 pub mod core;
 pub mod core_picker;
 pub mod drc;

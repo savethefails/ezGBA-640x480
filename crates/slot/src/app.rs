@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use slot_gfx::{OUT_H, OUT_W};
@@ -654,7 +653,7 @@ pub struct App {
     /// Whether the last write to the card failed: the resume, a battery save, `slot.state`,
     /// `theme.txt` or a video mode. Shared with the autosave's thread. Any write that lands
     /// clears it. Behind the HUD's card alarm, with `card_read_only`. From slot 239769d.
-    card_failing: Arc<AtomicBool>,
+    card_writes: Arc<crate::card_log::CardWrites>,
     /// Whether the card was mounted read-only when last asked, every `CARD_CHECK_MS`.
     card_read_only: bool,
     card_check_at: Millis,
@@ -791,7 +790,7 @@ impl App {
             dozed_at: 0,
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
-            card_failing: Arc::default(),
+            card_writes: Arc::default(),
             card_read_only: false,
             card_check_at: 0,
             battery_at: BATTERY_POLL_MS,
@@ -1477,7 +1476,7 @@ impl App {
         if let Err(e) = &written {
             eprintln!("slot: video: could not write video_mode.ini: {e}");
         }
-        self.card_failing.store(written.is_err(), Ordering::Relaxed);
+        self.card_writes.wrote("video_mode.ini", &written);
     }
 
     /// The `gpsp_serial` the core `Session` just spawned was loaded with. Called in the same
@@ -1682,6 +1681,7 @@ impl App {
         if matches!(self.phase, Phase::SetClock { .. }) || secs < CLOCK_FLOOR {
             self.phase = clock_screen(secs, 0, false);
         }
+        self.copy_card_log(&power);
         self.power = Some(power);
         // There is nothing to read before this call — no gauge for `battery_at`, no charge
         // for `charge_at`, and whatever `led_state` computed with no battery is not a real
@@ -1694,6 +1694,44 @@ impl App {
         self.battery_at = self.now();
         self.charge_at = self.now();
         self.last_led = None;
+    }
+
+    /// The card alarm's record onto the card, where the grown-up can find it, at each boot.
+    fn copy_card_log(&self, power: &Power) {
+        let (Some(log), Some(root)) = (power.card_log(), &self.root) else {
+            return;
+        };
+        if let Err(e) = crate::card_log::copy_to_card(&log, root) {
+            eprintln!("slot: card log: {e}");
+        }
+    }
+
+    /// One entry in the card alarm's record: up or down, why, the cart in the slot, and the
+    /// kernel's own lines about the card when it goes up.
+    fn log_card(&self, alarm: bool) {
+        let Some(power) = &self.power else {
+            return;
+        };
+        let Some(log) = power.card_log() else {
+            return;
+        };
+        let kernel = if alarm {
+            power.card_kernel_lines()
+        } else {
+            Vec::new()
+        };
+        let write_error = self.card_writes.last_error();
+        let entry = crate::card_log::entry(&crate::card_log::CardEvent {
+            secs: power.now(),
+            alarm,
+            read_only: self.card_read_only,
+            write_error: write_error.as_deref(),
+            cart: self.seated(),
+            kernel: &kernel,
+        });
+        if let Err(e) = crate::card_log::append(&log, &entry) {
+            eprintln!("slot: card log: {e}");
+        }
     }
 
     /// The motor. Never persisted and never a level: it belongs to the cart that asked for
@@ -2184,7 +2222,7 @@ impl App {
             if let Err(e) = &written {
                 eprintln!("slot: theme.txt: {e}");
             }
-            self.card_failing.store(written.is_err(), Ordering::Relaxed);
+            self.card_writes.wrote("theme.txt", &written);
         }
     }
 
@@ -2684,13 +2722,14 @@ impl App {
             self.card_check_at = self.now() + CARD_CHECK_MS;
             self.card_read_only = self.power.as_ref().is_some_and(|p| p.card_read_only());
         }
-        let failing = self.card_failing.load(Ordering::Relaxed) || self.card_read_only;
+        let failing = self.card_writes.failing() || self.card_read_only;
         if failing != self.hud.alarmed() {
             eprintln!(
                 "slot: card: alarm {} (read-only {})",
                 if failing { "on" } else { "off" },
                 self.card_read_only
             );
+            self.log_card(failing);
         }
         self.hud.set_alarm(failing, self.now());
         if self.now() >= self.battery_at {
@@ -2811,7 +2850,7 @@ impl App {
         if let Err(e) = &written {
             eprintln!("slot: slot.state: {e}");
         }
-        self.card_failing.store(written.is_err(), Ordering::Relaxed);
+        self.card_writes.wrote("slot.state", &written);
     }
 
     pub fn on_core_ready(&mut self) {
@@ -3713,11 +3752,11 @@ impl App {
             Ok(()) => {
                 self.state.cart = None;
                 self.state.cart_platform = None;
-                self.card_failing.store(false, Ordering::Relaxed);
+                self.card_writes.ok();
             }
             Err(e) => {
                 eprintln!("slot: eject: {e}");
-                self.card_failing.store(true, Ordering::Relaxed);
+                self.card_writes.failed("eject", &e);
             }
         }
     }
@@ -4419,7 +4458,7 @@ impl App {
             if let Err(e) = &written {
                 eprintln!("slot: slot.state: {e}");
             }
-            self.card_failing.store(written.is_err(), Ordering::Relaxed);
+            self.card_writes.wrote("slot.state", &written);
         }
     }
 
@@ -4513,7 +4552,7 @@ impl App {
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "autosave");
         let (root, platform, core, cart) =
             (root.clone(), self.platform, self.core, cart.to_owned());
-        let failing = self.card_failing.clone();
+        let failing = self.card_writes.clone();
         let write = move || {
             let written = persist::flush(
                 &root,
@@ -4526,7 +4565,7 @@ impl App {
             if let Err(e) = &written {
                 eprintln!("slot: autosave: {e}");
             }
-            failing.store(written.is_err(), Ordering::Relaxed);
+            failing.wrote("autosave", &written);
         };
         match std::thread::Builder::new()
             .name("slot-autosave".into())
@@ -4562,7 +4601,7 @@ impl App {
         if let Err(e) = &written {
             eprintln!("slot: flush: {e}");
         }
-        self.card_failing.store(written.is_err(), Ordering::Relaxed);
+        self.card_writes.wrote("flush", &written);
     }
 
     /// The ring for the cart in the slot. `None` outside the binary, where there is no

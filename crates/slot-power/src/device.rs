@@ -29,6 +29,12 @@ const DEV_INPUT: &str = "/dev/input";
 /// black screen, so Restart unloads it first.
 const WIFI_MODULE: &str = "8821cs";
 
+/// The card alarm's record, on the device's own storage.
+const CARD_LOG: &str = "/data/slot-card.log";
+
+/// The kernel's last lines about the card kept with an alarm.
+const KERNEL_LINES: usize = 40;
+
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
 /// `_IOW('E', 0x80, struct ff_effect)`. The struct is 48 bytes once the union's eight byte
@@ -452,6 +458,17 @@ impl Platform for DevicePlatform {
         read_only(&self.root)
     }
 
+    fn card_log(&self) -> Option<PathBuf> {
+        Some(PathBuf::from(CARD_LOG))
+    }
+
+    fn card_kernel_lines(&self) -> Vec<String> {
+        Command::new("dmesg")
+            .output()
+            .map(|o| card_kernel_lines(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or_default()
+    }
+
     /// Step 0 is the panel off rather than the panel dim: it is what the lid closes with, and
     /// any floor under it lights a shut clamshell.
     fn set_backlight(&mut self, step: u8) {
@@ -612,6 +629,25 @@ impl Platform for DevicePlatform {
             motor.play(on);
         }
     }
+}
+
+/// The lines of `dmesg` about the card's filesystem or the SD controller, the last
+/// `KERNEL_LINES` of them.
+pub fn card_kernel_lines(dmesg: &str) -> Vec<String> {
+    let lines: Vec<String> = dmesg
+        .lines()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            l.contains("fat-fs")
+                || l.contains("exfat")
+                || l.contains("remount")
+                || l.contains("i/o error")
+                || (l.contains("mmcblk") && (l.contains("error") || l.contains("fail")))
+        })
+        .map(str::to_owned)
+        .collect();
+    let skip = lines.len().saturating_sub(KERNEL_LINES);
+    lines.into_iter().skip(skip).collect()
 }
 
 /// Whether `path` is on a read-only mount, from `/proc/mounts`.
