@@ -16,9 +16,12 @@ use crate::persist;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
-/// How long the motor keeps running after the core last asked for it: long enough to ride
-/// through the frames between a game's pulses, short enough that a stop is still felt as one.
-pub const RUMBLE_HOLD_MS: Millis = 100;
+/// The shortest buzz: a tap the game asks for over a frame or two still runs the motor this
+/// long, so it is felt. From slot e2c8068.
+pub const RUMBLE_MIN_MS: Millis = 100;
+/// The longest buzz: a pulse the game keeps asking for is cut off here, so a Pinball hit is a
+/// knock rather than a drone. From slot 2c25c50.
+pub const RUMBLE_MAX_MS: Millis = 150;
 
 pub struct Session {
     root: PathBuf,
@@ -34,9 +37,9 @@ pub struct Session {
     /// What the motor was last set to. On the device that setting is a write to hardware and
     /// the core asks for the same value most frames.
     motor: u16,
-    /// The last rumble the core asked for and when. A core sets its motor per frame and lets
-    /// go between, so short gaps in what it asks for are held across rather than chattering
-    /// the motor off and on. See `RUMBLE_HOLD_MS`.
+    /// The pulse under way: when it began and the strength last asked for. It runs at least
+    /// `RUMBLE_MIN_MS`, stops the frame the game stops asking after that, and never runs past
+    /// `RUMBLE_MAX_MS`.
     pulse: Option<(Millis, u16)>,
     /// A reload for a link is underway: the core in the slot was spawned for it, and `App` is
     /// waiting to hear whether it loaded. See `reload_for_link`.
@@ -426,12 +429,24 @@ impl Session {
             }
         };
         let now = self.app.now();
-        if asked > 0 {
-            self.pulse = Some((now, asked));
-        }
-        let want = match self.pulse {
-            Some((at, strength)) if now.saturating_sub(at) < RUMBLE_HOLD_MS => strength,
-            _ => 0,
+        let want = match (asked, self.pulse) {
+            (0, Some((at, strength))) if now.saturating_sub(at) < RUMBLE_MIN_MS => strength,
+            (0, _) => {
+                self.pulse = None;
+                0
+            }
+            (asked, Some((at, _))) => {
+                self.pulse = Some((at, asked));
+                if now.saturating_sub(at) < RUMBLE_MAX_MS {
+                    asked
+                } else {
+                    0
+                }
+            }
+            (asked, None) => {
+                self.pulse = Some((now, asked));
+                asked
+            }
         };
         self.rumble(want);
     }
