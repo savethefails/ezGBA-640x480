@@ -17,6 +17,10 @@ const TOP_STEP: u32 = 9;
 /// binary's own business.
 const DEV_INPUT: &str = "/dev/input";
 
+/// The RG35XXSP's WiFi driver, which the link radio uses. Its shutdown hook hangs a reboot on a
+/// black screen, so Restart unloads it first.
+const WIFI_MODULE: &str = "8821cs";
+
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
 /// `_IOW('E', 0x80, struct ff_effect)`. The struct is 48 bytes once the union's eight byte
@@ -496,7 +500,9 @@ impl Platform for DevicePlatform {
     }
 
     fn restart(&mut self) -> ! {
-        self.breadcrumb("restart: reached slot, about to sync");
+        self.breadcrumb("restart: reached slot, unloading the WiFi driver");
+        let _ = Command::new("rmmod").arg(WIFI_MODULE).status();
+        self.breadcrumb("restart: WiFi driver unloaded, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("restart: sync returned, about to signal init");
         let _ = Command::new("reboot").status();
