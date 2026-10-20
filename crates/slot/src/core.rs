@@ -262,6 +262,9 @@ pub fn apply_core_options(
         // cart's own header read honestly, and naming a model here would override what the cart
         // says about itself. Nothing sets `mgba_use_bios` or `mgba_skip_bios`.
         core.set_option("mgba_sgb_borders", "OFF");
+        // Pokémon Pinball: Ruby & Sapphire only rumbles once it has seen a Game Boy Player answer
+        // its logo check, which mGBA only gives with this on. From slot 15e6886.
+        core.set_option("mgba_force_gbp", "ON");
         // The next two put back what a Game Boy Advance SP showed when an original monochrome
         // Game Boy cartridge was pushed into it. The SP has no monochrome mode to fall back on:
         // a Game Boy cart runs through the Game Boy Color compatibility the AGB inherits, and

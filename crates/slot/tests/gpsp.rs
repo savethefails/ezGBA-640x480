@@ -928,6 +928,24 @@ fn the_mgba_cartridge_clock_keeps_time_while_the_game_is_off() {
     keeps_time_while_off(Core::Mgba);
 }
 
+/// From slot 15e6886.
+#[test]
+fn mgba_always_answers_the_game_boy_player_logo() {
+    let _g = common::core_lock();
+    let path = dylib_for(Core::Mgba);
+    if !path.exists() {
+        eprintln!("no mgba dylib on this host, skipping");
+        return;
+    }
+    let mut core = slot_retro::LibretroCore::open(&path).expect("open core");
+    slot::core::apply_core_options(&mut core, Core::Mgba, "auto", false, false);
+    assert_eq!(
+        core.option("mgba_force_gbp").as_deref(),
+        Some("ON"),
+        "Pokemon Pinball Ruby and Sapphire only rumbles on a Game Boy Player"
+    );
+}
+
 #[test]
 fn gpsp_keeps_its_cartridge_clock_on_the_system_clock() {
     let _g = common::core_lock();
