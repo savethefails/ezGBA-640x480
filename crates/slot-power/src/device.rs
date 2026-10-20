@@ -13,6 +13,14 @@ use crate::{Battery, Charge, LedState, Platform};
 /// 100 on others.
 const TOP_STEP: u32 = 9;
 
+/// The dimmest lit step, as a share of `max_brightness`: the second of the old even steps,
+/// because some panels do not light at all at 1. From slot 3b6349c.
+const BACKLIGHT_FLOOR: f64 = 8.0 / 255.0;
+
+/// The steps from the floor to full follow `t^1.75`, so the low end goes dimmer than even
+/// steps did, which is where a night-time player wants it. From slot 664e546.
+const BACKLIGHT_CURVE: f64 = 1.75;
+
 /// Where the event nodes live. Only the motor is opened from here; the buttons are the
 /// binary's own business.
 const DEV_INPUT: &str = "/dev/input";
@@ -417,6 +425,17 @@ fn charge_at(dir: &Path) -> Charge {
     }
 }
 
+fn backlight_value(step: u8, max: u32) -> u32 {
+    let step = u32::from(step).min(TOP_STEP);
+    if step == 0 {
+        return 0;
+    }
+    let t = f64::from(step - 1) / f64::from(TOP_STEP - 1);
+    let floor = (f64::from(max) * BACKLIGHT_FLOOR).round().max(1.0);
+    let span = f64::from(max) - floor;
+    (floor + span * t.powf(BACKLIGHT_CURVE)).round() as u32
+}
+
 fn headphones_in(gpio: &str) -> bool {
     gpio.lines()
         .find(|l| l.contains("|Headphone detection"))
@@ -435,8 +454,7 @@ impl Platform for DevicePlatform {
         let Some(backlight) = &self.backlight else {
             return;
         };
-        let step = u32::from(step).min(TOP_STEP);
-        let value = self.max_brightness * step / TOP_STEP;
+        let value = backlight_value(step, self.max_brightness);
         // A node that was found and will not take a write is a different fault from one that
         // was never there, and from outside they are the same dark panel.
         let write = |file: PathBuf, body: String| {
