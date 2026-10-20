@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use slot_gfx::{OUT_H, OUT_W};
 use slot_input::{Action, Btn, MUTE_CHORD_MS};
@@ -72,6 +74,8 @@ const SLOT_LETTER_OUT_MS: Millis = 800;
 const SLOT_LETTER_ALPHA: f32 = 0.4;
 
 const AUTOSAVE_MS: Millis = 60_000;
+/// How often the card's mount is asked whether it has turned read-only.
+const CARD_CHECK_MS: Millis = 2_000;
 
 /// A dead battery is a far likelier hard cutoff than anyone holding POWER for eight
 /// seconds, so the last of the charge goes on the state and then on stopping.
@@ -647,6 +651,13 @@ pub struct App {
     /// The autosave being written on its own thread, joined before anything else writes the
     /// resume or the device goes down. See `autosave`.
     pending_save: Option<std::thread::JoinHandle<()>>,
+    /// Whether the last write to the card failed: the resume, a battery save, `slot.state`,
+    /// `theme.txt` or a video mode. Shared with the autosave's thread. Any write that lands
+    /// clears it. Behind the HUD's card alarm, with `card_read_only`. From slot 239769d.
+    card_failing: Arc<AtomicBool>,
+    /// Whether the card was mounted read-only when last asked, every `CARD_CHECK_MS`.
+    card_read_only: bool,
+    card_check_at: Millis,
     battery_at: Millis,
     charge_at: Millis,
     headphones: bool,
@@ -780,6 +791,9 @@ impl App {
             dozed_at: 0,
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
+            card_failing: Arc::default(),
+            card_read_only: false,
+            card_check_at: 0,
             battery_at: BATTERY_POLL_MS,
             charge_at: CHARGE_POLL_MS,
             headphones: false,
@@ -1459,9 +1473,11 @@ impl App {
         };
         // Best effort, like every other card write here: a read only or absent card is a
         // picture that still stretches, just not one that is still stretched next boot.
-        if let Err(e) = video_mode::write_video_mode(&root, cart, mode) {
+        let written = video_mode::write_video_mode(&root, cart, mode);
+        if let Err(e) = &written {
             eprintln!("slot: video: could not write video_mode.ini: {e}");
         }
+        self.card_failing.store(written.is_err(), Ordering::Relaxed);
     }
 
     /// The `gpsp_serial` the core `Session` just spawned was loaded with. Called in the same
@@ -2164,9 +2180,11 @@ impl App {
         };
         self.look.apply();
         if let Some(root) = &self.root {
-            if let Err(e) = write_theme_setting(root, name, &value) {
+            let written = write_theme_setting(root, name, &value);
+            if let Err(e) = &written {
                 eprintln!("slot: theme.txt: {e}");
             }
+            self.card_failing.store(written.is_err(), Ordering::Relaxed);
         }
     }
 
@@ -2662,6 +2680,19 @@ impl App {
         if self.now() >= self.autosave_at {
             self.autosave();
         }
+        if self.now() >= self.card_check_at {
+            self.card_check_at = self.now() + CARD_CHECK_MS;
+            self.card_read_only = self.power.as_ref().is_some_and(|p| p.card_read_only());
+        }
+        let failing = self.card_failing.load(Ordering::Relaxed) || self.card_read_only;
+        if failing != self.hud.alarmed() {
+            eprintln!(
+                "slot: card: alarm {} (read-only {})",
+                if failing { "on" } else { "off" },
+                self.card_read_only
+            );
+        }
+        self.hud.set_alarm(failing, self.now());
         if self.now() >= self.battery_at {
             self.battery_at = self.now() + BATTERY_POLL_MS;
             self.battery = self.power.as_ref().and_then(|p| p.battery());
@@ -2776,9 +2807,11 @@ impl App {
         let Some(root) = &self.root else {
             return;
         };
-        if let Err(e) = write_slot_state(root, &self.state) {
+        let written = write_slot_state(root, &self.state);
+        if let Err(e) = &written {
             eprintln!("slot: slot.state: {e}");
         }
+        self.card_failing.store(written.is_err(), Ordering::Relaxed);
     }
 
     pub fn on_core_ready(&mut self) {
@@ -3680,8 +3713,12 @@ impl App {
             Ok(()) => {
                 self.state.cart = None;
                 self.state.cart_platform = None;
+                self.card_failing.store(false, Ordering::Relaxed);
             }
-            Err(e) => eprintln!("slot: eject: {e}"),
+            Err(e) => {
+                eprintln!("slot: eject: {e}");
+                self.card_failing.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -4378,9 +4415,11 @@ impl App {
         self.state.shelf_cart = selected.as_ref().map(|(stem, _)| stem.clone());
         self.state.shelf_platform = selected.map(|(_, platform)| platform);
         if let Some(root) = &self.root {
-            if let Err(e) = write_slot_state(root, &self.state) {
+            let written = write_slot_state(root, &self.state);
+            if let Err(e) = &written {
                 eprintln!("slot: slot.state: {e}");
             }
+            self.card_failing.store(written.is_err(), Ordering::Relaxed);
         }
     }
 
@@ -4474,17 +4513,20 @@ impl App {
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "autosave");
         let (root, platform, core, cart) =
             (root.clone(), self.platform, self.core, cart.to_owned());
+        let failing = self.card_failing.clone();
         let write = move || {
-            if let Err(e) = persist::flush(
+            let written = persist::flush(
                 &root,
                 platform,
                 core,
                 &cart,
                 state.as_deref(),
                 sav.as_deref(),
-            ) {
+            );
+            if let Err(e) = &written {
                 eprintln!("slot: autosave: {e}");
             }
+            failing.store(written.is_err(), Ordering::Relaxed);
         };
         match std::thread::Builder::new()
             .name("slot-autosave".into())
@@ -4509,16 +4551,18 @@ impl App {
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
-        if let Err(e) = persist::flush(
+        let written = persist::flush(
             root,
             self.platform,
             self.core,
             cart,
             state.as_deref(),
             sav.as_deref(),
-        ) {
+        );
+        if let Err(e) = &written {
             eprintln!("slot: flush: {e}");
         }
+        self.card_failing.store(written.is_err(), Ordering::Relaxed);
     }
 
     /// The ring for the cart in the slot. `None` outside the binary, where there is no
@@ -4766,6 +4810,11 @@ impl App {
     /// happened: a refusal shakes instead.
     pub fn toast(&self) -> Option<Toast> {
         self.hud.said(self.now())
+    }
+
+    /// Whether the card alarm is up: the card is read-only or the last write to it failed.
+    pub fn card_alarm(&self) -> bool {
+        self.hud.alarmed()
     }
 
     /// One shot, and it hands the game back the way loading does. Undoing an undo would be a

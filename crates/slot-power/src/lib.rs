@@ -3,7 +3,7 @@ mod motor;
 mod power;
 mod sim;
 
-pub use device::{has_bit, motor_change, rumble_node, DevicePlatform};
+pub use device::{has_bit, motor_change, read_only, read_only_in, rumble_node, DevicePlatform};
 pub use motor::Motor;
 pub use power::Power;
 pub use sim::SimPlatform;
@@ -80,6 +80,12 @@ pub trait Platform: Send {
     }
 
     fn headphones(&self) -> bool {
+        false
+    }
+
+    /// Whether the card the games and saves live on is mounted read-only, which is what the
+    /// kernel does to a FAT card it finds damaged: from then on every save silently fails.
+    fn card_read_only(&self) -> bool {
         false
     }
 }
