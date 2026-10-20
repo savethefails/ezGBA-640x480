@@ -314,6 +314,10 @@ pub fn apply_core_options(
     }
     if which == Core::Gpsp {
         core.set_option("gpsp_serial", serial);
+        // A cartridge clock that follows the system clock, so Ruby, Sapphire and Emerald's day
+        // goes on while the game is off. gpSP's default advances it only with emulated frames.
+        // From slot a74600e.
+        core.set_option("gpsp_rtc_time_source", "system");
         if bios {
             core.set_option("gpsp_boot_mode", "bios");
         }
