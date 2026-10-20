@@ -360,10 +360,15 @@ fn the_shelf_says_where_its_selected_cart_stands() {
             .into_iter()
             .fold((0.0, 0.0), |a, b| if b.1 > a.1 { b } else { a });
         assert!(
-            (widest.0 - s.rest_x()).abs() < 0.5,
+            (widest.0 - s.selected_at().0).abs() < 0.5,
             "{n} carts: the selection stands at {} and the shelf says {}",
             widest.0,
-            s.rest_x()
+            s.selected_at().0
+        );
+        assert_eq!(
+            s.selected_at().1,
+            1.0,
+            "{n} carts: a settled selection is full size"
         );
     }
 }
@@ -1032,4 +1037,44 @@ fn a_cart_pushed_onto_the_row_draws_rather_than_stopping_the_device() {
         2,
         "the row holding a cart the shells never heard of did not draw both its neighbours"
     );
+}
+
+/// The same while the spring is still carrying the row, which is when a player presses A as
+/// often as not: the row's answer has to be the quad it is drawing the selection in, size and
+/// all, at every point of the travel. From slot f89df1c.
+#[test]
+fn the_shelf_says_where_its_selected_cart_is_while_the_row_is_moving() {
+    let mut s = shelf_with(5);
+    settle(&mut s);
+    s.right();
+    let selected = label_colour("Game 1");
+    for frame in 0..8 {
+        let mut out = Vec::new();
+        s.draw_row(None, 0.0, 0.0, 1.0, 0.0, &mut out);
+        let (x, w) = out
+            .iter()
+            .find_map(|d| match *d {
+                Draw::Rect { x, w, colour, .. }
+                    if (colour[0] * 255.0).round() as u8 == selected[0]
+                        && (colour[1] * 255.0).round() as u8 == selected[1]
+                        && (colour[2] * 255.0).round() as u8 == selected[2] =>
+                {
+                    Some((x, w))
+                }
+                _ => None,
+            })
+            .expect("the selected cart is not on the row");
+        let (at, scale) = s.selected_at();
+        assert!(
+            (x - at).abs() < 0.5 && (w - CART_W as f32 * scale).abs() < 0.5,
+            "frame {frame}: the row draws the selection at {x} {w} wide, and says {at} at {scale}"
+        );
+        if frame == 1 {
+            assert!(
+                scale < 0.99,
+                "the row had already settled, so this tests nothing"
+            );
+        }
+        s.update(1.0 / 60.0);
+    }
 }

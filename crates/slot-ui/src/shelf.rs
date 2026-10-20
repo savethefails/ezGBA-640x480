@@ -454,22 +454,29 @@ impl Shelf {
         (nearest == off || halfway).then(|| at(off))
     }
 
-    /// Where the selected cart stands once the row has settled, in offscreen pixels: dead
-    /// centre, whatever the row holds. The cart going into the slot and the cart the picker
-    /// opens are both drawn by somebody else, starting from where this row left it, so the row
-    /// has to be able to say where that is rather than have each of them assume it.
+    /// Where the row is drawing its selected cart *this frame*: the left edge of its quad, and
+    /// how big that quad is against the cartridge's own size. The cart going into the slot and
+    /// the cart the core picker opens are both drawn by somebody else, taking over from this
+    /// row mid-movement, so the row has to be able to say where it had the cart rather than
+    /// have each of them assume.
     ///
-    /// The width is asked of the selected cart rather than assumed to be `CART_W`, so this is
-    /// `draw_row`'s own placement of that cart with `offset` at zero rather than a second copy
-    /// of the sum. Both cartridges are 240 wide today, so the number is the same either way;
-    /// the point is that it stays the same as what is drawn if a later one is not. `CART_W`
-    /// stands in for an empty row, which draws no cart to measure.
-    pub fn rest_x(&self) -> f32 {
+    /// This frame and not once the spring has settled: nothing makes the player wait for the
+    /// spring before pressing A. Pressed while the row is still travelling, the selection is
+    /// somewhere between two slots and shrunken as much as `SIDE_SCALE`, and answering "dead
+    /// centre, full size" made the cartridge jump up to a pitch sideways and grow by a third on
+    /// the frame the button went down. From slot f89df1c.
+    ///
+    /// The sum is `draw_row`'s own for the slot the selection is in, with `recede` at zero
+    /// because nothing has begun to part yet. The width is asked of the selected cart rather
+    /// than assumed to be `CART_W`; `CART_W` stands in for an empty row, which draws no cart.
+    pub fn selected_at(&self) -> (f32, f32) {
         let w = self
             .carts
             .get(self.index)
-            .map_or(CART_W, |c| cart_box(c.platform).0);
-        (OUT_W as f32 - w as f32) / 2.0
+            .map_or(CART_W, |c| cart_box(c.platform).0) as f32;
+        let offset = self.scroll_target() - self.scroll;
+        let scale = shrink(offset);
+        (OUT_W as f32 / 2.0 + offset * PITCH - w * scale / 2.0, scale)
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -524,7 +531,7 @@ impl Shelf {
             // where on the row it stands: every row is centred on the cart it has selected.
             let offset = target + slot as f32 - self.scroll;
             let t = offset.abs().min(1.0);
-            let scale = 1.0 + (SIDE_SCALE - 1.0) * t;
+            let scale = shrink(offset);
             let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
             let (cw, ch) = cart_box(cart.platform);
             let (w, h) = (cw as f32 * scale, ch as f32 * scale);
@@ -604,6 +611,13 @@ impl Shelf {
             });
         }
     }
+}
+
+/// How big a cart `offset` pitches from the selection is drawn, against its own size. Full at
+/// the selection and `SIDE_SCALE` from a pitch out, and one function for `draw_row` and
+/// `selected_at`, which have to agree about the selected cart on every frame of the spring.
+fn shrink(offset: f32) -> f32 {
+    1.0 + (SIDE_SCALE - 1.0) * offset.abs().min(1.0)
 }
 
 /// How solid the shadow under a dimmed cart is. It carries the whole of the cart's opacity

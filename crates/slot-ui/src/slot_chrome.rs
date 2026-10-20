@@ -169,12 +169,16 @@ const CREEP: f32 = 0.03;
 pub struct SlotChrome<'a> {
     pub cart: &'a Cart,
     pub face: Option<TexId>,
-    /// Where the shelf left this cart standing, as `Shelf::rest_x` gives it. Usually the middle
-    /// of the screen, and half a pitch left of it on a shelf holding two carts, which is
-    /// centred as a pair rather than on its selection. The travel below carries the cart from
-    /// here to the slot, so a cart that was not standing centred slides across as it goes down
-    /// rather than jumping to the mouth on the first frame.
+    /// Where the shelf had this cart on the frame the button went down, as `Shelf::selected_at`
+    /// gives it: the left edge of the quad the row was drawing. The travel below carries the
+    /// cart from here to the slot, so a cart the row had not finished bringing to the middle
+    /// slides across as it goes down rather than jumping to the mouth on the first frame.
     pub rest: f32,
+    /// And how big the row had it, against the cartridge's own size: `Shelf::selected_at`'s
+    /// second answer. A settled row hands over 1.0; a row still springing hands over as little
+    /// as its `SIDE_SCALE`, and the cart grows to full size over the same travel that carries
+    /// it down rather than jumping a third larger on the first frame.
+    pub scale: f32,
     /// How far below the screen's middle the shelf row is drawn, so the travel starts where
     /// the cart visibly stands.
     pub lower: f32,
@@ -231,10 +235,17 @@ impl SlotChrome<'_> {
         // pressed, so anything but the row's own placement is a cart that jumps on that frame —
         // and the row centres a cartridge on the screen, which puts a 253 px pak's foot 59 px
         // below a GBA cart's.
-        let stands = rest_y(ch) + self.lower;
+        //
+        // The foot begins on the row's floor whatever size the row had the cart at, because the
+        // row shrinks a cart upward off that floor rather than about its middle, so `stands` is
+        // measured back from the foot. Both the drop and the growth are on the one progress.
+        let scale = self.scale.clamp(0.0, 1.0);
+        let (w0, h0) = (cw * scale, ch * scale);
+        let stands = foot_y(ch) - h0 + self.lower;
         let travel = travel(seat, ch, self.lower);
         let x = self.rest + (seated_x(cw) - self.rest) * travel;
         let y = stands + (SEATED_Y - stands) * travel;
+        let (cw, ch) = (w0 + (cw - w0) * travel, h0 + (ch - h0) * travel);
         // The cart fades with the case rather than through it. A seated cart is really in the
         // slot and has to be drawn, so the whole device face has to leave as one object as the
         // picture takes over. Held at full while the screen is off, which is all of the travel.
