@@ -196,7 +196,9 @@ takes both down:
   The frames run ahead are never heard, and the sound you hear is exactly the sound the game
   makes with run-ahead off. On mGBA that took three fixes to the emulator, because its save
   states lost the GBA's tone channels' pitch and left a little of the frame ahead's sound behind
-  (`cores/mgba/`). On snes9x, ezGBA tells the emulator not to draw the real frame, not to work
+  (`cores/mgba/`). A fourth, from slot, keeps saves whole: mGBA forgot which half of a 128 KB
+  flash save chip a game had selected whenever a state was loaded, so with run-ahead on, a game
+  saving to the second half (Pokémon, Super Mario Advance 4) wrote into the first. On snes9x, ezGBA tells the emulator not to draw the real frame, not to work
   out the frame ahead's sound at all, and to load the state back by its quick path: on a
   desktop that cut a frame of run-ahead in a Mode 7 test from about 2.5 times a normal frame's
   work to about 1.6 times.
