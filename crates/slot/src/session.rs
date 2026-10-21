@@ -7,7 +7,7 @@ use slot_store::{Core, Platform};
 use slot_ui::FfState;
 
 use crate::app::{App, Phase};
-use crate::audio::{open_sink, AudioSink, Ring, Sfx, GBA_HZ};
+use crate::audio::{AudioSink, Ring, Sfx};
 use crate::core::open_core;
 use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
@@ -53,12 +53,12 @@ pub struct Session {
 
 impl Session {
     pub fn boot(root: PathBuf) -> Self {
-        let mut sink: Box<dyn AudioSink> = open_sink();
-        // A frontend for one console knows the rate before it knows the cart. A device that
-        // refuses it still opens, and the worker resamples to whatever it did take.
-        if let Err(e) = sink.open(GBA_HZ) {
-            eprintln!("slot: audio: {e}");
-        }
+        Self::boot_with(root, crate::audio::opened_sink())
+    }
+
+    /// `boot`, with an audio sink already opened, which the device opens on a thread while the
+    /// panel and the GPU come up.
+    pub fn boot_with(root: PathBuf, sink: Box<dyn AudioSink>) -> Self {
         Session {
             app: App::boot(&root),
             root,

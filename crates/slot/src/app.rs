@@ -820,7 +820,10 @@ impl App {
         let look = Look::from(&theme);
         look.apply();
         slot_ui::set_theme(theme);
-        let mut app = App::new(scan(root).unwrap_or_default());
+        crate::boot_time::mark("root and theme");
+        let carts = scan(root).unwrap_or_default();
+        crate::boot_time::mark("scan");
+        let mut app = App::new(carts);
         app.look = look;
         app.menu = theme.menu;
         app.root = Some(root.to_path_buf());

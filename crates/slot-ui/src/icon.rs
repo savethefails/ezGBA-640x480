@@ -269,6 +269,13 @@ fn frame(font: &Font, px: f32) -> Frame {
     }
 }
 
+/// Parses both fonts now, so the first face that needs one does not wait on it. For a thread
+/// at the very start of the boot. From slot 8a52c5d.
+pub fn warm_fonts() {
+    let _ = symbols_font();
+    let _ = crate::text::label_font();
+}
+
 pub(crate) fn symbols_font() -> Option<&'static Font> {
     static FONT: OnceLock<Option<Font>> = OnceLock::new();
     FONT.get_or_init(|| Font::from_bytes(SYMBOLS_TTF, FontSettings::default()).ok())

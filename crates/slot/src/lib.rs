@@ -2,6 +2,7 @@ pub mod app;
 pub mod art_cache;
 pub mod audio;
 pub mod boot_picture;
+pub mod boot_time;
 pub mod box_art;
 pub mod build_info;
 pub mod cable;

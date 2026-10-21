@@ -31,6 +31,17 @@ pub fn open_sink() -> Box<dyn AudioSink> {
     Box::new(HostAudio::new())
 }
 
+/// `open_sink`, opened at `GBA_HZ`. A frontend for one console knows the rate before it knows
+/// the cart. A device that refuses it still opens, and the worker resamples to whatever it did
+/// take. On its own so the boot can open it on a thread.
+pub fn opened_sink() -> Box<dyn AudioSink> {
+    let mut sink = open_sink();
+    if let Err(e) = sink.open(GBA_HZ) {
+        eprintln!("slot: audio: {e}");
+    }
+    sink
+}
+
 #[cfg(not(feature = "host"))]
 pub fn open_sink() -> Box<dyn AudioSink> {
     Box::new(AlsaSink::new())
