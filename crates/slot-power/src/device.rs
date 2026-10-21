@@ -4,7 +4,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{Battery, Charge, LedState, Platform};
 
@@ -28,6 +28,24 @@ const DEV_INPUT: &str = "/dev/input";
 /// The RG35XXSP's WiFi driver, which the link radio uses. Its shutdown hook hangs a reboot or a
 /// power off on a black screen, so both unload it first (power off from slot ad5ce8a, #117).
 const WIFI_MODULE: &str = "8821cs";
+
+/// How long `rmmod` gets before the shutdown goes on without it. The unload can hang too, and
+/// the card is synced before it starts, so giving up costs nothing that matters.
+const WIFI_UNLOAD_WAIT: Duration = Duration::from_secs(5);
+
+/// Unloads the WiFi driver, waiting at most `WIFI_UNLOAD_WAIT`. From slot c5de4cc.
+fn unload_wifi() {
+    let Ok(mut rmmod) = Command::new("rmmod").arg(WIFI_MODULE).spawn() else {
+        return;
+    };
+    let until = Instant::now() + WIFI_UNLOAD_WAIT;
+    while Instant::now() < until {
+        if !matches!(rmmod.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 /// The card alarm's record, on the device's own storage.
 const CARD_LOG: &str = "/data/slot-card.log";
@@ -539,9 +557,10 @@ impl Platform for DevicePlatform {
     }
 
     fn restart(&mut self) -> ! {
-        self.breadcrumb("restart: reached slot, unloading the WiFi driver");
-        let _ = Command::new("rmmod").arg(WIFI_MODULE).status();
-        self.breadcrumb("restart: WiFi driver unloaded, about to sync");
+        self.breadcrumb("restart: reached slot, syncing before the WiFi driver unloads");
+        let _ = Command::new("sync").status();
+        unload_wifi();
+        self.breadcrumb("restart: WiFi driver unloaded or given up on, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("restart: sync returned, about to signal init");
         let _ = Command::new("reboot").status();
@@ -550,9 +569,10 @@ impl Platform for DevicePlatform {
     }
 
     fn poweroff(&mut self) -> ! {
-        self.breadcrumb("poweroff: reached slot, unloading the WiFi driver");
-        let _ = Command::new("rmmod").arg(WIFI_MODULE).status();
-        self.breadcrumb("poweroff: WiFi driver unloaded, about to sync");
+        self.breadcrumb("poweroff: reached slot, syncing before the WiFi driver unloads");
+        let _ = Command::new("sync").status();
+        unload_wifi();
+        self.breadcrumb("poweroff: WiFi driver unloaded or given up on, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("poweroff: sync returned, about to signal init");
         let _ = Command::new("poweroff").status();
