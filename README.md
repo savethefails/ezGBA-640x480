@@ -291,10 +291,13 @@ says just `auto` puts a cart back to its usual shell.
 
 ## Updating
 
-On a card that's already set up, only `System/slot` changes between builds. The **slot**
-workflow builds just that file on every push to this repo, in a couple of minutes. Open the
-latest **slot** run under Actions, download the artifact at the bottom, unzip it, and copy
-`slot` into the card's `System` folder, replacing the old one. Your saves and settings are left
+On a card that's already set up, only `System/slot` and `System/slotlink.sh` change between
+builds. The **slot** workflow builds those two files on every push to this repo, in a couple of
+minutes. Open the latest **slot** run under Actions, download the artifact at the bottom, unzip
+it, and copy both files into the card's `System` folder, replacing the old ones.
+`slotlink.sh` is what brings the wireless link up, from slot's own script for BaseOS; a card from
+before it also has a `System/ags-net`, which nothing uses any more and can be deleted. Both SPs
+in a link need the same build. Your saves and settings are left
 alone: settings live in `Config/`, so even replacing the whole `System` folder doesn't touch
 them. A card from an older build keeps its settings in `System/`; they move to `Config/` by
 themselves on the first boot of this one. `selected_core`, `video_mode` and `cart_shell` used to

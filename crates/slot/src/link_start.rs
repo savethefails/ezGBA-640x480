@@ -123,7 +123,7 @@ impl LinkStep {
     ///
     /// Only the first step moves, and only when the radio is warm. The link screen asks for a
     /// `RadioJob::Warm` the moment it opens, and that takes about 1.1 s — the load
-    /// `ags-net link host|join` would otherwise pay for inside this step. A player who spent
+    /// `slotlink.sh link host|join` would otherwise pay for inside this step. A player who spent
     /// longer than that choosing a role never waits for it, so the screen stops narrating a
     /// wait that has already happened and says what the step is now doing. The work underneath
     /// is unchanged: a host still spends about 1.6 s bringing its access point up, and looking
@@ -191,7 +191,7 @@ fn classify(e: &std::io::Error) -> LinkFail {
     }
 }
 
-/// Bring the private network up. Injectable so tests never shell out to `ags-net`. It takes
+/// Bring the private network up. Injectable so tests never shell out to `slotlink.sh`. It takes
 /// the cancel flag because the real one is a child process that can be killed: a joiner's
 /// search runs for half a minute, and a player who has backed out should not sit through it.
 type RadioUp = Box<dyn FnMut(LinkRole, &Cancel) -> Result<(), RadioFail> + Send>;
@@ -259,7 +259,7 @@ impl LinkStarter {
                         LinkFail::Radio
                     }
                 };
-                // `up` failing is no promise that nothing came up: `ags-net link` can get an
+                // `up` failing is no promise that nothing came up: `slotlink.sh link` can get an
                 // interface as far as configured and still exit non-zero.
                 radio_down();
                 let _ = tx.send(LinkProgress::Failed(fail));
@@ -442,7 +442,7 @@ mod step_tests {
     use super::*;
 
     /// The sentence is about a wait, so it goes when the wait does. With the driver already
-    /// loaded the step runs `ags-net link host|join` with nothing to load, and what it is doing
+    /// loaded the step runs `slotlink.sh link host|join` with nothing to load, and what it is doing
     /// from its first frame is looking for the other player.
     #[test]
     fn a_warm_radio_captions_the_first_step_as_the_search() {

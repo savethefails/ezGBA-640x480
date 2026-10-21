@@ -79,6 +79,12 @@ tasks:
       - task: lint
       - task: lint:device
       - task: test
+      - task: test:card
+
+  test:card:
+    desc: Test the scripts ezGBA ships on the card, off-device, against fake WiFi tools
+    cmds:
+      - sh card/test-slotlink.sh
 
   core:
     desc: >-
@@ -376,7 +382,8 @@ tasks:
         vars:
           CMD: ./target-device/device/slot --init-root {{.OUT}}
       - cp target-device/device/slot {{.OUT}}/System/slot
-      - cp card/System/ags-net {{.OUT}}/System/ags-net
+      # The scripts slot calls, from card/System: slotlink.sh brings the link network up.
+      - cp card/System/* {{.OUT}}/System/
       # `core:device` and `core:gpsp`'s own arch check only runs on a fresh build: their
       # `status` skips the whole task, check included, whenever the core and its .meta already
       # match — so a hand-placed x86 `.so` beside a copied .meta sails through unchecked. Re-checked
@@ -453,7 +460,7 @@ tasks:
       # The binary is replaced under the running process, which is why the reboot below is
       # part of the task and not left to be remembered.
       - adb push target-device/device/slot '{{.SD}}/System/slot'
-      - adb push card/System/ags-net '{{.SD}}/System/ags-net'
+      - for f in card/System/*; do adb push "$f" '{{.SD}}/System/'; done
       - adb push vendor/mgba_libretro.so '{{.SD}}/System/mgba_libretro.so'
       - adb push vendor/gpsp_libretro.so '{{.SD}}/System/gpsp_libretro.so'
       - adb push vendor/snes9x_libretro.so '{{.SD}}/System/snes9x_libretro.so'

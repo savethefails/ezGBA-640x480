@@ -1,4 +1,6 @@
-//! Bringing the private link network up and down, by shelling out to `ags-net link`.
+//! Bringing the private link network up and down, by running the card's `System/slotlink.sh`,
+//! slot's own script for BaseOS (from slot 0a01989): the host raises a WPA2 access point on
+//! `wlan1` at 5745 MHz, the joiner associates on `wlan0`. It replaced ezGBA's `ags-net`.
 //!
 //! Not on `Platform` despite that being the seam for talking to the machine: `App` owns its
 //! `Power` outright, and a link session needs this from a worker thread. See the plan.
@@ -15,6 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 #[cfg(feature = "device")]
 use std::sync::OnceLock;
+#[cfg(any(feature = "device", test))]
+use std::{path::Path, process::Command};
 
 use crate::link_net::Cancel;
 
@@ -27,7 +31,7 @@ pub enum LinkRole {
 }
 
 impl LinkRole {
-    /// The subcommand `ags-net link` expects.
+    /// The subcommand `slotlink.sh link` expects.
     pub fn arg(self) -> &'static str {
         match self {
             LinkRole::Host => "host",
@@ -42,13 +46,13 @@ impl LinkRole {
 /// is about the radio at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioFail {
-    /// `ags-net link join` exited 3: the station ran for its whole search and no host
+    /// `slotlink.sh link join` exited 3: the station ran for its whole search and no host
     /// answered. The radio is fine; the other player is not there.
     NoHost,
     /// The player backed out, and the child was killed rather than waited out.
     Cancelled,
-    /// Anything else — a dead access point, an interface that never appeared, no `ags-net` on
-    /// this machine at all.
+    /// Anything else — a dead access point, an interface that never appeared, no
+    /// `slotlink.sh` on the card at all.
     Radio(String),
 }
 
@@ -57,7 +61,8 @@ pub enum RadioFail {
 pub enum RadioJob {
     /// Load the driver and wait for its interfaces, without associating or hosting.
     Warm,
-    /// Unload it, unless `ags-net` finds something still wants it.
+    /// Unload it, unless the script finds something still wants it. On BaseOS it leaves the
+    /// driver loaded.
     Cool,
     /// End a session: drop the access point or the association, and cool on the way out.
     Down,
@@ -145,24 +150,21 @@ fn queue() -> &'static Sender<RadioJob> {
 /// and `cool` exits 2 with a usage message, which is exactly as harmless as it sounds: the radio
 /// then behaves the way it did before they existed, and the answer here is `false`, which is the
 /// truth about the driver on such a card. The status is read for that one thing and never to
-/// fail a link: `ags-net link host` loads the driver itself if this did not.
+/// fail a link: `slotlink.sh link host` loads the driver itself if this did not.
 #[cfg(feature = "device")]
 fn run(sub: &str) -> bool {
-    ags_net()
-        .arg(sub)
-        .status()
-        .is_ok_and(|status| status.success())
+    link(sub).status().is_ok_and(|status| status.success())
 }
 
 /// Blocking, and slow enough to matter — about two seconds for a host and up to thirty for a
 /// joiner that is waiting out its search. The caller owns a thread the UI is not waiting on,
-/// and hands in the flag its player can set: `ags-net` is a child process, so a cancel kills
+/// and hands in the flag its player can set: the script is a child process, so a cancel kills
 /// it rather than waiting for a window the player has already given up on.
 #[cfg(feature = "device")]
 pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
-    let mut child = ags_net().arg(role.arg()).spawn().map_err(|e| {
-        RadioFail::Radio(format!("ags-net link {} would not start: {e}", role.arg()))
-    })?;
+    let mut child = link(role.arg())
+        .spawn()
+        .map_err(|e| RadioFail::Radio(format!("link {} would not start: {e}", role.arg())))?;
     loop {
         if cancel.is_cancelled() {
             let _ = child.kill();
@@ -171,23 +173,18 @@ pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
         }
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
-            // 3 is `ags-net link join` saying it searched and found no host. Reported as
+            // 3 is `slotlink.sh link join` saying it searched and found no host. Reported as
             // itself so the screen can say nobody arrived, which is what happened, rather
             // than blaming a radio that worked.
             Ok(Some(status)) if status.code() == Some(3) => return Err(RadioFail::NoHost),
             Ok(Some(status)) => {
                 return Err(RadioFail::Radio(format!(
-                    "ags-net link {} failed: {status}",
+                    "link {} failed: {status}",
                     role.arg()
                 )))
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(e) => {
-                return Err(RadioFail::Radio(format!(
-                    "ags-net link {}: {e}",
-                    role.arg()
-                )))
-            }
+            Err(e) => return Err(RadioFail::Radio(format!("link {}: {e}", role.arg()))),
         }
     }
 }
@@ -196,17 +193,25 @@ pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
 /// it, and a teardown that can fail is a teardown callers skip.
 #[cfg(feature = "device")]
 pub fn down() {
-    let _ = ags_net().arg("down").status();
+    let _ = link("down").status();
 }
 
-/// `ags-net link`. BaseOS ships no `ags-net`, so ezGBA carries its own as `System/ags-net`, run
-/// by the shell because the card keeps no executable bit, and relative to the card's root
-/// because that is where BaseOS starts slot.
-#[cfg(feature = "device")]
-fn ags_net() -> std::process::Command {
-    let mut cmd = std::process::Command::new("/bin/sh");
-    cmd.args(["System/ags-net", "link"]);
+/// `link <verb>` against the card's script, through `sh` because the card keeps no exec bit. A
+/// card without the script fails the link with sh's error rather than doing anything else.
+#[cfg(any(feature = "device", test))]
+fn link_command(root: &Path, verb: &str) -> Command {
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg(root.join("System/slotlink.sh"))
+        .arg("link")
+        .arg(verb);
     cmd
+}
+
+/// The same, on the card slot was started from: `SLOT_ROOT`, as `device_app` reads it.
+#[cfg(feature = "device")]
+fn link(verb: &str) -> Command {
+    let root = std::env::var_os("SLOT_ROOT").unwrap_or_else(|| "/mnt/sdcard".into());
+    link_command(Path::new(&root), verb)
 }
 
 /// No radio to bring up anywhere but the device, and nothing to shell out to. A host build
@@ -254,6 +259,24 @@ mod tests {
         jobs.ask(RadioJob::Warm);
         jobs.ask(RadioJob::Cool);
         jobs.ask(RadioJob::Down);
+    }
+
+    fn argv(cmd: &Command) -> Vec<String> {
+        std::iter::once(cmd.get_program())
+            .chain(cmd.get_args())
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// From slot 0a01989: the card's script, through sh, by its path from the card's root.
+    #[test]
+    fn a_link_runs_the_cards_script_through_sh() {
+        let d = tempfile::tempdir().unwrap();
+        let script = d.path().join("System/slotlink.sh");
+        assert_eq!(
+            argv(&link_command(d.path(), "host")),
+            ["/bin/sh", script.to_str().unwrap(), "link", "host"]
+        );
     }
 
     /// Two copies of slot on one machine is a real way to drive the link screen, and the radio
