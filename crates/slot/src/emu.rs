@@ -618,10 +618,12 @@ impl Snapshot for EmuSnapshot {
 
 impl Drop for EmuHandle {
     fn drop(&mut self) {
+        eprintln!("slot: emu: stopping at {:.1} ms", crate::boot_time::ms());
         self.shared.stop.store(true, Ordering::Relaxed);
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+        eprintln!("slot: emu: stopped at {:.1} ms", crate::boot_time::ms());
     }
 }
 
@@ -658,6 +660,11 @@ impl Worker {
         resume: Option<Vec<u8>>,
         link: Link,
     ) {
+        eprintln!(
+            "slot: emu: loading {} at {:.1} ms",
+            rom.display(),
+            crate::boot_time::ms()
+        );
         if let Err(e) = core.load(&rom) {
             eprintln!("slot: {e}");
             self.shared
@@ -668,6 +675,11 @@ impl Worker {
         // After the load: there is no save ram to copy into until the rom says how much of
         // it there is. A game with none at all is not a failure to boot.
         if let Some(sav) = sav {
+            eprintln!(
+                "slot: emu: save ram, {} bytes, at {:.1} ms",
+                sav.len(),
+                crate::boot_time::ms()
+            );
             if let Err(e) = core.load_save_ram(&sav) {
                 eprintln!("slot: save ram: {e}");
                 // The core is about to run with its own idea of save ram rather than the
@@ -682,6 +694,11 @@ impl Worker {
         // the intro. A state the core will not take leaves the save ram loaded above, which
         // costs the player their position but not their progress.
         if let Some(resume) = resume {
+            eprintln!(
+                "slot: emu: resume state, {} bytes, at {:.1} ms",
+                resume.len(),
+                crate::boot_time::ms()
+            );
             if let Err(e) = core.unserialize(&self.to_core(resume)) {
                 eprintln!("slot: resume: {e}");
                 // Same reasoning as `sav_refused` above, for the resume half: a core running
@@ -711,6 +728,7 @@ impl Worker {
         self.shared
             .state
             .store(CoreState::Ready as u8, Ordering::Release);
+        eprintln!("slot: emu: ready at {:.1} ms", crate::boot_time::ms());
 
         let mut out = Vec::new();
         // What the ring was last told: muted, and idle. Neither, to begin with.

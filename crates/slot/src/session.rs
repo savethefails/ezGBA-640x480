@@ -412,8 +412,11 @@ impl Session {
         self.sync_reload();
         // After the core sync: a handle spawned or dropped this frame has published nothing
         // the renderer may show.
-        self.app
-            .set_game_ready(self.emu.as_ref().is_some_and(EmuHandle::has_published));
+        let ready = self.emu.as_ref().is_some_and(EmuHandle::has_published);
+        if ready && !self.app.game_ready() {
+            launch("first frame shown");
+        }
+        self.app.set_game_ready(ready);
         self.sync_speed();
         self.sync_rewind_hud();
         self.sync_ff_hud();
@@ -702,6 +705,7 @@ impl Session {
                 _ => self.app.snes_core(),
             },
         };
+        launch(&format!("opening {stem} on {}", core.as_str()));
         self.app.set_core(core);
         // `platform` comes straight off the `Cart` the shelf scanned, not re-derived from the
         // stem: it is what closes the same class of drift for a `.gb` and a `.gba` cart that
@@ -721,6 +725,7 @@ impl Session {
         let resume = (!self.app.starting_clean())
             .then(|| persist::read_resume(&self.root, platform, core, stem))
             .flatten();
+        launch("resume state read");
         // Colour correction is read here, at the one moment a libretro core reads an option at
         // all. The quick menu that sets it is only ever open on the shelf, with the core already
         // dropped, so the cart going in now is always the first to see a change made there — the
@@ -739,7 +744,9 @@ impl Session {
         // refused the resume above, and a refusal from the mock standing in for a missing dylib
         // means something entirely different from a refusal by the cart's own core.
         self.app.set_named_core(opened.named);
+        launch("core opened");
         let sav = persist::read_sav(&self.root, platform, stem);
+        launch("save read");
         let ring = self.sink.ring();
         // Game Boy link mode keeps no link state: only a GBA pair is wrapped and unwrapped.
         let emu = match player.filter(|_| platform == Platform::Gba) {
@@ -808,4 +815,9 @@ impl Session {
 pub(crate) fn trace() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("SLOT_TRACE").is_some())
+}
+
+/// One step of a game's launch in the log, with its time since boot. From slot 4b5b4d6.
+fn launch(step: &str) {
+    eprintln!("slot: launch: {step} at {:.1} ms", crate::boot_time::ms());
 }

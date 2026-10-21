@@ -2697,6 +2697,10 @@ impl App {
         self.game_ready = ready;
     }
 
+    pub fn game_ready(&self) -> bool {
+        self.game_ready
+    }
+
     /// Whether the draw list carries the game layer. A core that has published nothing would
     /// otherwise show the last cart's final frame for the length of the insert.
     pub fn game_visible(&self) -> bool {
@@ -3668,6 +3672,10 @@ impl App {
         else {
             return;
         };
+        eprintln!(
+            "slot: launch: insert {cart} at {:.1} ms",
+            crate::boot_time::ms()
+        );
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
