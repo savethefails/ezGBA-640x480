@@ -1492,11 +1492,11 @@ impl App {
     /// core and the screen cannot come to disagree about which mode a cart is in. A cart the
     /// shelf cannot name links by cable, on gpSP's own pick.
     pub fn link_mode(&self, stem: &str) -> (LinkKind, &'static str) {
-        let Some((cart, auto)) = self.auto_link(stem) else {
+        let Some((title, code, auto)) = self.auto_link(stem) else {
             return (LinkKind::Cable, "auto");
         };
         let chosen = self.link_choices.get(stem).copied().unwrap_or(auto);
-        (chosen, serial_option(chosen, auto, &cart.code, &cart.title))
+        (chosen, serial_option(chosen, auto, &code, &title))
     }
 
     /// Whether a netpacket session is live right now. libretro disables an entire class of
@@ -3623,14 +3623,15 @@ impl App {
         }
     }
 
-    /// The cart named `stem`, and the hardware gpSP picks for it on its own. Read from the
-    /// header on disk, so asked only when something is about to act on the answer — the link
-    /// screen opening, a core loading, a link being picked — and never once a frame. `None`
-    /// for a cart the shelf cannot name.
-    fn auto_link(&self, stem: &str) -> Option<(&Cart, LinkKind)> {
+    /// The header title and game code of the cart named `stem`, and the hardware gpSP picks
+    /// for it on its own. Read from the header on disk, so asked only when something is about
+    /// to act on the answer — the link screen opening, a core loading, a link being picked —
+    /// and never once a frame. `None` for a cart the shelf cannot name.
+    fn auto_link(&self, stem: &str) -> Option<(String, String, LinkKind)> {
         let (cart, _) = self.shelf().find(stem)?;
-        let auto = link_kind(&cart.code, &cart.title, slot_store::header_clean(&cart.rom));
-        Some((cart, auto))
+        let (title, code) = slot_store::header_ids(cart);
+        let auto = link_kind(&code, &title, slot_store::header_clean(&cart.rom));
+        Some((title, code, auto))
     }
 
     fn on_shelf(&self) -> bool {
@@ -4041,7 +4042,7 @@ impl App {
         let carried = self
             .seated()
             .and_then(|stem| self.auto_link(stem))
-            .is_some_and(|(cart, _)| link_carried(&cart.code, &cart.title));
+            .is_some_and(|(title, code, _)| link_carried(&code, &title));
         if !carried {
             self.hud.toast(Toast::NoLink, self.now());
             return;
@@ -4231,9 +4232,9 @@ impl App {
         if self.core != Core::Gpsp {
             return false;
         }
-        self.auto_link(stem).is_some_and(|(cart, auto)| {
-            serial_option(self.link_hardware.other(), auto, &cart.code, &cart.title)
-                != serial_option(self.link_hardware, auto, &cart.code, &cart.title)
+        self.auto_link(stem).is_some_and(|(title, code, auto)| {
+            serial_option(self.link_hardware.other(), auto, &code, &title)
+                != serial_option(self.link_hardware, auto, &code, &title)
         })
     }
 

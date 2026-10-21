@@ -116,7 +116,7 @@ pub fn shell_for(cart: &Cart) -> Shell {
         return shell(choice.colour, finish);
     }
     match cart.platform {
-        Platform::Gba => gba_shell_for(&cart.code),
+        Platform::Gba => gba_shell_for(&slot_store::header_ids(cart).1),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
         Platform::Snes => snes_shell_for(&cart.rom),
     }

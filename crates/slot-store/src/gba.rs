@@ -13,6 +13,19 @@ const CODE_LEN: usize = 4;
 
 /// Seeks rather than reading the file, because a commercial rom is up to 32 MB and the
 /// shelf reads this for every cart at boot.
+/// The title and the game code in one read: twelve bytes, then the four after them.
+pub fn header_title_code(rom: &Path) -> Option<(String, String)> {
+    let mut f = File::open(rom).ok()?;
+    f.seek(SeekFrom::Start(TITLE_OFF)).ok()?;
+    let mut head = [0u8; (CODE_OFF - TITLE_OFF) as usize + CODE_LEN];
+    f.read_exact(&mut head).ok()?;
+    let (title, code) = head.split_at(TITLE_LEN);
+    Some((
+        text_from_bytes(title).unwrap_or_default(),
+        text_from_bytes(code).unwrap_or_default(),
+    ))
+}
+
 pub fn header_title(rom: &Path) -> Option<String> {
     field(rom, TITLE_OFF, &mut [0u8; TITLE_LEN])
 }
