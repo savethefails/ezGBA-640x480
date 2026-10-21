@@ -644,6 +644,9 @@ pub struct App {
     /// `None` in unit tests, where there is no panel to darken and no battery to run out.
     power: Option<Power>,
     dozed_at: Millis,
+    /// The POWER press being held right now is the one that woke the panel. Set on every press,
+    /// assigned rather than or-ed, so it is always about the press in hand. See `power_press`.
+    woke_on_press: bool,
     /// When the state next has to be on the card. Moved by every resume write, not only by
     /// the autosave itself.
     autosave_at: Millis,
@@ -792,6 +795,7 @@ impl App {
             clock: 0.0,
             power: None,
             dozed_at: 0,
+            woke_on_press: false,
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
             card_writes: card_writes.clone(),
@@ -1972,6 +1976,15 @@ impl App {
                 if self.link_active() {
                     self.end_link();
                     return;
+                }
+                // A press on a dark panel lights it on the press, not the release. Holding
+                // POWER on a dozing device used to run the shutdown on a panel nobody could
+                // see, so a user kept holding into the PMIC's own six second cutoff. A press may
+                // light the panel, never darken it: a doze still waits for the release. From
+                // slot d25d627.
+                self.woke_on_press = matches!(self.phase, Phase::Doze { .. });
+                if self.woke_on_press {
+                    self.wake();
                 }
                 return self.flush_resume();
             }
@@ -3885,7 +3898,14 @@ impl App {
 
     /// The lid's twin, and the only one of the two the device is certain to see. A tap
     /// dozes and a second one wakes.
+    ///
+    /// The wake has already happened on the press (`apply`'s `PowerPress` arm), and its release
+    /// stops here: otherwise a tap on a sleeping device would light it and put it straight back
+    /// out. The `Doze` arm still catches a doze reached between the press and the release.
     fn power_press(&mut self) {
+        if std::mem::take(&mut self.woke_on_press) {
+            return;
+        }
         match self.phase {
             Phase::Doze { .. } => self.wake(),
             _ => self.doze(),
