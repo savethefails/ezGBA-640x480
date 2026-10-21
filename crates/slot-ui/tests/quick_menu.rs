@@ -230,3 +230,38 @@ fn the_arrows_are_faces_the_height_of_a_value() {
         assert_eq!(caret.h, quick_value_face("On", true).h);
     }
 }
+
+/// From slot c61c6b1, which cut the symbols font to the glyphs slot draws: a caret the cut font
+/// lost would come back blank, and two blanks are equal.
+#[test]
+fn the_two_carets_point_different_ways() {
+    assert_ne!(
+        slot_ui::quick_caret_face(false).rgba,
+        slot_ui::quick_caret_face(true).rgba,
+        "a caret glyph is missing from the symbols font"
+    );
+}
+
+/// The symbols font carries only the glyphs ezGBA draws, so every icon and badge has to come
+/// out inked: a new icon whose glyph was not added to the cut would rasterise to nothing. The
+/// cut was made from Nerd Fonts' full SymbolsNerdFontMono-Regular.ttf with fontTools:
+///
+/// ```text
+/// pyftsubset SymbolsNerdFontMono-Regular.ttf --notdef-outline --name-IDs='*' --name-legacy \
+///   --name-languages='*' --unicodes=U+F028,U+F026,U+F075F,U+F185,U+F186,U+F06D2,U+F0211,\
+///   U+F04A,U+F0026,U+F0E7,U+F025,U+F07CE,U+F0339,U+F033A,U+F0D9,U+F0DA
+/// ```
+///
+/// A new glyph goes on the end of that list.
+#[test]
+fn every_symbol_ezgba_draws_is_in_the_symbols_font() {
+    let inked = |rgba: &[u8]| rgba.chunks(4).any(|p| p[3] > 0x80);
+    for icon in slot_ui::Icon::ALL {
+        let f = slot_ui::icon_face(icon, 24.0, [255, 255, 255]);
+        assert!(inked(&f.rgba), "{icon:?} has no glyph in the symbols font");
+    }
+    for badge in [slot_ui::Badge::Link, slot_ui::Badge::LinkBroken] {
+        let f = slot_ui::badge_face(badge, 24.0, [255, 255, 255]);
+        assert!(inked(&f.rgba), "{badge:?} has no glyph in the symbols font");
+    }
+}
