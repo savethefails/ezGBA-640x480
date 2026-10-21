@@ -7,7 +7,7 @@ use crate::root;
 
 /// Names the dylib outright, for a build that keeps it somewhere the search does not look.
 ///
-/// This wins over `System/selected_core.ini` for which dylib loads — it stays a developer
+/// This wins over `System/selected_core.txt` for which dylib loads — it stays a developer
 /// escape hatch, not a second way to pick a core. It is not silent about that: it does not
 /// touch which `Core` a cart resolves to (still the ini, still what the core half of
 /// `States/<platform>/<core>/` is named after), only which file `open_core` opens. Pointing
@@ -332,7 +332,7 @@ pub fn apply_core_options(
         // Setting it here is what keeps the row from being a lie on a gpSP cart. The quick menu
         // is a device-wide screen shown on the shelf with nothing seated, so it cannot know which
         // core the next cart will use; a row that only reached mGBA would do nothing, silently,
-        // for every cart whose `selected_core.ini` line says gpsp.
+        // for every cart whose `selected_core.txt` line says gpsp.
         core.set_option(
             "gpsp_color_correction",
             if colour { "enabled" } else { "disabled" },

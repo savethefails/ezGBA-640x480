@@ -2014,7 +2014,7 @@ fn a_shoulder_still_held_when_the_cart_seats_never_reaches_a_game_boy_core() {
     }
 }
 
-/// A display preference, remembered per cart, in the shape `selected_core.ini` already has —
+/// A display preference, remembered per cart, in the shape `selected_core.txt` already has —
 /// and it is the card that remembers it, which is why the second half boots the whole session
 /// again rather than reading the app's own field back.
 #[test]

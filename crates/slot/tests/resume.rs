@@ -54,7 +54,7 @@ fn read_resume_finds_what_a_flush_wrote() {
     );
 }
 
-/// `flush` used to read `selected_core.ini` itself, which meant its own read of the ini and
+/// `flush` used to read `selected_core.txt` itself, which meant its own read of the ini and
 /// `session.rs`'s could disagree — that gap is the whole reason this task exists. `flush`
 /// now takes `core` rather than deriving it, so this pins the half of the contract that
 /// lives in this function: whichever `Core` it is handed is where the resume lands, no ini

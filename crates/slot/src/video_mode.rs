@@ -20,12 +20,12 @@ use std::path::Path;
 use slot_gfx::Fit;
 use slot_store::{ini, Platform, SnesPicture};
 
-/// A sibling of `selected_core.ini`, in the same `<stem> = <value>` shape and read by the same
+/// A sibling of `selected_core.txt`, in the same `<stem> = <value>` shape and read by the same
 /// parser. Flat and stem-keyed like that one, which means a `GB/Tetris.gb` and a
 /// `GBC/Tetris.gbc` share a line. Deliberately: it is a two-value cosmetic preference that
 /// cannot lose anybody's data, and the worst it can do is open a Colour cart stretched because
 /// its same-named sibling was.
-pub const VIDEO_MODE_FILE: &str = "Config/video_mode.ini";
+pub const VIDEO_MODE_FILE: &str = "Config/video_mode.txt";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum VideoMode {

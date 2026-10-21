@@ -87,7 +87,7 @@ and they're read back from it at startup, so editing the file by hand still work
 | `colour-gamma 1.14` | With `colour-depth custom`: how much darker the middle tones get, as RetroArch's Target Gamma ÷ Monitor Gamma (`1` changes nothing, `2.5 ÷ 2.2` is `1.14`). From `0.5` to `2`. |
 | `colour-saturation 1.1` | With `colour-depth custom`: colour, from `0.5` to `2`. `1` changes nothing. |
 | `colour-contrast 1.05` | With `colour-depth custom`: contrast about mid grey, from `0.5` to `2`. `1` changes nothing. |
-| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `Config/selected_core.ini` wins over it. |
+| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `Config/selected_core.txt` wins over it. |
 | `boot-picture off` | Start up with BaseOS's own logo instead of the last screen (see below). `boot-picture last` is the default. |
 
 ## Starting where you left off
@@ -241,7 +241,7 @@ after which ezGBA switches run-ahead off. Put `snes9x2005_plus_libretro.so` in `
 **slot** workflow's `snes9x2005` artifact, with its `licenses/` beside it). Each emulator keeps
 its own save states, so a game suspended on one starts from its last in-game save on the other;
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
-`Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.ini`.
+`Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.txt`.
 
 Every SNES game is drawn in the North American cart: grey, with grooved wings and a big label
 wrapped over the top. Killer Instinct is black.
@@ -254,7 +254,7 @@ gold contacts inside, Pokémon Crystal has glitter in it, and the special editio
 Ruby, Sapphire and Emerald are clear, Boktai is clear, Gold, Silver, Red, Blue and Yellow are
 their own colours, and so on. Anything else is the console's usual grey or black.
 
-To pick a cart's shell yourself, add a line to `Config/cart_shell.ini`:
+To pick a cart's shell yourself, add a line to `Config/cart_shell.txt`:
 
 ```
 Pokemon Emerald (USA) = auto 249c60 clear
@@ -265,7 +265,7 @@ Super Metroid (Japan, USA) = auto 8a878e solid
 The name is the game's file name without its extension. Then the cartridge shape, a colour as
 six hex digits, and `solid`, `clear` or `glitter`. The shape is `auto` (what the game says),
 `notched` or `rounded` for a Game Boy cart (GBA and SNES carts have one shape each, so use
-`auto`). A `cart_shell.ini` in `Labels/` works the same way and wins
+`auto`). A `cart_shell.txt` in `Labels/` works the same way and wins
 over yours, so a label pack can carry the shells that go with its labels; a line there that
 says just `auto` puts a cart back to its usual shell.
 
@@ -297,7 +297,9 @@ latest **slot** run under Actions, download the artifact at the bottom, unzip it
 `slot` into the card's `System` folder, replacing the old one. Your saves and settings are left
 alone: settings live in `Config/`, so even replacing the whole `System` folder doesn't touch
 them. A card from an older build keeps its settings in `System/`; they move to `Config/` by
-themselves on the first boot of this one.
+themselves on the first boot of this one. `selected_core`, `video_mode` and `cart_shell` used to
+be `.ini` files and are `.txt` files now, so a Windows browser opens them instead of
+downloading them; old `.ini` files are renamed on the first boot too.
 
 The **release** workflow builds the whole card, with all three emulators, for setting up a new
 card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as

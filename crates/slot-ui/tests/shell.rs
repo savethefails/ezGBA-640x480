@@ -318,14 +318,14 @@ fn the_snes_cart_has_its_centre_column_and_a_label_to_the_top() {
     assert_eq!(alpha(10, 10), 255, "the wing is missing");
 }
 
-/// `cart_shell.ini` still colours a SNES cart; a mould word means nothing to it.
+/// `cart_shell.txt` still colours a SNES cart; a mould word means nothing to it.
 #[test]
 fn cart_shell_ini_colours_a_snes_cart() {
     let d = tempfile::tempdir().expect("tempdir");
     snes_rom(d.path(), "Chrono Trigger", "CHRONO TRIGGER", 0x01);
     std::fs::create_dir_all(d.path().join("Config")).expect("config");
     std::fs::write(
-        d.path().join("Config/cart_shell.ini"),
+        d.path().join("Config/cart_shell.txt"),
         "Chrono Trigger = rounded 102030 solid\n",
     )
     .expect("ini");

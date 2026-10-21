@@ -576,7 +576,7 @@ fn the_link_screen_draws_its_role_over_the_game() {
 
 /// A real `Session` with a gpSP cart playing. The core falls back to the mock, as it does for
 /// every test in this crate that does not fetch a real dylib; what matters here is that
-/// `selected_core.ini` says gpSP, because that is what decides the link screen exists.
+/// `selected_core.txt` says gpSP, because that is what decides the link screen exists.
 fn session_playing_on_gpsp() -> (Session, TempDir, Millis) {
     let d = common::tmp_root_with_carts(&["Emerald"]);
     // A cart gpSP can carry, as in `playing_on`: the link screen does not open otherwise.

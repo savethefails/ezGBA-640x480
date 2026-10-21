@@ -787,7 +787,7 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
     );
 }
 
-/// `System/selected_core.ini` is a text file a person edits on a card, and nothing in it stops a
+/// `System/selected_core.txt` is a text file a person edits on a card, and nothing in it stops a
 /// line naming gpSP for a Game Boy cart. gpSP does not run Game Boy games at all — it would
 /// refuse the ROM outright or paint garbage — so for a cart that is not a GBA cart the file gets
 /// no say: the platform the shelf scanned it under is what settles which core runs. The ini keeps

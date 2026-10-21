@@ -1381,7 +1381,7 @@ impl App {
     }
 
     /// The seated cart's picture mode, off the card, handed over in the same breath as `core`
-    /// and `platform` and for the same reason: this file never goes back to `video_mode.ini`
+    /// and `platform` and for the same reason: this file never goes back to `video_mode.txt`
     /// for a second opinion.
     pub fn set_video_mode(&mut self, mode: VideoMode) {
         self.video_mode = mode;
@@ -1392,7 +1392,7 @@ impl App {
         self.look.runahead
     }
 
-    /// The emulator a SNES cart starts on unless `selected_core.ini` names one.
+    /// The emulator a SNES cart starts on unless `selected_core.txt` names one.
     pub fn snes_core(&self) -> Core {
         self.look.snes_core
     }
@@ -1479,9 +1479,9 @@ impl App {
         // picture that still stretches, just not one that is still stretched next boot.
         let written = video_mode::write_video_mode(&root, cart, mode);
         if let Err(e) = &written {
-            eprintln!("slot: video: could not write video_mode.ini: {e}");
+            eprintln!("slot: video: could not write video_mode.txt: {e}");
         }
-        self.card_writes.wrote("video_mode.ini", &written);
+        self.card_writes.wrote("video_mode.txt", &written);
     }
 
     /// The `gpsp_serial` the core `Session` just spawned was loaded with. Called in the same
@@ -4449,7 +4449,7 @@ impl App {
             return;
         };
         if let Err(e) = slot_store::write_selected_core(&root, &cart.stem, core) {
-            eprintln!("slot: core: could not write selected_core.ini: {e}");
+            eprintln!("slot: core: could not write selected_core.txt: {e}");
         }
     }
 
@@ -5111,7 +5111,7 @@ struct Look {
     /// The game picture's colour depth, and the card's own values for `Custom`.
     colour_depth: ColourDepth,
     colour_custom: [f32; 3],
-    /// The emulator a SNES cart starts on when `selected_core.ini` does not name one. Not how
+    /// The emulator a SNES cart starts on when `selected_core.txt` does not name one. Not how
     /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
     snes_core: Core,
 }

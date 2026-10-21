@@ -54,7 +54,7 @@ pub struct Theme {
     /// `colour-depth custom` draws with. Each is 1.0 when the card does not say.
     pub colour_custom: [f32; 3],
     /// `snes-core snes9x2005` or `snes-core snes9x`: which emulator runs a SNES cart that
-    /// `selected_core.ini` does not name. snes9x2005 is the default, being fast enough for
+    /// `selected_core.txt` does not name. snes9x2005 is the default, being fast enough for
     /// run-ahead.
     pub snes_core: crate::Core,
 }

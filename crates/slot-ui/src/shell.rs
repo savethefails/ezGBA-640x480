@@ -102,7 +102,7 @@ pub const SNES_SHELL: Shell = shell([0x8a, 0x87, 0x8e], Finish::Solid);
 const SNES_TITLES: &[(&str, Shell)] =
     &[("KILLER INSTINCT", shell([0x2c, 0x2b, 0x2e], Finish::Solid))];
 
-/// A shell chosen in `cart_shell.ini` wins; otherwise, what plastic this cart shipped in: by
+/// A shell chosen in `cart_shell.txt` wins; otherwise, what plastic this cart shipped in: by
 /// game code for GBA; for a Game Boy pak by its code or title, then its CGB flag; for a SNES
 /// pak by its title. The folder is not asked, since `.gb` and `.gbc`
 /// extensions routinely disagree with the flag.

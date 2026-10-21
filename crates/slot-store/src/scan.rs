@@ -24,7 +24,7 @@ pub struct Cart {
     /// The four character header game code, empty when the rom has none. A Game Boy cart has
     /// no equivalent field, so this is always empty for `Platform::Gb` and `Platform::Gbc`.
     pub code: String,
-    /// The shell the player chose for this cart in `cart_shell.ini`, or `None` for the one the
+    /// The shell the player chose for this cart in `cart_shell.txt`, or `None` for the one the
     /// built-in table picks. See `cart_shell`.
     pub shell: Option<crate::ShellChoice>,
 }

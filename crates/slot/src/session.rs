@@ -685,7 +685,7 @@ impl Session {
         // makes that class of drift structurally unreachable now instead of merely unobserved.
         //
         // The platform outranks the file, and only a GBA or SNES cart's line is read at all.
-        // `selected_core.ini` is hand-edited on the card, so nothing there stops a line reading
+        // `selected_core.txt` is hand-edited on the card, so nothing there stops a line reading
         // `Tetris = gpsp` — and gpSP does not run Game Boy games: it would refuse the ROM or
         // paint garbage, with the cart's states filed under a core that never ran it. mGBA is
         // the only core that runs one, so there is no choice for the file to be expressing and
