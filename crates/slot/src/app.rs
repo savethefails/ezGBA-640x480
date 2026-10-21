@@ -654,6 +654,9 @@ pub struct App {
     /// `theme.txt` or a video mode. Shared with the autosave's thread. Any write that lands
     /// clears it. Behind the HUD's card alarm, with `card_read_only`. From slot 239769d.
     card_writes: Arc<crate::card_log::CardWrites>,
+    /// Writes `slot.state` off the game's thread for the settings changed mid-game. See
+    /// `persist_soon`.
+    state_writer: crate::state_writer::StateWriter,
     /// Whether the card was mounted read-only when last asked, every `CARD_CHECK_MS`.
     card_read_only: bool,
     card_check_at: Millis,
@@ -710,6 +713,7 @@ impl App {
             .iter()
             .position(|(_, s)| !s.carts.is_empty())
             .unwrap_or(0);
+        let card_writes: Arc<crate::card_log::CardWrites> = Arc::default();
         App {
             radio: radio_jobs(),
             phase: Phase::Shelf,
@@ -790,7 +794,8 @@ impl App {
             dozed_at: 0,
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
-            card_writes: Arc::default(),
+            card_writes: card_writes.clone(),
+            state_writer: crate::state_writer::StateWriter::spawn(card_writes),
             card_read_only: false,
             card_check_at: 0,
             battery_at: BATTERY_POLL_MS,
@@ -2294,7 +2299,7 @@ impl App {
         }
         // A key held against an end would otherwise rewrite the file at the repeat rate.
         if moved || unmuted {
-            self.persist();
+            self.persist_soon();
         }
         true
     }
@@ -2328,7 +2333,7 @@ impl App {
         *self.muted_mut() = muted;
         self.hud
             .show(HudKind::Volume, self.output_volume(), muted, now);
-        self.persist();
+        self.persist_soon();
     }
 
     /// What the bar reads. Muted draws as an empty bar under the muted glyph, which is what
@@ -2846,6 +2851,8 @@ impl App {
         let Some(root) = &self.root else {
             return;
         };
+        // After whatever `persist_soon` queued, or that older state could land over this one.
+        self.state_writer.flush();
         let written = write_slot_state(root, &self.state);
         if let Err(e) = &written {
             eprintln!("slot: slot.state: {e}");
@@ -4538,7 +4545,21 @@ impl App {
     /// carries out and which has to be on the card before the core it reads is dropped.
     /// Waits for an autosave still being written. Every other write of the resume goes after
     /// it, so the older state can never land over a newer one.
+    /// `persist`, off the game's thread: for volume, brightness and mute, which are changed
+    /// while a game runs and would otherwise stall it for a write and a sync on every press.
+    fn persist_soon(&self) {
+        if let Some(root) = &self.root {
+            self.state_writer.save(root, &self.state);
+        }
+    }
+
+    /// Waits for a `persist_soon` write to land. Tests read `slot.state` after one.
+    pub fn flush_state(&self) {
+        self.state_writer.flush();
+    }
+
     pub fn settle_saves(&mut self) {
+        self.state_writer.flush();
         if let Some(h) = self.pending_save.take() {
             let _ = h.join();
         }
