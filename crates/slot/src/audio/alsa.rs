@@ -36,8 +36,8 @@ const RELEASE_AFTER: Duration = Duration::from_secs(3);
 /// optional: `default` is where the card's `asound.conf` lives, and on the H700 that file is
 /// what switches the codec's speaker and line out on — open anything else and the PCM streams
 /// perfectly into outputs that are still muted. The `plug:` wrapper is what makes `default`
-/// reachable at all, since it resolves to a raw `hw:` slave that cannot convert the GBA's
-/// 32768 Hz to the 32000 the codec runs at, and a bare `default` fails on the rate alone.
+/// reachable at all, since it resolves to a raw `hw:` slave that cannot convert the rate asked
+/// for to the codec's own, and a bare `default` fails on the rate alone.
 const DEVICES: [&str; 4] = ["plug:default", "default", "plughw:0,0", "hw:0,0"];
 
 type PcmOpen = unsafe extern "C" fn(*mut *mut c_void, *const c_char, c_int, c_int) -> c_int;
@@ -116,8 +116,8 @@ impl Alsa {
                 last = AudioError::Device(format!("{name}: {}", self.message(err)));
                 continue;
             }
-            // Resampling is asked of ALSA rather than of the frontend: the GBA's 32768 Hz is
-            // not a rate every codec offers, and one conversion is better than two.
+            // Whatever the codec runs at, ALSA converts `OUTPUT_HZ` to it; the frontend has
+            // already resampled every core to `OUTPUT_HZ`.
             let err = unsafe {
                 (self.set_params)(
                     pcm,

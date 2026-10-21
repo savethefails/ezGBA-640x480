@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use slot::audio::{ring_capacity, AudioSink, Ring, StubSink, GBA_HZ};
+use slot::audio::{ring_capacity, AudioSink, Ring, StubSink, OUTPUT_HZ};
 
 fn ramp(frames: usize, from: i16) -> Vec<i16> {
     (0..frames * 2)
@@ -255,12 +255,12 @@ fn a_cart_sound_is_not_held_back_by_the_cushion() {
 #[test]
 fn the_cushion_at_an_odd_capacity_still_ends_on_a_frame() {
     assert_eq!(
-        ring_capacity(GBA_HZ) % 2,
+        ring_capacity(32_768) % 2,
         1,
         "this rate no longer has an odd capacity, so it no longer exercises the bug"
     );
-    let r = Ring::new(ring_capacity(GBA_HZ));
-    r.reopen(GBA_HZ);
+    let r = Ring::new(ring_capacity(32_768));
+    r.reopen(32_768);
 
     // Drain the cushion the way the device does, then push a block whose two channels can be
     // told apart and read it straight back.
@@ -298,7 +298,7 @@ fn silence_releases_the_device_only_after_three_quiet_seconds() {
 
 #[test]
 fn a_released_device_drains_at_the_audio_clock_despite_late_wakeups() {
-    let span = Duration::from_secs_f64(512.0 / GBA_HZ as f64);
+    let span = Duration::from_secs_f64(512.0 / OUTPUT_HZ as f64);
     let mut pace = slot::audio::Pacer::new(span);
     let start = Instant::now();
     let mut now = start;
