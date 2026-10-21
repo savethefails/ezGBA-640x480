@@ -722,9 +722,10 @@ impl Session {
         self.app.set_link_loaded(serial);
         // A clean start skips the state, it does not delete it: the file stays on the card
         // for the next tap to resume from.
-        let resume = (!self.app.starting_clean())
-            .then(|| persist::read_resume(&self.root, platform, core, stem))
-            .flatten();
+        let resume = match self.app.starting_clean() {
+            true => Ok(None),
+            false => persist::try_read_resume(&self.root, platform, core, stem),
+        };
         launch("resume state read");
         // Colour correction is read here, at the one moment a libretro core reads an option at
         // all. The quick menu that sets it is only ever open on the shelf, with the core already
@@ -745,14 +746,27 @@ impl Session {
         // means something entirely different from a refusal by the cart's own core.
         self.app.set_named_core(opened.named);
         launch("core opened");
-        let sav = persist::read_sav(&self.root, platform, stem);
+        let sav = persist::try_read_sav(&self.root, platform, stem);
         launch("save read");
+        // A save or state the card failed to read is not "none": the game starts without it,
+        // and the core is told its own is not the player's, so nothing writes over the file.
+        let sav = self.app.card_read("save", sav);
+        let resume = self.app.card_read("resume", resume);
+        let (sav_unread, resume_unread) = (sav.is_none(), resume.is_none());
+        let (sav, resume) = (sav.flatten(), resume.flatten());
         let ring = self.sink.ring();
         // Game Boy link mode keeps no link state: only a GBA pair is wrapped and unwrapped.
         let emu = match player.filter(|_| platform == Platform::Gba) {
             Some(p) => EmuHandle::spawn_linked(opened.core, rom, ring, sav, resume, p),
             None => EmuHandle::spawn(opened.core, rom, ring, sav, resume),
         };
+        if sav_unread {
+            emu.refuse_save_ram();
+        }
+        if resume_unread {
+            emu.refuse_resume();
+        }
+        self.app.set_resume_unread(resume_unread);
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
         // L2 never rewinds on this build (see `Gestures::down`), so a rewind trail is a

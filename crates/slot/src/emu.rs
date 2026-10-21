@@ -561,6 +561,17 @@ impl EmuHandle {
         let _ = self.cmds.send(Cmd::Load(state));
     }
 
+    /// Marks the save ram the core holds as not the player's, so no flush writes it: the save
+    /// on the card failed to read, and the core is running on a blank one. From slot c5de4cc.
+    pub fn refuse_save_ram(&self) {
+        self.shared.sav_refused.store(true, Ordering::Release);
+    }
+
+    /// `refuse_save_ram`, for a resume state that failed to read.
+    pub fn refuse_resume(&self) {
+        self.shared.resume_refused.store(true, Ordering::Release);
+    }
+
     pub fn snapshot(&self) -> EmuSnapshot {
         EmuSnapshot {
             cmds: self.cmds.clone(),

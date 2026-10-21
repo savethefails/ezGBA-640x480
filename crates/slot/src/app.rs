@@ -657,6 +657,10 @@ pub struct App {
     /// `theme.txt` or a video mode. Shared with the autosave's thread. Any write that lands
     /// clears it. Behind the HUD's card alarm, with `card_read_only`. From slot 239769d.
     card_writes: Arc<crate::card_log::CardWrites>,
+    /// The seated game's resume state failed to read, so the core was given none. Its
+    /// `resume_trusted` is false all the same, which must not read as the core refusing a state
+    /// and send `retire_refused_resume` to file a good one away.
+    resume_unread: bool,
     /// Writes `slot.state` off the game's thread for the settings changed mid-game. See
     /// `persist_soon`.
     state_writer: crate::state_writer::StateWriter,
@@ -799,6 +803,7 @@ impl App {
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
             card_writes: card_writes.clone(),
+            resume_unread: false,
             state_writer: crate::state_writer::StateWriter::spawn(card_writes),
             card_read_only: false,
             card_check_at: 0,
@@ -2706,6 +2711,27 @@ impl App {
         self.screen
     }
 
+    /// A save or resume read for the game going in: `None` when the card failed to read it,
+    /// which raises the card alarm like a failed write. From slot c5de4cc.
+    pub fn card_read(
+        &self,
+        what: &str,
+        read: std::io::Result<Option<Vec<u8>>>,
+    ) -> Option<Option<Vec<u8>>> {
+        match read {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                eprintln!("slot: {what} read: {e}");
+                self.card_writes.failed(what, &e);
+                None
+            }
+        }
+    }
+
+    pub fn set_resume_unread(&mut self, unread: bool) {
+        self.resume_unread = unread;
+    }
+
     pub fn set_game_ready(&mut self, ready: bool) {
         self.game_ready = ready;
     }
@@ -2914,7 +2940,7 @@ impl App {
         // The overwhelmingly common case, and the reason this check comes first: a core that
         // took its resume has nothing to move, and answering that costs one atomic load rather
         // than a stat of the card on every frame of every insert.
-        if snapshot.resume_trusted() {
+        if snapshot.resume_trusted() || self.resume_unread {
             return;
         }
         // A refusal is only evidence about the state when the emulator that refused it is the

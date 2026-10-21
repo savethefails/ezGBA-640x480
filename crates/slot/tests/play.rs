@@ -134,3 +134,64 @@ fn a_hold_hands_the_core_no_state_and_a_tap_hands_it_the_resume() {
         "a hold resumed the state it was meant to skip"
     );
 }
+
+/// Taps the first cart in and waits for it to seat, then runs past the autosave.
+fn seat_and_autosave(root: &Path) -> Session {
+    common::clocked(root);
+    let mut s = Session::boot(root.to_path_buf());
+    s.feed([RawEvent::Down(Btn::A)], 16);
+    s.feed([RawEvent::Up(Btn::A)], 32);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !matches!(s.app().phase(), Phase::Playing { .. }) {
+        assert!(Instant::now() < deadline, "the cart never seated");
+        s.update(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    s.app_mut().tick_ms(60_000);
+    s.app_mut().settle_saves();
+    s
+}
+
+/// A save the card fails to read is not a save that is not there. The game starts on a blank
+/// battery either way, but only a missing one may be written over by it. The read is made to
+/// fail with a directory where the file goes, which fails as root too, where slot's own test
+/// (a file with no permissions) has nothing to fail on. From slot c5de4cc.
+#[test]
+fn a_save_the_card_cannot_read_is_never_trusted_to_replace_it() {
+    use slot::persist::Snapshot;
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let sav = d.path().join("Saves/GBA/Emerald.sav");
+    std::fs::create_dir_all(sav.join("unreadable")).unwrap();
+
+    let s = seat_and_autosave(d.path());
+    let snapshot = s.emu().expect("no core is running").snapshot();
+    assert!(
+        !snapshot.save_ram_trusted(),
+        "the blank save the game booted with may be written over the one that failed to read"
+    );
+    assert!(
+        sav.join("unreadable").is_dir(),
+        "the unreadable save was touched"
+    );
+}
+
+/// The same for the resume state, which must also not be filed away as one the core refused:
+/// it was never read, let alone refused.
+#[test]
+fn a_resume_the_card_cannot_read_is_neither_trusted_nor_retired() {
+    use slot::persist::Snapshot;
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let resume = d.path().join("States/GBA/mgba/Emerald/resume.state");
+    std::fs::create_dir_all(resume.join("unreadable")).unwrap();
+
+    let s = seat_and_autosave(d.path());
+    let snapshot = s.emu().expect("no core is running").snapshot();
+    assert!(
+        !snapshot.resume_trusted(),
+        "the core's fresh start may be written over the state that failed to read"
+    );
+    assert!(
+        resume.join("unreadable").is_dir(),
+        "the unreadable state was moved or replaced"
+    );
+}

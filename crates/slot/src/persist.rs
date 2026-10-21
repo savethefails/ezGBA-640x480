@@ -110,15 +110,28 @@ pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std
 /// same battery bytes, so a card carrying either has a real save on it. Only `.sav` is ever
 /// written, which makes it the newer of the two whenever both exist.
 pub fn read_sav(root: &Path, platform: Platform, stem: &str) -> Option<Vec<u8>> {
-    std::fs::read(sav_path(root, platform, stem))
-        .or_else(|_| {
-            std::fs::read(
-                crate::root::saves_dir(root)
-                    .join(platform.dir_name())
-                    .join(format!("{stem}.srm")),
-            )
-        })
-        .ok()
+    try_read_sav(root, platform, stem).ok().flatten()
+}
+
+/// `read_sav`, telling a save that is not there from one the card failed to read. Only a
+/// missing file is `Ok(None)`: a game seated on a save that failed to read starts on a blank
+/// battery, and a flush of that would write the blank over the real one. From slot c5de4cc.
+pub fn try_read_sav(
+    root: &Path,
+    platform: Platform,
+    stem: &str,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let srm = crate::root::saves_dir(root)
+        .join(platform.dir_name())
+        .join(format!("{stem}.srm"));
+    for path in [sav_path(root, platform, stem), srm] {
+        match std::fs::read(&path) {
+            Ok(bytes) => return Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(None)
 }
 
 /// The counterpart to the resume write in `flush`. Without this the cart is seated on the
@@ -133,10 +146,17 @@ pub fn read_sav(root: &Path, platform: Platform, stem: &str) -> Option<Vec<u8>> 
 /// stored from that same resolution rather than asking again, which is what keeps them agreeing
 /// too.
 pub fn read_resume(root: &Path, platform: Platform, core: Core, stem: &str) -> Option<Vec<u8>> {
-    StateRing::new(root, platform, core, stem)
-        .read_resume()
-        .ok()
-        .flatten()
+    try_read_resume(root, platform, core, stem).ok().flatten()
+}
+
+/// `read_resume`, with `try_read_sav`'s distinction between missing and unreadable.
+pub fn try_read_resume(
+    root: &Path,
+    platform: Platform,
+    core: Core,
+    stem: &str,
+) -> std::io::Result<Option<Vec<u8>>> {
+    StateRing::new(root, platform, core, stem).read_resume()
 }
 
 fn sav_path(root: &Path, platform: Platform, stem: &str) -> PathBuf {
