@@ -25,8 +25,8 @@ const BACKLIGHT_CURVE: f64 = 1.75;
 /// binary's own business.
 const DEV_INPUT: &str = "/dev/input";
 
-/// The RG35XXSP's WiFi driver, which the link radio uses. Its shutdown hook hangs a reboot on a
-/// black screen, so Restart unloads it first.
+/// The RG35XXSP's WiFi driver, which the link radio uses. Its shutdown hook hangs a reboot or a
+/// power off on a black screen, so both unload it first (power off from slot ad5ce8a, #117).
 const WIFI_MODULE: &str = "8821cs";
 
 /// The card alarm's record, on the device's own storage.
@@ -550,7 +550,9 @@ impl Platform for DevicePlatform {
     }
 
     fn poweroff(&mut self) -> ! {
-        self.breadcrumb("poweroff: reached slot, about to sync");
+        self.breadcrumb("poweroff: reached slot, unloading the WiFi driver");
+        let _ = Command::new("rmmod").arg(WIFI_MODULE).status();
+        self.breadcrumb("poweroff: WiFi driver unloaded, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("poweroff: sync returned, about to signal init");
         let _ = Command::new("poweroff").status();
