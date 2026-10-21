@@ -30,6 +30,30 @@ fn undoing_a_save_removes_it_and_restores_the_evicted_entry() {
     );
 }
 
+/// The clock set behind the newest state, as a battery run flat leaves it: the save is still
+/// the newest entry and the oldest one makes room. From slot 894201d.
+#[test]
+fn a_save_behind_the_newest_stamp_survives_a_full_ring() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let r = StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald");
+    for i in 0..10 {
+        r.push(&[i as u8; 64], b"png", &format!("2099-01-01_00-00-{i:02}"))
+            .unwrap();
+    }
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.apply_at(Action::SaveState, 1_000);
+    let l = r.list().unwrap();
+    assert_eq!(l.len(), 10);
+    assert_eq!(
+        l[0].stamp, "2099-01-01_00-00-10",
+        "the new save was not stamped after the newest one"
+    );
+    assert!(
+        l.iter().all(|e| e.stamp != "2099-01-01_00-00-00"),
+        "the oldest entry was kept instead of making room"
+    );
+}
+
 #[test]
 fn undo_expires_after_thirty_seconds() {
     let d = tmp_root_with_carts(&["Emerald"]);

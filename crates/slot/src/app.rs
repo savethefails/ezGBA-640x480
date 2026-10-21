@@ -7,9 +7,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart,
-    ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing,
-    Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
+    Aspect, Cart, ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture,
+    StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -5081,7 +5081,12 @@ fn free_stamp(ring: &StateRing, now: i64) -> String {
         .unwrap_or_default();
     // Local, from the same wall clock the captions are read against. A stamp in utc would
     // name every state an hour or several from the time the polaroid says it was taken.
-    let mut secs = now;
+    //
+    // Never behind the newest one, though: the ring keeps the newest stamps, so a save taken
+    // with the clock set back (a battery run flat) sorted as the oldest and was the one a full
+    // ring dropped to make room for it. From slot 894201d.
+    let newest = taken.iter().filter_map(|s| parse_stamp(s)).max();
+    let mut secs = newest.map_or(now, |n| now.max(n + 1));
     let mut stamp = format_stamp(secs);
     while taken.contains(&stamp) {
         secs += 1;
