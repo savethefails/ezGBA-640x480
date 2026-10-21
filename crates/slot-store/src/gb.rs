@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Game Boy cartridge header. The title runs from 0x134 and was **11** bytes on later carts,
 /// which shortened it to make room for a four-character manufacturer code at 0x13F and the CGB
@@ -60,6 +62,29 @@ pub fn header(rom: &Path) -> Option<Header> {
     let mut buf = [0u8; HEADER_LEN];
     read_at(rom, 0, &mut buf)?;
     Header::parse(&buf)
+}
+
+/// `header`, read from the card once per rom for the life of the process: the shell table and
+/// the mould both ask it, and a large card asks it for every Game Boy cart. From slot 3339c6f.
+pub fn cached_header(rom: &Path) -> Option<Header> {
+    static HEADERS: OnceLock<Mutex<HashMap<PathBuf, Option<Header>>>> = OnceLock::new();
+    let mut headers = HEADERS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    headers
+        .entry(rom.to_path_buf())
+        .or_insert_with(|| header(rom))
+        .clone()
+}
+
+/// `class` off the cached header, falling back to reading the flag when the header does not
+/// parse.
+pub fn cached_class(rom: &Path) -> Class {
+    match cached_header(rom) {
+        Some(h) => h.class(),
+        None => class(rom),
+    }
 }
 
 /// The header title, or `None` when the field is empty — which is not a malformed ROM. Ours is:

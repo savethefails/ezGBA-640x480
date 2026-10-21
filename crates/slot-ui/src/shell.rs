@@ -128,7 +128,7 @@ pub fn gba_shell_for(code: &str) -> Shell {
 }
 
 fn gb_shell_for(rom: &Path) -> Shell {
-    let Some(h) = slot_store::gb::header(rom) else {
+    let Some(h) = slot_store::gb::cached_header(rom) else {
         return flag_shell(slot_store::gb::class(rom));
     };
     let by_title = || {

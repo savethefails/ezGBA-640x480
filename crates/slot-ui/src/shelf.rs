@@ -1,5 +1,6 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::{Cart, Platform};
+use std::sync::OnceLock;
 
 use crate::cart::{cart_box, label_colour, label_text, mould_of, Mould, CART_W};
 use crate::hud::Millis;
@@ -114,10 +115,11 @@ pub struct Shelf {
     gb_shadow: Option<TexId>,
     gbc_shadow: Option<TexId>,
     snes_shadow: Option<TexId>,
-    /// Which mould each cart in `carts` came out of. Worked out once here because the answer is
-    /// in the rom's header: asking it while drawing would open a file on every cart of every
-    /// frame.
-    moulds: Vec<Mould>,
+    /// Which mould each cart in `carts` came out of, worked out the first time the cart is drawn
+    /// and kept: the answer is in the rom's header, so asking it every frame would open a file
+    /// per cart per frame, and asking it for every cart when the row is built opened every Game
+    /// Boy rom on the card at boot. From slot 3339c6f.
+    moulds: Vec<OnceLock<Mould>>,
     /// The presses added up, in the same continuous coordinate `scroll` lives in, so it counts
     /// laps rather than wrapping. This is what the spring aims at — see `scroll_target` — because
     /// it is the only thing that remembers which button was pressed once the row has wrapped.
@@ -133,7 +135,7 @@ pub struct Shelf {
 impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
-            moulds: carts.iter().map(mould_of).collect(),
+            moulds: carts.iter().map(|_| OnceLock::new()).collect(),
             box_art: vec![None; carts.len()],
             carts,
             index: 0,
@@ -147,6 +149,14 @@ impl Shelf {
             vel: 0.0,
             held: None,
         }
+    }
+
+    /// The mould of the cart at `i`, `None` past the end of `moulds`.
+    fn mould(&self, i: usize) -> Option<Mould> {
+        let (Some(cell), Some(cart)) = (self.moulds.get(i), self.carts.get(i)) else {
+            return None;
+        };
+        Some(*cell.get_or_init(|| mould_of(cart)))
     }
 
     /// Put the row on a cart without a ride: the selection, where the row stands and where its
@@ -565,7 +575,7 @@ impl Shelf {
                 // with no message anywhere — for a row that would otherwise have drawn. A cart
                 // whose mould was never recorded gets the straight sided backing, which is the
                 // same degrading a cart whose face was never uploaded already gets.
-                let backing = match self.moulds.get(i).copied() {
+                let backing = match self.mould(i) {
                     None | Some(Mould::Gba) => self.shadow,
                     Some(Mould::Gb(GbShell::Notched)) => self.gb_shadow,
                     Some(Mould::Gb(GbShell::Rounded)) => self.gbc_shadow,

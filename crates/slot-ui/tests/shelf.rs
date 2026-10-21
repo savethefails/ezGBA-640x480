@@ -1078,3 +1078,41 @@ fn the_shelf_says_where_its_selected_cart_is_while_the_row_is_moving() {
         s.update(1.0 / 60.0);
     }
 }
+
+/// From slot 3339c6f: a Game Boy cart's mould is read off its header when the row first draws
+/// it, not for every cart on the card when the row is built. A rom that appears after the row
+/// was built still draws in its own mould.
+#[test]
+fn a_pak_is_classed_when_it_is_drawn_not_when_the_shelf_is_built() {
+    let d = tempfile::tempdir().expect("tempdir");
+    let carts: Vec<Cart> = ["Front", "Clear"]
+        .iter()
+        .map(|stem| Cart {
+            platform: Platform::Gbc,
+            stem: (*stem).into(),
+            rom: d.path().join(format!("{stem}.gbc")),
+            label: None,
+            box_art: None,
+            code: String::new(),
+            shell: None,
+            title: stem.to_uppercase(),
+        })
+        .collect();
+    let mut s = Shelf::new(carts.clone());
+    let mut rom = vec![0u8; 0x150];
+    rom[0x143] = 0xc0;
+    std::fs::write(&carts[1].rom, rom).expect("write rom");
+    settle(&mut s);
+    s.set_faces(vec![TexId::from_raw(20), TexId::from_raw(21)]);
+    let notched = TexId::from_raw(90);
+    let rounded = TexId::from_raw(91);
+    s.set_gb_shadow(GbShell::Notched, notched);
+    s.set_gb_shadow(GbShell::Rounded, rounded);
+    let mut out = Vec::new();
+    s.draw_row(Some("Front"), 0.0, 0.3, 1.0, 0.0, &mut out);
+    assert!(
+        out.iter()
+            .any(|d| matches!(*d, Draw::Tex { tex, .. } if tex == rounded)),
+        "the colour-only pak was classed before its ROM could be read"
+    );
+}
