@@ -109,6 +109,7 @@ impl ApplicationHandler for Slot {
 }
 
 pub fn run() {
+    slot::crash::install(None);
     let events = match EventLoop::new() {
         Ok(e) => e,
         Err(e) => {

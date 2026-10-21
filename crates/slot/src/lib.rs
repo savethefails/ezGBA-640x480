@@ -8,6 +8,7 @@ pub mod cable;
 pub mod card_log;
 pub mod core;
 pub mod core_picker;
+pub mod crash;
 pub mod drc;
 pub mod emu;
 pub mod face_builder;

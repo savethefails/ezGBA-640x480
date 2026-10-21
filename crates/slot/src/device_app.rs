@@ -22,6 +22,7 @@ pub fn run() {
     let root = std::env::var_os("SLOT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(CARD));
+    slot::crash::install(Some(&slot::root::logs_dir(&root).join("slot-crash.log")));
     let mut surface = match FbdevSurface::new() {
         Ok(s) => s,
         Err(e) => {
