@@ -114,11 +114,7 @@ const RUNAHEAD_BUDGET: Duration = Duration::from_millis(12);
 /// single heavy scene, or the scheduler, is not reason enough to lose it.
 const RUNAHEAD_STRIKES: u32 = 8;
 
-/// Presents the worker's real present period is measured over, about five seconds: the audio's
-/// base rate. A present carries a fixed frame of sound, so sound a second is that times
-/// presents a second, which is the display's when following it: the SP's panel refreshes every
-/// 16.80 ms, not 60 Hz, which leaves the core 0.8% short of sound a second, and DRC's trim
-/// reaches only half that, so without this the ring runs dry and the sound crackles.
+/// Presents the real present period is measured over, about five seconds (see `PresentRate`).
 const RATE_WINDOW: u32 = 300;
 
 /// A gap between presents past this is a stall (a load, a save, a held menu), not a period,
@@ -128,6 +124,96 @@ const RATE_STALL: Duration = Duration::from_millis(50);
 /// Presents between traced audio lines, about two seconds: a crackle every second or two has
 /// to land in a line of its own to be told from the ones around it.
 const TRACE_EVERY: u64 = 120;
+
+/// How often presents really come, against `PRESENT`, which every present's sound is scaled
+/// by. A present carries a fixed frame of sound, so sound a second is that times presents a
+/// second: following the SP's panel, every 16.80 ms rather than at 60 Hz, a core is 0.8% short
+/// of sound a second, and DRC's trim reaches only half that. 1.0 until a window is measured.
+struct PresentRate {
+    scale: f64,
+    last: Instant,
+    /// When the window under measurement began, and how many presents it holds.
+    window: (Instant, u32),
+}
+
+impl PresentRate {
+    fn new(now: Instant) -> Self {
+        PresentRate {
+            scale: 1.0,
+            last: now,
+            window: (now, 0),
+        }
+    }
+
+    /// A present began at `at`.
+    fn present(&mut self, at: Instant) {
+        if at.duration_since(self.last) > RATE_STALL {
+            self.window = (at, 0);
+        } else {
+            self.window.1 += 1;
+        }
+        self.last = at;
+        if self.window.1 == RATE_WINDOW {
+            // Clamped to what a display could plausibly be.
+            let period = at.duration_since(self.window.0) / RATE_WINDOW;
+            self.scale = (period.as_secs_f64() / PRESENT.as_secs_f64()).clamp(0.97, 1.03);
+            self.window = (at, 0);
+        }
+    }
+}
+
+/// What the traced audio line reports, each since the line before: the emptiest the ring got,
+/// the longest between two presents' sound, and how many presents followed a kick. The device's
+/// fault counts are running totals, so the line before's are kept to report the difference.
+struct AudioTrace {
+    lowest: usize,
+    last_push: Instant,
+    longest: Duration,
+    kicked: u64,
+    dropped: u64,
+    starved: u64,
+}
+
+impl AudioTrace {
+    fn new(now: Instant) -> Self {
+        AudioTrace {
+            lowest: usize::MAX,
+            last_push: now,
+            longest: Duration::ZERO,
+            kicked: 0,
+            dropped: 0,
+            starved: 0,
+        }
+    }
+
+    /// A present's sound went into the ring, which held `queued` frames before it.
+    fn pushed(&mut self, queued: usize, kicked: bool) {
+        let now = Instant::now();
+        self.lowest = self.lowest.min(queued);
+        self.longest = self.longest.max(now - self.last_push);
+        self.last_push = now;
+        self.kicked += u64::from(kicked);
+    }
+
+    /// The line for the presents since the last one, and a fresh start from here.
+    fn line(&mut self, queued: usize, target: usize, ring: &Ring, scale: f64) -> String {
+        let (dropped, starved) = (ring.overruns(), ring.underruns());
+        let line = format!(
+            "audio: {queued}/{target} queued (lowest {}), {} dropped, {} starved, longest {:.1} ms between presents, {}/{TRACE_EVERY} kicked, scale {scale:.5}",
+            self.lowest,
+            dropped - self.dropped,
+            starved - self.starved,
+            self.longest.as_secs_f64() * 1000.0,
+            self.kicked,
+        );
+        *self = AudioTrace {
+            dropped,
+            starved,
+            ..AudioTrace::new(self.last_push)
+        };
+        line
+    }
+}
 
 /// A per-present cap on how many packets the worker will move from the transport into the
 /// core's inbound queue. Real GBA serial hardware never comes close to this in a present's
@@ -766,20 +852,10 @@ impl Worker {
         let mut fast_span: Option<(Instant, Duration)> = None;
         let mut deadline = Instant::now();
         let mut paced = 0u64;
-        // For the traced audio line: since the last one, the emptiest the ring got, the longest
-        // between two presents' sound, how many presents followed a kick, and the device's fault
-        // counts the line before left off at.
-        let mut audit = (usize::MAX, Instant::now(), Duration::ZERO, 0u64, 0u64, 0u64);
-        // The worker's real present period against `PRESENT`, which every present's sound is
-        // scaled by: 1.0 until a whole window has been measured. Every present counts, kicked
-        // or not. Measuring only kicked ones and scaling only them left the presents that missed
-        // a kick (a third of them beside PICO-8) 0.8% short, and the ring ran dry every second.
-        let mut scale = 1.0f64;
-        // Whether the present under way began on a kick, when the last present began, and when
-        // the window under measurement began and how many presents it holds.
+        let mut trace = AudioTrace::new(Instant::now());
+        let mut rate = PresentRate::new(Instant::now());
+        // Whether the present under way began on a kick.
         let mut kicked = false;
-        let mut last_present = Instant::now();
-        let mut window = (Instant::now(), 0u32);
         // Kicked presents in a row, for `IN_STEP`.
         let mut streak = 0u32;
         // Run-ahead, while it is still affordable. See `run_ahead`.
@@ -1162,7 +1238,7 @@ impl Worker {
                     let queued = ring.queued_frames();
                     // `ran`, not the ceiling: the audio squeezed into this present is however
                     // many frames of it the present actually produced.
-                    resampler.set_ratio(drc_ratio(queued, target) * scale / f64::from(ran));
+                    resampler.set_ratio(drc_ratio(queued, target) * rate.scale / f64::from(ran));
                     resampler.process(&audio, &mut out);
                     crate::audio::volume::apply(
                         &mut out,
@@ -1172,26 +1248,13 @@ impl Worker {
                     // Where occupancy actually sits against target is the one thing a
                     // crackle complaint needs and no test can watch on real hardware.
                     paced += 1;
-                    let pushed = Instant::now();
-                    audit.0 = audit.0.min(queued);
-                    audit.2 = audit.2.max(pushed - audit.1);
-                    audit.1 = pushed;
-                    audit.3 += u64::from(kicked);
+                    trace.pushed(queued, kicked);
                     if paced.is_multiple_of(TRACE_EVERY) {
-                        let (dropped, starved) = (ring.overruns(), ring.underruns());
-                        let line = format!(
-                            "audio: {queued}/{target} queued (lowest {}), {} dropped, {} starved, longest {:.1} ms between presents, {}/{TRACE_EVERY} kicked, scale {scale:.5}",
-                            audit.0,
-                            dropped - audit.4,
-                            starved - audit.5,
-                            audit.2.as_secs_f64() * 1000.0,
-                            audit.3,
-                        );
+                        let line = trace.line(queued, target, &ring, rate.scale);
                         if crate::session::trace() {
                             eprintln!("slot: {line}");
                         }
                         crate::latency::note(&line);
-                        audit = (usize::MAX, pushed, Duration::ZERO, 0, dropped, starved);
                     }
                 }
             }
@@ -1221,18 +1284,7 @@ impl Worker {
                 (deadline, kicked) = self.wait_for_kick(deadline, steady);
             }
             streak = if kicked { streak.saturating_add(1) } else { 0 };
-            if deadline.duration_since(last_present) > RATE_STALL {
-                window = (deadline, 0);
-            } else {
-                window.1 += 1;
-            }
-            last_present = deadline;
-            if window.1 == RATE_WINDOW {
-                // Clamped to what a panel could plausibly be.
-                let present = deadline.duration_since(window.0) / RATE_WINDOW;
-                scale = (present.as_secs_f64() / PRESENT.as_secs_f64()).clamp(0.97, 1.03);
-                window = (deadline, 0);
-            }
+            rate.present(deadline);
         }
         // Once more, after the flag rather than before it: `stop` is only read at the top of
         // the loop, so whatever was asked for during the present it was set in is still in the
@@ -1406,11 +1458,10 @@ impl Worker {
     /// whether a kick started it.
     ///
     /// Any kick since `deadline - PRESENT`, the start of the present just finished, is for the
-    /// next frame, even one that came a little before the window opened. Taking only kicks
-    /// inside the window when out of step threw away the display's next kick after a missed
-    /// one, a few milliseconds early, and left the loop on its own clock until it drifted back
-    /// into step about 19 frames later, a present lost each time. The window still opens no
-    /// sooner than `KICK_LEAD` before the deadline, so a kick cannot run the game fast.
+    /// next frame, even one that came a little before the window opened: after a missed kick
+    /// the display's next one arrives a few milliseconds early, and taking it is what puts the
+    /// loop straight back in step. The window opens no sooner than `KICK_LEAD` before the
+    /// deadline, so a kick cannot run the game fast.
     ///
     /// `steady`: the presents have been following the kicks, so the wait for a late one is
     /// `KICK_PATIENCE` rather than `KICK_LAG`.
@@ -1620,5 +1671,41 @@ mod tests {
         assert_eq!(link.take_inbound().as_deref(), Some(&b"one"[..]));
         assert_eq!(link.take_inbound().as_deref(), Some(&b"two"[..]));
         assert_eq!(link.take_inbound(), None);
+    }
+
+    /// The SP's 16.8 ms: sound a present scaled up by 0.8%, once a whole window has come.
+    #[test]
+    fn the_present_rate_is_the_real_period_once_a_window_is_measured() {
+        let mut at = Instant::now();
+        let mut rate = PresentRate::new(at);
+        for _ in 0..RATE_WINDOW - 1 {
+            at += Duration::from_micros(16_800);
+            rate.present(at);
+        }
+        assert_eq!(rate.scale, 1.0, "scaled before a whole window");
+        at += Duration::from_micros(16_800);
+        rate.present(at);
+        assert!(
+            (rate.scale - 16.8 / (1000.0 / 60.0)).abs() < 1e-6,
+            "{}",
+            rate.scale
+        );
+    }
+
+    /// A load or a save holds the loop for longer than any display's period: it starts the
+    /// window over, so the next measurement is of the display and not of the stall.
+    #[test]
+    fn a_stall_starts_the_window_over() {
+        let mut at = Instant::now();
+        let mut rate = PresentRate::new(at);
+        for i in 0..RATE_WINDOW * 2 {
+            at += if i == RATE_WINDOW / 2 {
+                Duration::from_millis(600)
+            } else {
+                PRESENT
+            };
+            rate.present(at);
+        }
+        assert!((rate.scale - 1.0).abs() < 1e-6, "{}", rate.scale);
     }
 }

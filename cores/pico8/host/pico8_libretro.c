@@ -61,7 +61,7 @@ static unsigned audio_phase;
 /* The card's latency-trace.log, appended to when the player has made one: every 120
  * frames, how PICO-8 kept up and whether its sound ran out. */
 static FILE *trace;
-static struct { uint64_t last_ns, worst_ns; uint32_t runs, seq, short_, low; } audit;
+static struct { uint64_t last_ns, longest_ns; uint32_t runs, seq, missing, low; } audit;
 
 static void logf_(enum retro_log_level lvl, const char *fmt, ...)
 {
@@ -292,6 +292,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 	char t[PATH_MAX + 32];
 	snprintf(t, sizeof t, "%s/../../latency-trace.log", dir);   /* dir is BIOS/pico8 */
 	if (is_file(t)) trace = fopen(t, "a");
+	memset(&audit, 0, sizeof audit);
 	audit.low = UINT32_MAX;
 	if (!realpath(game->path, cart)) snprintf(cart, sizeof cart, "%s", game->path);
 	char work[PATH_MAX];
@@ -401,7 +402,7 @@ static void play_audio(void)
 	static int16_t last;
 	for (unsigned i = 0; i < n; i++) {
 		int16_t s = last;
-		audit.short_ += r == w;
+		audit.missing += r == w;
 		if (r != w) s = last = shm->audio[r++ & (P8HOST_AUDIO - 1)];
 		out[2 * i] = out[2 * i + 1] = s;
 	}
@@ -413,16 +414,16 @@ static void audit_frame(void)
 {
 	if (!trace) return;
 	uint64_t t = now_ns();
-	if (audit.last_ns && t - audit.last_ns > audit.worst_ns) audit.worst_ns = t - audit.last_ns;
+	if (audit.last_ns && t - audit.last_ns > audit.longest_ns) audit.longest_ns = t - audit.last_ns;
 	audit.last_ns = t;
 	if (++audit.runs < 120) return;
 	uint32_t seq = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
 	fprintf(trace, "pico8: %u frames from PICO-8 in 120, longest %.1f ms between frames, "
 		"%u samples short, its sound queue as low as %u\n",
-		(seq - audit.seq) / 2, audit.worst_ns / 1e6, audit.short_, audit.low);
+		(seq - audit.seq) / 2, audit.longest_ns / 1e6, audit.missing, audit.low);
 	fflush(trace);
-	audit.runs = audit.short_ = 0;
-	audit.worst_ns = 0;
+	audit.runs = audit.missing = 0;
+	audit.longest_ns = 0;
 	audit.seq = seq;
 	audit.low = UINT32_MAX;
 }
