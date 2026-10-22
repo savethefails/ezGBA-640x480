@@ -1602,7 +1602,7 @@ pub fn run_ahead(
     core.set_frame_skip(true);
     core.run_frame(input);
     let audio = core.take_audio();
-    let Ok(state) = core.serialize() else {
+    let Ok(state) = core.serialize_runahead() else {
         core.set_frame_skip(false);
         return (audio, None);
     };

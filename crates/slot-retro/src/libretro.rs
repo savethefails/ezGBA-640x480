@@ -562,7 +562,9 @@ pub struct LibretroCore {
     /// mGBA and snes9x both answer `retro_serialize_size` by running a whole save to measure it,
     /// so asking every time doubled what run-ahead's save a frame costs. A state that has grown
     /// past it (mGBA's carries the save memory, whose size a game can settle late) is refused by
-    /// `retro_serialize`, and the size is asked again then.
+    /// `retro_serialize`, and the size is asked again then. One that has shrunk comes back padded
+    /// with zeros, which is why only `serialize_runahead` uses this: mGBA's link loader refuses
+    /// a link state with anything after it, so a padded pair sent to a joiner was refused.
     state_size: Option<usize>,
     _lib: Library,
 }
@@ -831,10 +833,8 @@ impl RetroCore for LibretroCore {
         std::mem::take(&mut self.host.audio)
     }
 
+    /// Exact, asking the core how long its state is every time.
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError> {
-        if let Some(buf) = self.state_size.and_then(|size| self.serialize_at(size)) {
-            return Ok(buf);
-        }
         let size = {
             let _a = Active::bind(&mut self.host);
             unsafe { (self.api.serialize_size)() }
@@ -845,6 +845,13 @@ impl RetroCore for LibretroCore {
         }
         self.serialize_at(size)
             .ok_or_else(|| CoreError::State("serialize refused".into()))
+    }
+
+    fn serialize_runahead(&mut self) -> Result<Vec<u8>, CoreError> {
+        if let Some(buf) = self.state_size.and_then(|size| self.serialize_at(size)) {
+            return Ok(buf);
+        }
+        self.serialize()
     }
 
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError> {

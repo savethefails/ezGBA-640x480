@@ -98,6 +98,13 @@ pub trait RetroCore: Send {
     }
     fn take_audio(&mut self) -> Vec<i16>;
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError>;
+    /// `serialize`, for run-ahead's save every present, which only ever comes back into this
+    /// same core through `unserialize_runahead`. A core may hand back a state padded past its
+    /// end to save asking how long it is; one that will be written out, sent to a peer or read
+    /// by a link loader that refuses trailing bytes is taken with `serialize`.
+    fn serialize_runahead(&mut self) -> Result<Vec<u8>, CoreError> {
+        self.serialize()
+    }
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError>;
     /// `unserialize`, for a state this same core saved moments ago and that is never written
     /// out: run-ahead's wind back, every present. A core may load it by a faster path than one
