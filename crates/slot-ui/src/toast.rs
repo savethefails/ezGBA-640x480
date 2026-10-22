@@ -27,13 +27,15 @@ pub enum Toast {
     PeerEnded,
     /// The host runs another GBA BIOS, so its game cannot run here.
     BiosMismatch,
+    /// The host's copy of the game is another ROM file, so the two devices would run two games.
+    GameMismatch,
     /// The card has turned read-only or a save failed to write. Not a toast that fades but the
     /// line the HUD's alarm band carries for as long as it lasts. From slot 239769d.
     CardUnwritable,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 8] = [
+    pub const ALL: [Toast; 9] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
@@ -41,6 +43,7 @@ impl Toast {
         Toast::LinkEnded,
         Toast::PeerEnded,
         Toast::BiosMismatch,
+        Toast::GameMismatch,
         Toast::CardUnwritable,
     ];
 
@@ -76,6 +79,7 @@ impl Toast {
             // the product says "friend" nowhere, so this is not the screen to start.
             Toast::PeerEnded => "Link was ended",
             Toast::BiosMismatch => "BIOS does not match",
+            Toast::GameMismatch => "Game does not match",
             Toast::CardUnwritable => "Can't write to SD card",
         }
     }

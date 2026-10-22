@@ -1368,3 +1368,133 @@ fn a_link_mode_workers_state_resumes_on_a_single_core() {
         .unserialize(&state)
         .expect("a single GBA refused the link-mode worker's state");
 }
+
+/// Two devices with different copies of a game: the same header, so the same title and game
+/// code, and one byte apart past it, as two revisions or a patched dump are. mGBA takes the
+/// host's pair all the same, only warning that it is "for a different version of the game", and
+/// the joiner would then run its own ROM from the host's machine: two games from one set of
+/// buttons, which left Mario Kart: Super Circuit waiting at its link cable screen. The ROM's
+/// CRC32 in each state is what tells them apart, and `same_rom` reads it.
+#[test]
+fn a_host_pair_from_another_copy_of_the_rom_is_taken_by_mgba_but_not_by_same_rom() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let host_rom = rom("mgba-link-copy-a.gba", common::gba_rom());
+    let mut other = common::gba_rom();
+    let last = other.len() - 1;
+    other[last] ^= 0xFF;
+    let joiner_rom = rom("mgba-link-copy-b.gba", other);
+
+    let mut host = link_core(&dylib, 0);
+    host.load(&host_rom)
+        .expect("link mode refused the host's rom");
+    host.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+    let sent = host.serialize().expect("no link state from the host");
+    drop(host);
+
+    let mut joiner = link_core(&dylib, 1);
+    joiner
+        .load(&joiner_rom)
+        .expect("link mode refused the joiner's rom");
+    joiner.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+    let own = joiner.serialize().expect("no link state from the joiner");
+
+    assert!(slot::link_state::same_bios(&sent, &own));
+    assert!(
+        !slot::link_state::same_rom(&sent, &own),
+        "two copies of the rom a byte apart read as the same rom"
+    );
+    assert!(
+        joiner.unserialize(&sent).is_ok(),
+        "mGBA now refuses another copy of the rom itself, so same_rom is only a second check"
+    );
+
+    drop(joiner);
+    let mut same = link_core(&dylib, 1);
+    same.load(&host_rom)
+        .expect("link mode refused the host's rom");
+    same.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+    assert!(slot::link_state::same_rom(
+        &sent,
+        &same.serialize().unwrap()
+    ));
+}
+
+/// What the test above shows, through the worker a session really runs on: a joiner handed the
+/// pair of a host with another copy of the ROM says so and never reports itself ready, rather
+/// than running its own ROM from the host's machine.
+#[test]
+fn a_joiner_refuses_a_host_with_another_copy_of_the_rom() {
+    use slot::emu::{CoreState, EmuHandle, Speed};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[derive(Default)]
+    struct Wire {
+        to_joiner: Vec<Vec<u8>>,
+        from_joiner: Vec<Vec<u8>>,
+    }
+    struct HostEnd(Arc<Mutex<Wire>>);
+    impl slot_retro::LinkChannel for HostEnd {
+        fn send(&mut self, _flags: i32, buf: &[u8]) {
+            self.0.lock().unwrap().from_joiner.push(buf.to_vec());
+        }
+        fn try_recv(&mut self) -> Option<Vec<u8>> {
+            let mut w = self.0.lock().unwrap();
+            (!w.to_joiner.is_empty()).then(|| w.to_joiner.remove(0))
+        }
+    }
+
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let host_rom = rom("mgba-link-refuse-a.gba", common::gba_rom());
+    let mut other = common::gba_rom();
+    let last = other.len() - 1;
+    other[last] ^= 0xFF;
+    let joiner_rom = rom("mgba-link-refuse-b.gba", other);
+
+    let sent = {
+        let mut host = link_core(&dylib, 0);
+        host.load(&host_rom)
+            .expect("link mode refused the host's rom");
+        host.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+        host.serialize().expect("no link state from the host")
+    };
+
+    let emu = EmuHandle::spawn_linked(
+        Box::new(link_core(&dylib, 1)),
+        joiner_rom,
+        Arc::new(slot::audio::Ring::new(1 << 14)),
+        None,
+        None,
+        1,
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while emu.state() == CoreState::Loading {
+        assert!(Instant::now() < deadline, "the core never settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    emu.set_speed(Speed::Normal);
+    let wire = Arc::new(Mutex::new(Wire::default()));
+    wire.lock().unwrap().to_joiner = slot::cable::state_packets(&sent);
+    emu.begin_cable(1, Box::new(HostEnd(wire.clone())));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !emu.rom_mismatch() {
+        assert!(
+            Instant::now() < deadline,
+            "the joiner never noticed the host's rom is another copy"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!emu.bios_mismatch(), "the same BIOS was taken for another");
+    assert!(
+        !wire
+            .lock()
+            .unwrap()
+            .from_joiner
+            .contains(&slot::cable::ready_packet().to_vec()),
+        "the joiner said it was running the host's game"
+    );
+    emu.end_link();
+}

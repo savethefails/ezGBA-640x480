@@ -1610,6 +1610,15 @@ impl App {
 
     /// The host runs another GBA BIOS. Ends like `peer_ended`, saying why.
     pub fn bios_mismatch(&mut self) {
+        self.mismatch(Toast::BiosMismatch);
+    }
+
+    /// The host's copy of the game is another ROM file. Ends like `bios_mismatch`.
+    pub fn rom_mismatch(&mut self) {
+        self.mismatch(Toast::GameMismatch);
+    }
+
+    fn mismatch(&mut self, toast: Toast) {
         if !self.link_active() {
             return;
         }
@@ -1617,7 +1626,7 @@ impl App {
             .link_client_id()
             .map_or(self.last_role, LinkRow::from_client_id);
         self.end_link();
-        self.hud.toast(Toast::BiosMismatch, self.now());
+        self.hud.toast(toast, self.now());
         self.unplug(role);
     }
 

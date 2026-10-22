@@ -331,6 +331,8 @@ struct Shared {
     peer_ended: AtomicBool,
     /// The host's state came from another GBA BIOS and was not restored.
     bios_mismatch: AtomicBool,
+    /// The host's state came from another copy of the ROM and was not restored.
+    rom_mismatch: AtomicBool,
     /// Frames to run ahead of the one the game is really on, 0 to 2. See `Worker::run_ahead`.
     runahead: AtomicU8,
     /// Whether the core's state may be taken every frame or two, for run-ahead and the rewind
@@ -412,6 +414,7 @@ impl EmuHandle {
             linked: AtomicU64::new(0),
             peer_ended: AtomicBool::new(false),
             bios_mismatch: AtomicBool::new(false),
+            rom_mismatch: AtomicBool::new(false),
             runahead: AtomicU8::new(0),
             history: AtomicBool::new(true),
             kick: Mutex::new(None),
@@ -486,6 +489,11 @@ impl EmuHandle {
     /// The host's state came from another GBA BIOS, so the session cannot start.
     pub fn bios_mismatch(&self) -> bool {
         self.shared.bios_mismatch.load(Ordering::Relaxed)
+    }
+
+    /// The host's state came from another copy of the ROM, so the session cannot start.
+    pub fn rom_mismatch(&self) -> bool {
+        self.shared.rom_mismatch.load(Ordering::Relaxed)
     }
 
     /// Wires a transport into the core's serial traffic, on the emulator thread — the only
@@ -934,6 +942,13 @@ impl Worker {
                             if link_state::is_pair(&state) && !link_state::same_bios(&state, &own) {
                                 eprintln!("slot: cable: the host runs another GBA BIOS");
                                 self.shared.bios_mismatch.store(true, Ordering::Relaxed);
+                            } else if link_state::is_pair(&state)
+                                && !link_state::same_rom(&state, &own)
+                            {
+                                eprintln!(
+                                    "slot: cable: the host's copy of the game is another ROM"
+                                );
+                                self.shared.rom_mismatch.store(true, Ordering::Relaxed);
                             } else {
                                 match core.unserialize(&state) {
                                     Ok(()) => {
@@ -1366,6 +1381,7 @@ impl Worker {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);
+                self.shared.rom_mismatch.store(false, Ordering::Relaxed);
                 // Both queues emptied before the session is live, the mirror of the clear
                 // `Cmd::EndLink` does on its way out and for the same reason on the other
                 // side of the same seam. `netpacket_send` (slot-retro's `libretro.rs`) pushes
@@ -1394,6 +1410,7 @@ impl Worker {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);
+                self.shared.rom_mismatch.store(false, Ordering::Relaxed);
                 // No `start_link` and no `link.set_active`: this route never goes through
                 // libretro's netpacket interface at all, so a core with no `start` callback is
                 // not a gap here the way it is for `BeginLink`.
@@ -1423,6 +1440,7 @@ impl Worker {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);
+                self.shared.rom_mismatch.store(false, Ordering::Relaxed);
                 *cable = None;
                 // `Cmd::BeginLink`'s counterpart: tells the core the session is over,
                 // if it registered a `stop` to hear it through (`RetroCore::stop_link`

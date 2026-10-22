@@ -31,19 +31,33 @@ pub fn pair(state: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The GBA BIOS checksum mGBA writes at byte 4 of a state, the local one of a link state.
-fn bios(state: &[u8]) -> Option<u32> {
+/// The word at `at` of a GBA state's header, the local one of a link state: mGBA writes the
+/// BIOS checksum at byte 4 and the ROM's CRC32 at byte 8.
+fn header_word(state: &[u8], at: usize) -> Option<u32> {
     let gba = if is_pair(state) {
         local(state, 0)?
     } else {
         state.to_vec()
     };
-    (gba.len() >= 0x400).then(|| u32::from_le_bytes(gba[4..8].try_into().unwrap()))
+    (gba.len() >= 0x400).then(|| u32::from_le_bytes(gba[at..at + 4].try_into().unwrap()))
 }
 
 /// Whether two states were made on the same BIOS. Anything too short to be a GBA state passes.
 pub fn same_bios(a: &[u8], b: &[u8]) -> bool {
-    match (bios(a), bios(b)) {
+    match (header_word(a, 4), header_word(b, 4)) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+/// Whether two states were made from the same ROM file, by the CRC32 mGBA keeps of it. Each
+/// device runs both GBAs from its own copy of the ROM, so two copies that differ (another
+/// revision, or a patched or trimmed dump) run two different games from the same buttons: one
+/// device's copy of the other player's GBA never reaches the menu the real one is in, and the
+/// game waits at its link cable screen. mGBA itself only warns about a state from another
+/// version of the game, and loads it. Anything too short to be a GBA state passes.
+pub fn same_rom(a: &[u8], b: &[u8]) -> bool {
+    match (header_word(a, 8), header_word(b, 8)) {
         (Some(a), Some(b)) => a == b,
         _ => true,
     }
@@ -101,5 +115,31 @@ mod tests {
     #[test]
     fn a_state_too_short_to_be_a_gba_says_nothing() {
         assert!(same_bios(&0u64.to_le_bytes(), &1u64.to_le_bytes()));
+        assert!(same_rom(&0u64.to_le_bytes(), &1u64.to_le_bytes()));
+    }
+
+    fn from_rom(crc: u32) -> Vec<u8> {
+        let mut state = gba(0xBAAE187F);
+        state[8..12].copy_from_slice(&crc.to_le_bytes());
+        state
+    }
+
+    #[test]
+    fn states_from_the_same_rom_match_whether_paired_or_not() {
+        assert!(same_rom(
+            &pair(&from_rom(0x5ABE1E1D)),
+            &from_rom(0x5ABE1E1D)
+        ));
+        assert!(same_rom(&from_rom(7), &pair(&from_rom(7))));
+    }
+
+    /// The BIOS is the same here, so this is the ROM's word being read, not the BIOS's.
+    #[test]
+    fn states_from_different_roms_do_not() {
+        assert!(!same_rom(
+            &pair(&from_rom(0x5ABE1E1D)),
+            &pair(&from_rom(0x5ABE1E1E))
+        ));
+        assert!(same_bios(&pair(&from_rom(1)), &pair(&from_rom(2))));
     }
 }

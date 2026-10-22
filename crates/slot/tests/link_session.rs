@@ -1236,3 +1236,16 @@ fn a_host_on_another_bios_ends_the_session_and_says_so() {
     assert!(!app.link_active());
     assert_eq!(app.toast(), Some(Toast::BiosMismatch));
 }
+
+/// A host with another copy of the game ends the session here and says why, rather than the two
+/// devices running two different games from the same buttons.
+#[test]
+fn a_host_with_another_copy_of_the_game_ends_the_session_and_says_so() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut app = common::app_playing_in(d.path(), "Emerald");
+    app.begin_link(1);
+    app.rom_mismatch();
+
+    assert!(!app.link_active());
+    assert_eq!(app.toast(), Some(Toast::GameMismatch));
+}
