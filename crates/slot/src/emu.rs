@@ -1405,15 +1405,19 @@ impl Worker {
     /// that is what lets the loop fall into step with the kicks, and so with the display. And
     /// whether a kick started it.
     ///
-    /// `steady`: the presents have been following the kicks, so each began on one and any kick
-    /// since `deadline - PRESENT` (the start of the present just finished) is for the next
-    /// frame, even one that came a little earlier than the window. And the wait for a late one
-    /// is `KICK_PATIENCE` rather than `KICK_LAG`. Neither lets a present start before the window
-    /// opens, so a kick still cannot run the game fast.
+    /// Any kick since `deadline - PRESENT`, the start of the present just finished, is for the
+    /// next frame, even one that came a little before the window opened. Taking only kicks
+    /// inside the window when out of step threw away the display's next kick after a missed
+    /// one, a few milliseconds early, and left the loop on its own clock until it drifted back
+    /// into step about 19 frames later, a present lost each time. The window still opens no
+    /// sooner than `KICK_LEAD` before the deadline, so a kick cannot run the game fast.
+    ///
+    /// `steady`: the presents have been following the kicks, so the wait for a late one is
+    /// `KICK_PATIENCE` rather than `KICK_LAG`.
     fn wait_for_kick(&self, deadline: Instant, steady: bool) -> (Instant, bool) {
         let earliest = deadline - KICK_LEAD;
         let latest = deadline + if steady { KICK_PATIENCE } else { KICK_LAG };
-        let fresh = if steady { deadline - PRESENT } else { earliest };
+        let fresh = deadline - PRESENT;
         if let Some(wait) = earliest.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }

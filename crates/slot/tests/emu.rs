@@ -1382,3 +1382,32 @@ fn sound_keeps_real_time_with_the_display_at_16_8_ms_and_a_kick_missed_now_and_t
         "{per_second:.0} frames a second, {real_time:.4} of real time: the sound fell behind"
     );
 }
+
+/// A missed kick costs that one frame on the worker's own clock and nothing more. After one,
+/// the loop used to take only kicks inside its own window, and the display's next kick, a few
+/// milliseconds before that window, was thrown away as stale: the worker then ran on its own
+/// clock, 17.7 ms a frame with the wait for a kick, until it drifted back into step about 19
+/// frames later, losing a present each time. On the SP beside PICO-8 that was 3% of presents.
+#[test]
+fn a_missed_kick_loses_no_present() {
+    let emu = spawn();
+    let period = Duration::from_micros(16_800);
+    let mut next = Instant::now();
+    let mut kick_for = |kicks: u32| {
+        for i in 0..kicks {
+            next += period;
+            std::thread::sleep(next.saturating_duration_since(Instant::now()));
+            if i % 40 != 39 {
+                emu.kick();
+            }
+        }
+    };
+    kick_for(120);
+    let before = emu.published_count();
+    kick_for(600);
+    let ran = emu.published_count() - before;
+    assert!(
+        (594..=606).contains(&ran),
+        "{ran} presents for 600 display frames with one kick in 40 missed"
+    );
+}
