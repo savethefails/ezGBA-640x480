@@ -1346,14 +1346,14 @@ fn a_state_asked_for_in_the_last_present_is_still_answered() {
     );
 }
 
-/// The display's real period reaches the sound even when it misses a frame now and then. The
-/// SP refreshes every 16.8 ms, 0.8% slower than the 60 Hz the worker paces itself by, and the
-/// drift correction covers only 0.5%: until the period is measured the ring runs dry and the
-/// sound crackles every couple of seconds. The measurement used to need 300 kicked presents in
-/// a row, so a kick missed every second or so, as a busy game (PICO-8 starting up) causes,
-/// kept it from ever landing. Here one kick in 40 is missed.
+/// Sound keeps up with real time however the presents are paced. The SP refreshes every 16.8 ms,
+/// 0.8% slower than the 60 Hz the worker paces itself by, and the drift correction covers only
+/// 0.5%: a present carries a fixed frame of sound, so unless that is scaled to how often
+/// presents really come, the ring runs dry and the sound crackles every second or two. Beside
+/// PICO-8 a third of the presents missed their kick, and the scale was applied only to the
+/// kicked ones. Here one kick in 40 is missed; the sound a second is checked, not per present.
 #[test]
-fn the_display_period_is_measured_through_an_occasional_missed_kick() {
+fn sound_keeps_real_time_with_the_display_at_16_8_ms_and_a_kick_missed_now_and_then() {
     let (emu, sink, heard) = spawn_heard();
     emu.set_speed(Speed::Normal);
     let period = Duration::from_micros(16_800);
@@ -1367,21 +1367,18 @@ fn the_display_period_is_measured_through_an_occasional_missed_kick() {
             }
         }
     };
-    // Long enough for 300 kicked intervals with the misses left out.
+    // Long enough for the period to be measured.
     kick_for(420);
-    let (before, presents) = (heard.load(Ordering::Relaxed), emu.published_count());
-    kick_for(120);
-    let per =
-        (heard.load(Ordering::Relaxed) - before) as f64 / (emu.published_count() - presents) as f64;
+    let (before, began) = (heard.load(Ordering::Relaxed), Instant::now());
+    kick_for(180);
+    let per_second =
+        (heard.load(Ordering::Relaxed) - before) as f64 / began.elapsed().as_secs_f64();
     drop(sink);
-    // The mock's frame of sound at the device's rate, with the drift correction at its top
-    // (the counting device drains everything, so the ring always reads as starved).
-    let unscaled = 32_768.0 / 59.7275 * (59.7275 / 60.0) * 1.005;
-    let scale = per / unscaled;
+    // The counting device drains everything, so the ring reads as starved and the drift
+    // correction sits at its top, 0.5% over real time.
+    let real_time = per_second / (32_768.0 * 1.005);
     assert!(
-        // 1.008 measured; 1.000 exactly when the period never lands. Presents that miss their
-        // kick play unscaled, and a loaded machine misses more, so the floor sits well below.
-        (1.003..1.012).contains(&scale),
-        "{per:.1} frames a present, {scale:.4} of {unscaled:.1}: the 16.8 ms period never reached the sound"
+        (0.995..1.005).contains(&real_time),
+        "{per_second:.0} frames a second, {real_time:.4} of real time: the sound fell behind"
     );
 }
