@@ -39,7 +39,8 @@
   ```
 - **Headless rendering:** needs Mesa EGL (`apt install libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri`).
 - **Host builds:** need `libudev-dev` and `libasound2-dev`.
-- **Failures already on main** (not caused by this work): the 7 tests `both_b_and_menu_take_the_about_screen_back_to_the_quick_menu`, `the_rewind_bar_is_up_while_l2_is_held_and_gone_once_it_is_let_go`, `the_compliance_block_is_the_credits`, `the_badge_follows_the_latch_rather_than_the_button`, `an_unchanged_battery_save_is_not_rewritten`, and the two `sfx` tests. `a_kick_a_frame_brings_the_present_right_after_it` is timing-flaky under load.
+- **Failures already on main** (not caused by this work): the 7 tests `both_b_and_menu_take_the_about_screen_back_to_the_quick_menu`, `the_rewind_bar_is_up_while_l2_is_held_and_gone_once_it_is_let_go`, `the_compliance_block_is_the_credits`, `the_badge_follows_the_latch_rather_than_the_button`, `an_unchanged_battery_save_is_not_rewritten`, and the two `sfx` tests. With the real mGBA core in `vendor/`, `a_game_that_will_not_load_again_comes_back_out_of_the_slot` fails too.
+- **Timing-flaky under load:** `a_kick_a_frame_brings_the_present_right_after_it`, `sound_keeps_real_time_with_the_display_at_16_8_ms_and_a_kick_missed_now_and_then` (about one run in eight, before and after the cool-rubin merge), and `colour_depth_and_the_snes_emulator_are_kept_on_the_card`.
 
 ## Not done yet
 - Never run on real RG35XXSP / H700 hardware. First-save latency there is unknown (about 0.5 s on x86, about 10 s under qemu).
@@ -80,3 +81,15 @@
 - **Running the whole suite:** `cargo test --workspace` stops at the first failing test binary, so use `--no-fail-fast`.
 - **rustfmt:** the local rustfmt reformats `slot_chrome.rs` even though it's unchanged. The branch keeps main's text, so don't commit that.
 - **Upstream tracking:** this clone's fetch refspec only covered `main`, so `git status` said `pico8` was unpushed. The fix was `git config --add remote.origin.fetch '+refs/heads/pico8:refs/remotes/origin/pico8'` and then `git branch -u origin/pico8`.
+
+### Merged from `claude/cool-rubin-0nm03s` (ports from slot)
+`pico8` now carries that branch. What it changed that PICO-8 work runs into:
+- **Audio is 48 kHz** (`audio::OUTPUT_HZ`, was `GBA_HZ` at 32768) through a 48-tap windowed sinc. `Resampler`'s API is unchanged; it holds 24 source frames of history, and the ring is sized for 48 kHz. Recheck the device trace's `audio:` and `pico8:` lines after this merge.
+- **Cart headers are read on demand:** after a scan `Cart.title` and `Cart.code` are empty; call `slot_store::header_ids(&cart)`. It answers empty for PICO-8.
+- **The scan lists each art folder once** (lowercase keys). A `.p8.png` with no picture in `Labels/PICO8/` is its own label; the key is the stem plus `.png`, so `name.p8.png`.
+- **Faces off the boot path:** the first frame's faces (the PICO-8 cart shadow among them) upload at boot; the rest are built on a thread. A new face the first frame can show belongs in the boot set.
+- **Link:** `System/slotlink.sh` replaces `ags-net`; `dist:device` and `deploy:device` copy all of `card/System/*`.
+- **Saves:** `persist::try_read_sav` and `try_read_resume` tell a missing file from an unreadable one, and the session refuses to write over the latter. Use them for any new save path.
+- **Settings files are `.txt`**, renamed from `.ini` once at boot.
+- **mGBA ships a flash bank patch** (`cores/mgba/flash-bank-survives-mask.patch`); its test needs a `vendor/mgba_libretro.so` built with it.
+- **Test builds:** `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0` keeps `target/` near 1.2 GB instead of about 29 GB.
