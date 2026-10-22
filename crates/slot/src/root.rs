@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Parents come before their children: `ensure` creates each in turn, and so does the test
 /// harness's own root.
-pub const DIRS: [&str; 19] = [
+pub const DIRS: [&str; 20] = [
     "BIOS",
     // Where the player's own PICO-8 goes: it is licensed, so it never ships on the card.
     "BIOS/pico8",
@@ -33,11 +33,17 @@ pub const DIRS: [&str; 19] = [
     "Labels/GBC",
     "Labels/SNES",
     "Labels/PICO8",
+    "Logs",
     "Saves",
     "States",
     "System",
     "Wallpapers",
 ];
+
+/// Where logs meant for the player to find go: the card alarm's record, for now.
+pub fn logs_dir(root: &Path) -> PathBuf {
+    root.join("Logs")
+}
 
 /// Best effort: an unmounted or read only card is an empty shelf, not a boot failure.
 pub fn ensure(root: &Path) {

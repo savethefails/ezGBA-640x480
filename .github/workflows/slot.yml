@@ -13,6 +13,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - '.github/workflows/slot.yml'
+      - 'card/System/**'
       - 'cores/snes9x2005/**'
   workflow_dispatch:
 
@@ -56,12 +57,19 @@ jobs:
       - name: Check it is for the device
         run: file target-device/device/slot | grep -q aarch64
 
-      # The bare file, not a System folder around it: copied as a folder, a Mac's Replace would
-      # delete the System folder on the card first, and the cores with it.
+      # The bare files, not a System folder around them: copied as a folder, a Mac's Replace
+      # would delete the System folder on the card first, and the cores with it. slotlink.sh
+      # rides along because the binary runs it to link: a card updated with slot alone would
+      # have no link network.
+      - name: Gather the files
+        run: |
+          mkdir -p artifact
+          cp target-device/device/slot card/System/slotlink.sh artifact/
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.NAME }}
-          path: target-device/device/slot
+          path: artifact/
           if-no-files-found: error
 
   # The snes9x2005_plus core run-ahead is being tried on, which no card has yet: it goes into

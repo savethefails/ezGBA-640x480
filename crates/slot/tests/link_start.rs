@@ -1,7 +1,7 @@
 //! The worker that does the slow parts of starting a link session.
 //!
 //! Every test here injects fakes for the radio, so nothing in this file touches a network
-//! interface or shells out to `ags-net`. What is under test is the *sequence*: which steps
+//! interface or shells out to `slotlink.sh`. What is under test is the *sequence*: which steps
 //! are reported, in what order, and — the one that strands a device if it is wrong — whether
 //! the radio is taken back down on the way out.
 
@@ -78,7 +78,7 @@ fn a_radio_that_will_not_come_up_stops_before_the_socket() {
         !tried_socket.load(Ordering::SeqCst),
         "opened a socket on a network that never came up"
     );
-    // `up` failing does not mean nothing came up: `ags-net link host` can get the interface
+    // `up` failing does not mean nothing came up: `slotlink.sh link host` can get the interface
     // as far as configured and still exit non-zero. The teardown runs on this path too.
     assert_eq!(
         downs.load(Ordering::SeqCst),
@@ -288,7 +288,7 @@ fn a_link_that_comes_up_after_the_player_left_puts_the_radio_back() {
     let _ = peer.join();
 }
 
-/// `ags-net link join` exits 3 when its search ran and no host answered. That is the other
+/// `slotlink.sh link join` exits 3 when its search ran and no host answered. That is the other
 /// player's absence, not a radio fault, and the screen has a sentence for each — so the one
 /// blaming the radio must not be the one shown.
 #[test]

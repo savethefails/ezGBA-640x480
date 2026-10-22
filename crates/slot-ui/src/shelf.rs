@@ -1,5 +1,6 @@
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::{Cart, Platform};
+use std::sync::OnceLock;
 
 use crate::cart::{cart_box, label_colour, label_text, mould_of, Mould, CART_W};
 use crate::hud::Millis;
@@ -115,10 +116,11 @@ pub struct Shelf {
     gbc_shadow: Option<TexId>,
     snes_shadow: Option<TexId>,
     pico8_shadow: Option<TexId>,
-    /// Which mould each cart in `carts` came out of. Worked out once here because the answer is
-    /// in the rom's header: asking it while drawing would open a file on every cart of every
-    /// frame.
-    moulds: Vec<Mould>,
+    /// Which mould each cart in `carts` came out of, worked out the first time the cart is drawn
+    /// and kept: the answer is in the rom's header, so asking it every frame would open a file
+    /// per cart per frame, and asking it for every cart when the row is built opened every Game
+    /// Boy rom on the card at boot. From slot 3339c6f.
+    moulds: Vec<OnceLock<Mould>>,
     /// The presses added up, in the same continuous coordinate `scroll` lives in, so it counts
     /// laps rather than wrapping. This is what the spring aims at — see `scroll_target` — because
     /// it is the only thing that remembers which button was pressed once the row has wrapped.
@@ -134,7 +136,7 @@ pub struct Shelf {
 impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
-            moulds: carts.iter().map(mould_of).collect(),
+            moulds: carts.iter().map(|_| OnceLock::new()).collect(),
             box_art: vec![None; carts.len()],
             carts,
             index: 0,
@@ -149,6 +151,14 @@ impl Shelf {
             vel: 0.0,
             held: None,
         }
+    }
+
+    /// The mould of the cart at `i`, `None` past the end of `moulds`.
+    fn mould(&self, i: usize) -> Option<Mould> {
+        let (Some(cell), Some(cart)) = (self.moulds.get(i), self.carts.get(i)) else {
+            return None;
+        };
+        Some(*cell.get_or_init(|| mould_of(cart)))
     }
 
     /// Put the row on a cart without a ride: the selection, where the row stands and where its
@@ -460,22 +470,29 @@ impl Shelf {
         (nearest == off || halfway).then(|| at(off))
     }
 
-    /// Where the selected cart stands once the row has settled, in offscreen pixels: dead
-    /// centre, whatever the row holds. The cart going into the slot and the cart the picker
-    /// opens are both drawn by somebody else, starting from where this row left it, so the row
-    /// has to be able to say where that is rather than have each of them assume it.
+    /// Where the row is drawing its selected cart *this frame*: the left edge of its quad, and
+    /// how big that quad is against the cartridge's own size. The cart going into the slot and
+    /// the cart the core picker opens are both drawn by somebody else, taking over from this
+    /// row mid-movement, so the row has to be able to say where it had the cart rather than
+    /// have each of them assume.
     ///
-    /// The width is asked of the selected cart rather than assumed to be `CART_W`, so this is
-    /// `draw_row`'s own placement of that cart with `offset` at zero rather than a second copy
-    /// of the sum. Both cartridges are 240 wide today, so the number is the same either way;
-    /// the point is that it stays the same as what is drawn if a later one is not. `CART_W`
-    /// stands in for an empty row, which draws no cart to measure.
-    pub fn rest_x(&self) -> f32 {
+    /// This frame and not once the spring has settled: nothing makes the player wait for the
+    /// spring before pressing A. Pressed while the row is still travelling, the selection is
+    /// somewhere between two slots and shrunken as much as `SIDE_SCALE`, and answering "dead
+    /// centre, full size" made the cartridge jump up to a pitch sideways and grow by a third on
+    /// the frame the button went down. From slot f89df1c.
+    ///
+    /// The sum is `draw_row`'s own for the slot the selection is in, with `recede` at zero
+    /// because nothing has begun to part yet. The width is asked of the selected cart rather
+    /// than assumed to be `CART_W`; `CART_W` stands in for an empty row, which draws no cart.
+    pub fn selected_at(&self) -> (f32, f32) {
         let w = self
             .carts
             .get(self.index)
-            .map_or(CART_W, |c| cart_box(c.platform).0);
-        (OUT_W as f32 - w as f32) / 2.0
+            .map_or(CART_W, |c| cart_box(c.platform).0) as f32;
+        let offset = self.scroll_target() - self.scroll;
+        let scale = shrink(offset);
+        (OUT_W as f32 / 2.0 + offset * PITCH - w * scale / 2.0, scale)
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -530,7 +547,7 @@ impl Shelf {
             // where on the row it stands: every row is centred on the cart it has selected.
             let offset = target + slot as f32 - self.scroll;
             let t = offset.abs().min(1.0);
-            let scale = 1.0 + (SIDE_SCALE - 1.0) * t;
+            let scale = shrink(offset);
             let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
             let (cw, ch) = cart_box(cart.platform);
             let (w, h) = (cw as f32 * scale, ch as f32 * scale);
@@ -564,7 +581,7 @@ impl Shelf {
                 // with no message anywhere — for a row that would otherwise have drawn. A cart
                 // whose mould was never recorded gets the straight sided backing, which is the
                 // same degrading a cart whose face was never uploaded already gets.
-                let backing = match self.moulds.get(i).copied() {
+                let backing = match self.mould(i) {
                     None | Some(Mould::Gba) => self.shadow,
                     Some(Mould::Gb(GbShell::Notched)) => self.gb_shadow,
                     Some(Mould::Gb(GbShell::Rounded)) => self.gbc_shadow,
@@ -611,6 +628,13 @@ impl Shelf {
             });
         }
     }
+}
+
+/// How big a cart `offset` pitches from the selection is drawn, against its own size. Full at
+/// the selection and `SIDE_SCALE` from a pitch out, and one function for `draw_row` and
+/// `selected_at`, which have to agree about the selected cart on every frame of the spring.
+fn shrink(offset: f32) -> f32 {
+    1.0 + (SIDE_SCALE - 1.0) * offset.abs().min(1.0)
 }
 
 /// How solid the shadow under a dimmed cart is. It carries the whole of the cart's opacity

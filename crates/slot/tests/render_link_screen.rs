@@ -627,10 +627,10 @@ fn the_legend_shows_select_mode_only_where_the_hardware_can_be_switched() {
 // --- the sentence the first step shows ------------------------------------------------------
 //
 // Opening the link screen asks for a warm, which takes about 1.1 s out of the step that runs
-// `ags-net link host|join`. Once the driver is loaded there is no radio left to bring up, and the
-// step is looking for the other player from its first frame — so that is what it says. Read off
-// the glass, because the two sentences are two faces uploaded in one list and an index into the
-// wrong one draws a perfectly good line that says the wrong thing.
+// `slotlink.sh link host|join`. Once the driver is loaded there is no radio left to bring up, and
+// the step is looking for the other player from its first frame — so that is what it says. Read
+// off the glass, because the two sentences are two faces uploaded in one list and an index into
+// the wrong one draws a perfectly good line that says the wrong thing.
 
 /// A radio whose warm finishes when the test says so, keeping what it was asked for separate from
 /// what it finished. The caption has to follow the second, and this is what lets a test tell them
@@ -681,8 +681,8 @@ fn first_step_pixels(warm: bool, name: &str) -> (Vec<u8>, Vec<RadioJob>) {
     app.set_link_step_faces(faces.iter().map(|(t, f)| (*t, f.w, f.h)).collect());
     app.apply(Action::GameMenu);
     assert!(app.game_menu_open(), "the link screen never opened");
-    // A worker held on its first step: this stands in for an `ags-net link` that has not answered
-    // yet, which is the whole window the caption is about.
+    // A worker held on its first step: this stands in for a `slotlink.sh link` that has not
+    // answered yet, which is the whole window the caption is about.
     let (release, held) = channel::<()>();
     app.start_link(
         LinkStarter::spawn_with(

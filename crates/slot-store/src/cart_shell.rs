@@ -1,8 +1,8 @@
-//! `cart_shell.ini`: the shell a player picked for a cart, by its rom stem. One line a cart,
+//! `cart_shell.txt`: the shell a player picked for a cart, by its rom stem. One line a cart,
 //! `<stem> = <outline> <rrggbb> <finish>`, for example `Pokemon Emerald = auto 249c60 clear`.
 //!
-//! Two files, read in layers. `Config/cart_shell.ini` is the player's own; a
-//! `Labels/cart_shell.ini` sits beside label art and travels with it, so a label pack can
+//! Two files, read in layers. `Config/cart_shell.txt` is the player's own; a
+//! `Labels/cart_shell.txt` sits beside label art and travels with it, so a label pack can
 //! carry the shells its scans were made for. A line in the labels file wins, and a labels line
 //! whose value is just `auto` takes a cart back to the built-in table.
 
@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use unicode_normalization::UnicodeNormalization;
 
-pub const CART_SHELL_FILE: &str = "Config/cart_shell.ini";
-pub const LABELS_SHELL_FILE: &str = "Labels/cart_shell.ini";
+pub const CART_SHELL_FILE: &str = "Config/cart_shell.txt";
+pub const LABELS_SHELL_FILE: &str = "Labels/cart_shell.txt";
 
 /// Which mould: `auto` asks the rom. A Game Boy pak is `notched` (classes A and B) or `rounded`
 /// (class C). Carts of the other consoles have one mould each and read every word as `auto`.

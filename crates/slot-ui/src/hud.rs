@@ -1,4 +1,4 @@
-use slot_gfx::{Draw, TexId, OUT_W};
+use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::{BLUE_LIGHT_MAX, BRIGHTNESS_MAX, VOLUME_MAX};
 
 use crate::icon::icon_box;
@@ -19,6 +19,15 @@ const FADE_MS: Millis = 250;
 /// one system.
 pub const PLATE_H: f32 = 40.0;
 pub(crate) const PLATE: [f32; 4] = [0.0, 0.0, 0.0, 0.72];
+
+/// The card alarm: a red band across the middle of the screen, pulsing between these two
+/// every `PULSE_MS`, under `Toast::CardUnwritable`. It stays for as long as the card cannot be
+/// written, over the shelf and over a game alike: on a child's console, the grown-up has to be
+/// told that nothing is being saved. From slot 239769d.
+pub const ALARM_BAND_H: f32 = 120.0;
+const ALARM_BRIGHT: [f32; 4] = [0.82, 0.10, 0.10, 0.94];
+const ALARM_DIM: [f32; 4] = [0.40, 0.03, 0.03, 0.94];
+const PULSE_MS: Millis = 500;
 
 pub const HUD_ICON_PX: f32 = 24.0;
 /// One ink for the glyph and the fill, so the row reads as one control.
@@ -175,6 +184,8 @@ pub struct Hud {
     /// The last thing the HUD said, and when. On its own clock rather than the bar's: the
     /// two are triggered by different actions and either can outlive the other.
     said: Option<(Toast, Millis)>,
+    /// Since when the card alarm has been up, `None` while it is not.
+    alarm: Option<Millis>,
     /// One face per icon, in `Icon::ALL` order. Empty until the binary uploads them, since
     /// only the compositor can mint a `TexId`.
     icons: Vec<TexId>,
@@ -266,6 +277,18 @@ impl Hud {
         self.link_faces = faces;
     }
 
+    pub fn set_alarm(&mut self, on: bool, now: Millis) {
+        self.alarm = match (on, self.alarm) {
+            (true, Some(since)) => Some(since),
+            (true, None) => Some(now),
+            (false, _) => None,
+        };
+    }
+
+    pub fn alarmed(&self) -> bool {
+        self.alarm.is_some()
+    }
+
     pub fn visible(&self, now: Millis) -> bool {
         self.alpha(now) > 0.0
     }
@@ -302,6 +325,32 @@ impl Hud {
         if let Some(tex) = link.or(ff) {
             self.place_badge(tex, out);
         }
+        if let Some(since) = self.alarm {
+            self.draw_alarm(now.saturating_sub(since), out);
+        }
+    }
+
+    fn draw_alarm(&self, age: Millis, out: &mut Vec<Draw>) {
+        out.push(Draw::Rect {
+            x: 0.0,
+            y: (OUT_H as f32 - ALARM_BAND_H) / 2.0,
+            w: OUT_W as f32,
+            h: ALARM_BAND_H,
+            colour: pulse(age),
+        });
+        let alarm = Toast::CardUnwritable;
+        let Some(tex) = self.toasts.get(alarm.index()).copied() else {
+            return;
+        };
+        let (x, y, w, h) = toast_rect(alarm);
+        out.push(Draw::Tex {
+            x,
+            y,
+            w,
+            h,
+            tex,
+            alpha: 1.0,
+        });
     }
 
     fn draw_bar(&self, alpha: f32, out: &mut Vec<Draw>) {
@@ -354,14 +403,13 @@ impl Hud {
         if alpha <= 0.0 {
             return;
         }
-        let Some(tex) = self
-            .said
-            .and_then(|(t, _)| self.toasts.get(t.index()))
-            .copied()
-        else {
+        let Some((said, _)) = self.said else {
             return;
         };
-        let (x, y, w, h) = toast_rect();
+        let Some(tex) = self.toasts.get(said.index()).copied() else {
+            return;
+        };
+        let (x, y, w, h) = toast_rect(said);
         out.push(Draw::Tex {
             x,
             y,
@@ -410,6 +458,12 @@ fn fade(shown: Millis, now: Millis) -> f32 {
         return 0.0;
     }
     ((HUD_MS - age) as f32 / FADE_MS as f32).min(1.0)
+}
+
+fn pulse(age: Millis) -> [f32; 4] {
+    let phase = (age % PULSE_MS) as f32 / PULSE_MS as f32;
+    let t = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
+    std::array::from_fn(|i| ALARM_DIM[i] + (ALARM_BRIGHT[i] - ALARM_DIM[i]) * t)
 }
 
 fn faded(colour: [f32; 4], alpha: f32) -> [f32; 4] {

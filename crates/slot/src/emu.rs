@@ -664,6 +664,17 @@ impl EmuHandle {
         let _ = self.cmds.send(Cmd::Load(state));
     }
 
+    /// Marks the save ram the core holds as not the player's, so no flush writes it: the save
+    /// on the card failed to read, and the core is running on a blank one. From slot c5de4cc.
+    pub fn refuse_save_ram(&self) {
+        self.shared.sav_refused.store(true, Ordering::Release);
+    }
+
+    /// `refuse_save_ram`, for a resume state that failed to read.
+    pub fn refuse_resume(&self) {
+        self.shared.resume_refused.store(true, Ordering::Release);
+    }
+
     pub fn snapshot(&self) -> EmuSnapshot {
         EmuSnapshot {
             cmds: self.cmds.clone(),
@@ -721,10 +732,12 @@ impl Snapshot for EmuSnapshot {
 
 impl Drop for EmuHandle {
     fn drop(&mut self) {
+        eprintln!("slot: emu: stopping at {:.1} ms", crate::boot_time::ms());
         self.shared.stop.store(true, Ordering::Relaxed);
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+        eprintln!("slot: emu: stopped at {:.1} ms", crate::boot_time::ms());
     }
 }
 
@@ -761,6 +774,11 @@ impl Worker {
         resume: Option<Vec<u8>>,
         link: Link,
     ) {
+        eprintln!(
+            "slot: emu: loading {} at {:.1} ms",
+            rom.display(),
+            crate::boot_time::ms()
+        );
         if let Err(e) = core.load(&rom) {
             eprintln!("slot: {e}");
             self.shared
@@ -771,6 +789,11 @@ impl Worker {
         // After the load: there is no save ram to copy into until the rom says how much of
         // it there is. A game with none at all is not a failure to boot.
         if let Some(sav) = sav {
+            eprintln!(
+                "slot: emu: save ram, {} bytes, at {:.1} ms",
+                sav.len(),
+                crate::boot_time::ms()
+            );
             if let Err(e) = core.load_save_ram(&sav) {
                 eprintln!("slot: save ram: {e}");
                 // The core is about to run with its own idea of save ram rather than the
@@ -785,6 +808,11 @@ impl Worker {
         // the intro. A state the core will not take leaves the save ram loaded above, which
         // costs the player their position but not their progress.
         if let Some(resume) = resume {
+            eprintln!(
+                "slot: emu: resume state, {} bytes, at {:.1} ms",
+                resume.len(),
+                crate::boot_time::ms()
+            );
             if let Err(e) = core.unserialize(&self.to_core(resume)) {
                 eprintln!("slot: resume: {e}");
                 // Same reasoning as `sav_refused` above, for the resume half: a core running
@@ -814,6 +842,7 @@ impl Worker {
         self.shared
             .state
             .store(CoreState::Ready as u8, Ordering::Release);
+        eprintln!("slot: emu: ready at {:.1} ms", crate::boot_time::ms());
 
         let mut out = Vec::new();
         // What the ring was last told: muted, and idle. Neither, to begin with.
@@ -1545,7 +1574,7 @@ fn drain_transport(transport: &mut dyn LinkChannel, link: &Link, cap: u32) {
 /// save or load its state: the real frame ran once, undrawn, and the picture shown is the one
 /// before it, a single repeated frame before run-ahead is switched off.
 #[allow(clippy::type_complexity)]
-fn run_ahead(
+pub fn run_ahead(
     core: &mut dyn RetroCore,
     input: ButtonMask,
     ahead: u8,
@@ -1559,16 +1588,20 @@ fn run_ahead(
         core.set_frame_skip(false);
         return (audio, None);
     };
+    // Their sound is thrown away and their state loaded over, so a core that can skip making
+    // the sound may: snes9x then does not run its DSP at all.
+    core.set_frame_discarded(true);
     for k in 0..ahead {
         core.set_frame_skip(k + 1 < ahead);
         core.run_frame(input);
     }
+    core.set_frame_discarded(false);
     let _ = core.take_audio();
     // Copied before the state is wound back: a core is free to repaint on a load.
     picture.clear();
     picture.extend_from_slice(core.video_xrgb8888());
     let size = core.video_size();
-    if let Err(e) = core.unserialize(&state) {
+    if let Err(e) = core.unserialize_runahead(&state) {
         eprintln!("slot: run-ahead: {e}");
         return (audio, None);
     }
@@ -1624,6 +1657,136 @@ mod tests {
             let want = plain.take_audio();
             let (got, _) = run_ahead(&mut core, ButtonMask(0), 1, &mut Vec::new());
             assert_eq!(got, want, "the sound is not the real frame's");
+        }
+    }
+
+    /// What `run_ahead` asks of a core, in order. After slot's `tests/runahead.rs`: the order is
+    /// the contract, since a frame is told whether to draw and whether it is discarded before it
+    /// runs, and a load that runs while frames are still marked discarded would carry the mark
+    /// into the next present's real frame, whose sound is the one heard.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Call {
+        Run { drawn: bool, discarded: bool },
+        Save,
+        Load { discarded: bool, runahead: bool },
+    }
+
+    struct Recorder {
+        inner: slot_retro::MockCore,
+        drawn: bool,
+        discarded: bool,
+        log: Vec<Call>,
+    }
+
+    impl RetroCore for Recorder {
+        fn load(&mut self, rom: &std::path::Path) -> Result<(), slot_retro::CoreError> {
+            self.inner.load(rom)
+        }
+        fn run_frame(&mut self, input: ButtonMask) {
+            self.log.push(Call::Run {
+                drawn: self.drawn,
+                discarded: self.discarded,
+            });
+            self.inner.run_frame(input);
+        }
+        fn set_frame_skip(&mut self, skip: bool) {
+            self.drawn = !skip;
+            self.inner.set_frame_skip(skip);
+        }
+        fn set_frame_discarded(&mut self, discarded: bool) {
+            self.discarded = discarded;
+        }
+        fn video_xrgb8888(&self) -> &[u8] {
+            self.inner.video_xrgb8888()
+        }
+        fn take_audio(&mut self) -> Vec<i16> {
+            self.inner.take_audio()
+        }
+        fn serialize(&mut self) -> Result<Vec<u8>, slot_retro::CoreError> {
+            self.log.push(Call::Save);
+            self.inner.serialize()
+        }
+        fn unserialize(&mut self, data: &[u8]) -> Result<(), slot_retro::CoreError> {
+            self.log.push(Call::Load {
+                discarded: self.discarded,
+                runahead: false,
+            });
+            self.inner.unserialize(data)
+        }
+        fn unserialize_runahead(&mut self, data: &[u8]) -> Result<(), slot_retro::CoreError> {
+            self.log.push(Call::Load {
+                discarded: self.discarded,
+                runahead: true,
+            });
+            self.inner.unserialize(data)
+        }
+        fn save_ram(&self) -> Option<Vec<u8>> {
+            self.inner.save_ram()
+        }
+        fn load_save_ram(&mut self, data: &[u8]) -> Result<(), slot_retro::CoreError> {
+            self.inner.load_save_ram(data)
+        }
+        fn av_info(&self) -> slot_retro::AvInfo {
+            self.inner.av_info()
+        }
+    }
+
+    /// One present of run-ahead: the real frame undrawn and kept, its state saved, the frames
+    /// ahead discarded with only the last drawn, then run-ahead's own load with the mark
+    /// already cleared.
+    #[test]
+    fn run_ahead_draws_only_the_last_frame_ahead_and_discards_only_the_frames_ahead() {
+        use Call::*;
+        let real = Run {
+            drawn: false,
+            discarded: false,
+        };
+        let hidden = Run {
+            drawn: false,
+            discarded: true,
+        };
+        let shown = Run {
+            drawn: true,
+            discarded: true,
+        };
+        let back = Load {
+            discarded: false,
+            runahead: true,
+        };
+        for (ahead, want) in [
+            (1u8, vec![real, Save, shown, back]),
+            (
+                2,
+                vec![
+                    Run {
+                        drawn: false,
+                        discarded: false,
+                    },
+                    Save,
+                    hidden,
+                    Run {
+                        drawn: true,
+                        discarded: true,
+                    },
+                    Load {
+                        discarded: false,
+                        runahead: true,
+                    },
+                ],
+            ),
+        ] {
+            let mut core = Recorder {
+                inner: slot_retro::MockCore::new(),
+                drawn: true,
+                discarded: false,
+                log: Vec::new(),
+            };
+            run_ahead(&mut core, ButtonMask(0), ahead, &mut Vec::new());
+            assert_eq!(core.log, want, "running {ahead} ahead");
+            assert!(
+                !core.discarded,
+                "the next present's real frame is still marked discarded"
+            );
         }
     }
 

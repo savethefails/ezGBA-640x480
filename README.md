@@ -87,7 +87,7 @@ and they're read back from it at startup, so editing the file by hand still work
 | `colour-gamma 1.14` | With `colour-depth custom`: how much darker the middle tones get, as RetroArch's Target Gamma ÷ Monitor Gamma (`1` changes nothing, `2.5 ÷ 2.2` is `1.14`). From `0.5` to `2`. |
 | `colour-saturation 1.1` | With `colour-depth custom`: colour, from `0.5` to `2`. `1` changes nothing. |
 | `colour-contrast 1.05` | With `colour-depth custom`: contrast about mid grey, from `0.5` to `2`. `1` changes nothing. |
-| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `Config/selected_core.ini` wins over it. |
+| `snes-core snes9x` | The SNES Emulator row: `snes9x2005` or `snes9x`. A game's line in `Config/selected_core.txt` wins over it. |
 | `boot-picture off` | Start up with BaseOS's own logo instead of the last screen (see below). `boot-picture last` is the default. |
 
 ## Starting where you left off
@@ -141,6 +141,17 @@ If the battery runs flat, or you keep holding POWER past six seconds so the SP's
 the power itself, slot gets no chance to save,
 and the next start shows the last picture it did save.
 
+### If saving stops working
+
+If a save can't be written, or the SD card turns read-only (which is what the SP does to a
+card it finds damaged), a red band pulses across the middle of the screen: **Can't write to SD
+card. Progress is not being saved.** It stays until a save goes through again. Back up the
+card's `Saves/` and `States/` on a computer and check or replace the card.
+
+Each time the band comes up or goes away, ezGBA notes why on the SP's own storage, along with
+the game in the slot and the system's messages about the card. At the next start it copies those
+notes to `Logs/slot-card.log` on the card.
+
 ## The RG35XXSP's 640×480 screen
 
 Everything is drawn for 640×480 directly, not made for another screen and shrunk to fit:
@@ -181,6 +192,16 @@ takes both down:
   menu, or with `runahead 0`, `1` or `2` in `Config/theme.txt`. Two frames removes more lag
   but costs more, and in a few games shows a brief flicker when a guess is wrong. It is
   always off in a link session.
+
+  The frames run ahead are never heard, and the sound you hear is exactly the sound the game
+  makes with run-ahead off. On mGBA that took three fixes to the emulator, because its save
+  states lost the GBA's tone channels' pitch and left a little of the frame ahead's sound behind
+  (`cores/mgba/`). A fourth, from slot, keeps saves whole: mGBA forgot which half of a 128 KB
+  flash save chip a game had selected whenever a state was loaded, so with run-ahead on, a game
+  saving to the second half (Pokémon, Super Mario Advance 4) wrote into the first. On snes9x, ezGBA tells the emulator not to draw the real frame, not to work
+  out the frame ahead's sound at all, and to load the state back by its quick path: on a
+  desktop that cut a frame of run-ahead in a Mode 7 test from about 2.5 times a normal frame's
+  work to about 1.6 times.
 - **In step with the screen.** The emulator runs each frame right after the buttons are read
   and just before the frame is shown, instead of on a clock of its own that drifts against
   the screen's, which could leave a press waiting up to a frame longer.
@@ -214,11 +235,15 @@ shared only for free and non-commercially, with its licence beside it (it ships 
 
 SNES games can also run on **snes9x2005_plus**, an older and lighter snes9x (about three
 times as fast on the SP) so that run-ahead fits, and that is the default: choose between the
-two with SNES Emulator in the menu. Put `snes9x2005_plus_libretro.so` in `System/` (from the
+two with SNES Emulator in the menu. snes9x2005 draws some Mode 7 scenes wrongly, Mario Kart's
+track among them, where snes9x draws them right. Run-ahead costs snes9x much less than it did
+(see Responsive controls); whether a game fits on the SP can be timed with `core_bench`'s
+`--runahead 1` (see `crates/slot-retro/examples/core_bench.rs`), against the 12 ms a frame
+after which ezGBA switches run-ahead off. Put `snes9x2005_plus_libretro.so` in `System/` (from the
 **slot** workflow's `snes9x2005` artifact, with its `licenses/` beside it). Each emulator keeps
 its own save states, so a game suspended on one starts from its last in-game save on the other;
 battery saves are shared. To keep one game on one emulator whatever the menu says, add
-`Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.ini`.
+`Game Name = snes9x` (or `snes9x2005_plus`) to `Config/selected_core.txt`.
 
 Every SNES game is drawn in the North American cart: grey, with grooved wings and a big label
 wrapped over the top. Killer Instinct is black.
@@ -231,7 +256,7 @@ gold contacts inside, Pokémon Crystal has glitter in it, and the special editio
 Ruby, Sapphire and Emerald are clear, Boktai is clear, Gold, Silver, Red, Blue and Yellow are
 their own colours, and so on. Anything else is the console's usual grey or black.
 
-To pick a cart's shell yourself, add a line to `Config/cart_shell.ini`:
+To pick a cart's shell yourself, add a line to `Config/cart_shell.txt`:
 
 ```
 Pokemon Emerald (USA) = auto 249c60 clear
@@ -242,7 +267,7 @@ Super Metroid (Japan, USA) = auto 8a878e solid
 The name is the game's file name without its extension. Then the cartridge shape, a colour as
 six hex digits, and `solid`, `clear` or `glitter`. The shape is `auto` (what the game says),
 `notched` or `rounded` for a Game Boy cart (GBA and SNES carts have one shape each, so use
-`auto`). A `cart_shell.ini` in `Labels/` works the same way and wins
+`auto`). A `cart_shell.txt` in `Labels/` works the same way and wins
 over yours, so a label pack can carry the shells that go with its labels; a line there that
 says just `auto` puts a cart back to its usual shell.
 
@@ -287,13 +312,18 @@ share; keep it with them.
 
 ## Updating
 
-On a card that's already set up, only `System/slot` changes between builds. The **slot**
-workflow builds just that file on every push to this repo, in a couple of minutes. Open the
-latest **slot** run under Actions, download the artifact at the bottom, unzip it, and copy
-`slot` into the card's `System` folder, replacing the old one. Your saves and settings are left
+On a card that's already set up, only `System/slot` and `System/slotlink.sh` change between
+builds. The **slot** workflow builds those two files on every push to this repo, in a couple of
+minutes. Open the latest **slot** run under Actions, download the artifact at the bottom, unzip
+it, and copy both files into the card's `System` folder, replacing the old ones.
+`slotlink.sh` is what brings the wireless link up, from slot's own script for BaseOS; a card from
+before it also has a `System/ags-net`, which nothing uses any more and can be deleted. Both SPs
+in a link need the same build. Your saves and settings are left
 alone: settings live in `Config/`, so even replacing the whole `System` folder doesn't touch
 them. A card from an older build keeps its settings in `System/`; they move to `Config/` by
-themselves on the first boot of this one.
+themselves on the first boot of this one. `selected_core`, `video_mode` and `cart_shell` used to
+be `.ini` files and are `.txt` files now, so a Windows browser opens them instead of
+downloading them; old `.ini` files are renamed on the first boot too.
 
 The **release** workflow builds the whole card, with all three emulators, for setting up a new
 card. A card set up before SNES support needs `System/snes9x_libretro.so` from a release as

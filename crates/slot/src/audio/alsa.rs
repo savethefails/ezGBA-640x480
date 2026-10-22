@@ -6,10 +6,11 @@ use std::ffi::{c_char, c_int, c_uint, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use libloading::Library;
 
+use super::pacer::Pacer;
 use super::ring::Ring;
 use super::silence::Silence;
 use super::sink::{AudioError, AudioSink};
@@ -35,8 +36,8 @@ const RELEASE_AFTER: Duration = Duration::from_secs(3);
 /// optional: `default` is where the card's `asound.conf` lives, and on the H700 that file is
 /// what switches the codec's speaker and line out on — open anything else and the PCM streams
 /// perfectly into outputs that are still muted. The `plug:` wrapper is what makes `default`
-/// reachable at all, since it resolves to a raw `hw:` slave that cannot convert the GBA's
-/// 32768 Hz to the 32000 the codec runs at, and a bare `default` fails on the rate alone.
+/// reachable at all, since it resolves to a raw `hw:` slave that cannot convert the rate asked
+/// for to the codec's own, and a bare `default` fails on the rate alone.
 const DEVICES: [&str; 4] = ["plug:default", "default", "plughw:0,0", "hw:0,0"];
 
 type PcmOpen = unsafe extern "C" fn(*mut *mut c_void, *const c_char, c_int, c_int) -> c_int;
@@ -115,8 +116,8 @@ impl Alsa {
                 last = AudioError::Device(format!("{name}: {}", self.message(err)));
                 continue;
             }
-            // Resampling is asked of ALSA rather than of the frontend: the GBA's 32768 Hz is
-            // not a rate every codec offers, and one conversion is better than two.
+            // Whatever the codec runs at, ALSA converts `OUTPUT_HZ` to it; the frontend has
+            // already resampled every core to `OUTPUT_HZ`.
             let err = unsafe {
                 (self.set_params)(
                     pcm,
@@ -224,16 +225,24 @@ struct Playback {
     alsa: Alsa,
     pcm: Option<*mut c_void>,
     rate: u32,
+    failing: bool,
 }
 
 fn play(ring: &Arc<Ring>, sample_rate: u32) -> Result<Playback, AudioError> {
     let alsa = Alsa::load()?;
-    let pcm = alsa.open_pcm(sample_rate)?;
+    let pcm = match alsa.open_pcm(sample_rate) {
+        Ok(pcm) => Some(pcm),
+        Err(e) => {
+            eprintln!("slot: audio: {e}, retrying");
+            None
+        }
+    };
     ring.reopen(sample_rate);
     Ok(Playback {
         alsa,
-        pcm: Some(pcm),
+        pcm,
         rate: sample_rate,
+        failing: pcm.is_none(),
     })
 }
 
@@ -245,6 +254,7 @@ impl Playback {
         let mut buf = vec![0i16; PERIOD_FRAMES * CHANNELS as usize];
         let span = Duration::from_secs_f64(PERIOD_FRAMES as f64 / self.rate as f64);
         let mut silence = Silence::new(RELEASE_AFTER);
+        let mut pace = Pacer::new(span);
         while !stop.load(Ordering::Relaxed) {
             ring.fill(&mut buf);
             let hold = silence.hear(&buf, span);
@@ -254,21 +264,28 @@ impl Playback {
                     eprintln!("slot: audio released after silence");
                 }
                 (None, true) => match self.alsa.open_pcm(self.rate) {
-                    Ok(pcm) => self.pcm = Some(pcm),
+                    Ok(pcm) => {
+                        eprintln!("slot: audio reopened at {:.1} ms", crate::boot_time::ms());
+                        self.pcm = Some(pcm);
+                        self.failing = false;
+                    }
                     Err(e) => {
-                        eprintln!("slot: audio: {e}");
-                        return;
+                        if !self.failing {
+                            eprintln!("slot: audio: {e}, retrying");
+                            self.failing = true;
+                        }
                     }
                 },
                 _ => {}
             }
             match self.pcm {
                 Some(pcm) => {
+                    pace.reset();
                     if !self.write(pcm, &buf) {
                         return;
                     }
                 }
-                None => std::thread::sleep(span),
+                None => std::thread::sleep(pace.wait(Instant::now())),
             }
         }
     }

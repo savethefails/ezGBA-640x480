@@ -1,0 +1,78 @@
+diff --git a/src/platform/libretro/libretro.c b/src/platform/libretro/libretro.c
+index f316929..a2331d8 100644
+--- a/src/platform/libretro/libretro.c
++++ b/src/platform/libretro/libretro.c
+@@ -1660,6 +1660,19 @@ static void _postFrame(bool skipFrame) {
+ 		}
+ 	}
+ #endif
++#ifdef M_CORE_GB
++	/* Game Boy sound reaches the frontend in GB_SAMPLES chunks as the core fills them, so what a
++	 * frame made past its last whole chunk sat in the core's buffer for the next frame. That
++	 * buffer is not in a state: a frontend that runs ahead and loads back left the frame ahead's
++	 * remainder in it, and the next real frame played that. Drained to the last sample at the end
++	 * of every frame, as the GBA's already is, a frame leaves nothing behind. */
++	if (core->platform(core) == mPLATFORM_GB) {
++		struct mAudioBuffer* buffer = core->getAudioBuffer(core);
++		while (mAudioBufferAvailable(buffer)) {
++			_postAudioBuffer(&stream, buffer);
++		}
++	}
++#endif
+ }
+ 
+ #ifdef M_CORE_GB
+@@ -2900,6 +2913,35 @@ size_t retro_serialize_size(void) {
+ 	return size;
+ }
+ 
++/* The output side of the audio, which a state does not carry: the GBA resampler's phase and
++ * history, and the low-pass filter's last samples. A frontend that runs ahead runs frames whose
++ * state it then loads over, and their sound went through these all the same, so the next real
++ * frame's sound came out of a resampler a frame further on: the tone channels' waves broke up
++ * every frame. Each save keeps a copy, and a load the frontend says is run-ahead's puts it back.
++ * Any other load leaves them be, as before: a state from another time has no copy to match. */
++static struct LibretroAudioConverter audioConverterKept;
++static int32_t audioLowPassLeftKept = 0;
++static int32_t audioLowPassRightKept = 0;
++static bool audioKept = false;
++
++static void _keepAudioOutput(void) {
++	audioConverterKept = audioConverter;
++	audioLowPassLeftKept = audioLowPassLeftPrev;
++	audioLowPassRightKept = audioLowPassRightPrev;
++	audioKept = true;
++}
++
++static void _restoreAudioOutput(void) {
++	enum retro_savestate_context context = RETRO_SAVESTATE_CONTEXT_NORMAL;
++	if (!audioKept || !environCallback(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) ||
++	    context != RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE) {
++		return;
++	}
++	audioConverter = audioConverterKept;
++	audioLowPassLeftPrev = audioLowPassLeftKept;
++	audioLowPassRightPrev = audioLowPassRightKept;
++}
++
+ bool retro_serialize(void* data, size_t size) {
+ 	if (deferredSetup) {
+ 		_doDeferredSetup();
+@@ -2914,6 +2956,7 @@ bool retro_serialize(void* data, size_t size) {
+ 	vfm->seek(vfm, 0, SEEK_SET);
+ 	vfm->read(vfm, data, size);
+ 	vfm->close(vfm);
++	_keepAudioOutput();
+ 	return true;
+ }
+ 
+@@ -2929,6 +2972,9 @@ bool retro_unserialize(const void* data, size_t size) {
+ 	struct VFile* vfm = VFileFromConstMemory(data, size);
+ 	bool success = mCoreLoadStateNamed(core, vfm, SAVESTATE_RTC);
+ 	vfm->close(vfm);
++	if (success) {
++		_restoreAudioOutput();
++	}
+ 	return success;
+ }
+ 

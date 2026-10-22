@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use slot_gfx::{OUT_H, OUT_W};
 use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, write_theme_setting, Aspect, Cart,
-    ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture, StateEntry, StateRing,
-    Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
+    Aspect, Cart, ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture,
+    StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -72,6 +73,8 @@ const SLOT_LETTER_OUT_MS: Millis = 800;
 const SLOT_LETTER_ALPHA: f32 = 0.4;
 
 const AUTOSAVE_MS: Millis = 60_000;
+/// How often the card's mount is asked whether it has turned read-only.
+const CARD_CHECK_MS: Millis = 2_000;
 
 /// A dead battery is a far likelier hard cutoff than anyone holding POWER for eight
 /// seconds, so the last of the charge goes on the state and then on stopping.
@@ -641,12 +644,29 @@ pub struct App {
     /// `None` in unit tests, where there is no panel to darken and no battery to run out.
     power: Option<Power>,
     dozed_at: Millis,
+    /// The POWER press being held right now is the one that woke the panel. Set on every press,
+    /// assigned rather than or-ed, so it is always about the press in hand. See `power_press`.
+    woke_on_press: bool,
     /// When the state next has to be on the card. Moved by every resume write, not only by
     /// the autosave itself.
     autosave_at: Millis,
     /// The autosave being written on its own thread, joined before anything else writes the
     /// resume or the device goes down. See `autosave`.
     pending_save: Option<std::thread::JoinHandle<()>>,
+    /// Whether the last write to the card failed: the resume, a battery save, `slot.state`,
+    /// `theme.txt` or a video mode. Shared with the autosave's thread. Any write that lands
+    /// clears it. Behind the HUD's card alarm, with `card_read_only`. From slot 239769d.
+    card_writes: Arc<crate::card_log::CardWrites>,
+    /// The seated game's resume state failed to read, so the core was given none. Its
+    /// `resume_trusted` is false all the same, which must not read as the core refusing a state
+    /// and send `retire_refused_resume` to file a good one away.
+    resume_unread: bool,
+    /// Writes `slot.state` off the game's thread for the settings changed mid-game. See
+    /// `persist_soon`.
+    state_writer: crate::state_writer::StateWriter,
+    /// Whether the card was mounted read-only when last asked, every `CARD_CHECK_MS`.
+    card_read_only: bool,
+    card_check_at: Millis,
     battery_at: Millis,
     charge_at: Millis,
     headphones: bool,
@@ -700,6 +720,7 @@ impl App {
             .iter()
             .position(|(_, s)| !s.carts.is_empty())
             .unwrap_or(0);
+        let card_writes: Arc<crate::card_log::CardWrites> = Arc::default();
         App {
             radio: radio_jobs(),
             phase: Phase::Shelf,
@@ -778,8 +799,14 @@ impl App {
             clock: 0.0,
             power: None,
             dozed_at: 0,
+            woke_on_press: false,
             autosave_at: AUTOSAVE_MS,
             pending_save: None,
+            card_writes: card_writes.clone(),
+            resume_unread: false,
+            state_writer: crate::state_writer::StateWriter::spawn(card_writes),
+            card_read_only: false,
+            card_check_at: 0,
             battery_at: BATTERY_POLL_MS,
             charge_at: CHARGE_POLL_MS,
             headphones: false,
@@ -802,7 +829,10 @@ impl App {
         let look = Look::from(&theme);
         look.apply();
         slot_ui::set_theme(theme);
-        let mut app = App::new(scan(root).unwrap_or_default());
+        crate::boot_time::mark("root and theme");
+        let carts = scan(root).unwrap_or_default();
+        crate::boot_time::mark("scan");
+        let mut app = App::new(carts);
         app.look = look;
         app.menu = theme.menu;
         app.root = Some(root.to_path_buf());
@@ -1370,7 +1400,7 @@ impl App {
     }
 
     /// The seated cart's picture mode, off the card, handed over in the same breath as `core`
-    /// and `platform` and for the same reason: this file never goes back to `video_mode.ini`
+    /// and `platform` and for the same reason: this file never goes back to `video_mode.txt`
     /// for a second opinion.
     pub fn set_video_mode(&mut self, mode: VideoMode) {
         self.video_mode = mode;
@@ -1381,7 +1411,7 @@ impl App {
         self.look.runahead
     }
 
-    /// The emulator a SNES cart starts on unless `selected_core.ini` names one.
+    /// The emulator a SNES cart starts on unless `selected_core.txt` names one.
     pub fn snes_core(&self) -> Core {
         self.look.snes_core
     }
@@ -1466,9 +1496,11 @@ impl App {
         };
         // Best effort, like every other card write here: a read only or absent card is a
         // picture that still stretches, just not one that is still stretched next boot.
-        if let Err(e) = video_mode::write_video_mode(&root, cart, mode) {
-            eprintln!("slot: video: could not write video_mode.ini: {e}");
+        let written = video_mode::write_video_mode(&root, cart, mode);
+        if let Err(e) = &written {
+            eprintln!("slot: video: could not write video_mode.txt: {e}");
         }
+        self.card_writes.wrote("video_mode.txt", &written);
     }
 
     /// The `gpsp_serial` the core `Session` just spawned was loaded with. Called in the same
@@ -1484,11 +1516,11 @@ impl App {
     /// core and the screen cannot come to disagree about which mode a cart is in. A cart the
     /// shelf cannot name links by cable, on gpSP's own pick.
     pub fn link_mode(&self, stem: &str) -> (LinkKind, &'static str) {
-        let Some((cart, auto)) = self.auto_link(stem) else {
+        let Some((title, code, auto)) = self.auto_link(stem) else {
             return (LinkKind::Cable, "auto");
         };
         let chosen = self.link_choices.get(stem).copied().unwrap_or(auto);
-        (chosen, serial_option(chosen, auto, &cart.code, &cart.title))
+        (chosen, serial_option(chosen, auto, &code, &title))
     }
 
     /// Whether a netpacket session is live right now. libretro disables an entire class of
@@ -1673,6 +1705,7 @@ impl App {
         if matches!(self.phase, Phase::SetClock { .. }) || secs < CLOCK_FLOOR {
             self.phase = clock_screen(secs, 0, false);
         }
+        self.copy_card_log(&power);
         self.power = Some(power);
         // There is nothing to read before this call — no gauge for `battery_at`, no charge
         // for `charge_at`, and whatever `led_state` computed with no battery is not a real
@@ -1685,6 +1718,44 @@ impl App {
         self.battery_at = self.now();
         self.charge_at = self.now();
         self.last_led = None;
+    }
+
+    /// The card alarm's record onto the card, where the grown-up can find it, at each boot.
+    fn copy_card_log(&self, power: &Power) {
+        let (Some(log), Some(root)) = (power.card_log(), &self.root) else {
+            return;
+        };
+        if let Err(e) = crate::card_log::copy_to_card(&log, root) {
+            eprintln!("slot: card log: {e}");
+        }
+    }
+
+    /// One entry in the card alarm's record: up or down, why, the cart in the slot, and the
+    /// kernel's own lines about the card when it goes up.
+    fn log_card(&self, alarm: bool) {
+        let Some(power) = &self.power else {
+            return;
+        };
+        let Some(log) = power.card_log() else {
+            return;
+        };
+        let kernel = if alarm {
+            power.card_kernel_lines()
+        } else {
+            Vec::new()
+        };
+        let write_error = self.card_writes.last_error();
+        let entry = crate::card_log::entry(&crate::card_log::CardEvent {
+            secs: power.now(),
+            alarm,
+            read_only: self.card_read_only,
+            write_error: write_error.as_deref(),
+            cart: self.seated(),
+            kernel: &kernel,
+        });
+        if let Err(e) = crate::card_log::append(&log, &entry) {
+            eprintln!("slot: card log: {e}");
+        }
     }
 
     /// The motor. Never persisted and never a level: it belongs to the cart that asked for
@@ -1917,6 +1988,15 @@ impl App {
                 if self.link_active() {
                     self.end_link();
                     return;
+                }
+                // A press on a dark panel lights it on the press, not the release. Holding
+                // POWER on a dozing device used to run the shutdown on a panel nobody could
+                // see, so a user kept holding into the PMIC's own six second cutoff. A press may
+                // light the panel, never darken it: a doze still waits for the release. From
+                // slot d25d627.
+                self.woke_on_press = matches!(self.phase, Phase::Doze { .. });
+                if self.woke_on_press {
+                    self.wake();
                 }
                 return self.flush_resume();
             }
@@ -2171,9 +2251,11 @@ impl App {
         };
         self.look.apply();
         if let Some(root) = &self.root {
-            if let Err(e) = write_theme_setting(root, name, &value) {
+            let written = write_theme_setting(root, name, &value);
+            if let Err(e) = &written {
                 eprintln!("slot: theme.txt: {e}");
             }
+            self.card_writes.wrote("theme.txt", &written);
         }
     }
 
@@ -2245,7 +2327,7 @@ impl App {
         }
         // A key held against an end would otherwise rewrite the file at the repeat rate.
         if moved || unmuted {
-            self.persist();
+            self.persist_soon();
         }
         true
     }
@@ -2279,7 +2361,7 @@ impl App {
         *self.muted_mut() = muted;
         self.hud
             .show(HudKind::Volume, self.output_volume(), muted, now);
-        self.persist();
+        self.persist_soon();
     }
 
     /// What the bar reads. Muted draws as an empty bar under the muted glyph, which is what
@@ -2636,8 +2718,33 @@ impl App {
         self.screen
     }
 
+    /// A save or resume read for the game going in: `None` when the card failed to read it,
+    /// which raises the card alarm like a failed write. From slot c5de4cc.
+    pub fn card_read(
+        &self,
+        what: &str,
+        read: std::io::Result<Option<Vec<u8>>>,
+    ) -> Option<Option<Vec<u8>>> {
+        match read {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                eprintln!("slot: {what} read: {e}");
+                self.card_writes.failed(what, &e);
+                None
+            }
+        }
+    }
+
+    pub fn set_resume_unread(&mut self, unread: bool) {
+        self.resume_unread = unread;
+    }
+
     pub fn set_game_ready(&mut self, ready: bool) {
         self.game_ready = ready;
+    }
+
+    pub fn game_ready(&self) -> bool {
+        self.game_ready
     }
 
     /// Whether the draw list carries the game layer. A core that has published nothing would
@@ -2669,6 +2776,20 @@ impl App {
         if self.now() >= self.autosave_at {
             self.autosave();
         }
+        if self.now() >= self.card_check_at {
+            self.card_check_at = self.now() + CARD_CHECK_MS;
+            self.card_read_only = self.power.as_ref().is_some_and(|p| p.card_read_only());
+        }
+        let failing = self.card_writes.failing() || self.card_read_only;
+        if failing != self.hud.alarmed() {
+            eprintln!(
+                "slot: card: alarm {} (read-only {})",
+                if failing { "on" } else { "off" },
+                self.card_read_only
+            );
+            self.log_card(failing);
+        }
+        self.hud.set_alarm(failing, self.now());
         if self.now() >= self.battery_at {
             self.battery_at = self.now() + BATTERY_POLL_MS;
             self.battery = self.power.as_ref().and_then(|p| p.battery());
@@ -2783,9 +2904,13 @@ impl App {
         let Some(root) = &self.root else {
             return;
         };
-        if let Err(e) = write_slot_state(root, &self.state) {
+        // After whatever `persist_soon` queued, or that older state could land over this one.
+        self.state_writer.flush();
+        let written = write_slot_state(root, &self.state);
+        if let Err(e) = &written {
             eprintln!("slot: slot.state: {e}");
         }
+        self.card_writes.wrote("slot.state", &written);
     }
 
     pub fn on_core_ready(&mut self) {
@@ -2822,7 +2947,7 @@ impl App {
         // The overwhelmingly common case, and the reason this check comes first: a core that
         // took its resume has nothing to move, and answering that costs one atomic load rather
         // than a stat of the card on every frame of every insert.
-        if snapshot.resume_trusted() {
+        if snapshot.resume_trusted() || self.resume_unread {
             return;
         }
         // A refusal is only evidence about the state when the emulator that refused it is the
@@ -3189,10 +3314,15 @@ impl App {
             return;
         };
         let alpha = self.alert_alpha();
+        // Where the row had this cart on the frame the button went down, size included. The
+        // shelf stops running the moment the phase changes, so this is the same answer on
+        // every frame of the travel.
+        let (rest, scale) = self.shelf().selected_at();
         SlotChrome {
             cart,
             face,
-            rest: self.shelf().rest_x(),
+            rest,
+            scale,
             lower: SHELF_ROW_LOWER,
             seat: self.seat(),
             alert: self.alert_face.filter(|_| alpha > 0.0).map(|t| (t, alpha)),
@@ -3311,9 +3441,10 @@ impl App {
         let progress = picker.openness(now);
         // The shadows and the legend come in with the lift, not with the slide.
         let lift = lift_of(progress);
-        // The cart grows out of where the row was standing it, which is the middle of the
-        // screen on every shelf but one holding two carts.
-        let shelf = shelf_cart_at(self.shelf().rest_x());
+        // The cart grows out of the quad the row has it in this frame: the middle of the screen
+        // at full size once the spring has settled, and somewhere short of that while it has not.
+        let (rest, scale) = self.shelf().selected_at();
+        let shelf = shelf_cart_at(rest, scale);
         let board = board_from(shelf, progress);
         let zoom = board_zoom(board);
         let ready = self.core_faces_ready();
@@ -3552,18 +3683,27 @@ impl App {
         }
     }
 
-    /// The cart named `stem`, and the hardware gpSP picks for it on its own. Read from the
-    /// header on disk, so asked only when something is about to act on the answer — the link
-    /// screen opening, a core loading, a link being picked — and never once a frame. `None`
-    /// for a cart the shelf cannot name.
-    fn auto_link(&self, stem: &str) -> Option<(&Cart, LinkKind)> {
+    /// The header title and game code of the cart named `stem`, and the hardware gpSP picks
+    /// for it on its own. Read from the header on disk, so asked only when something is about
+    /// to act on the answer — the link screen opening, a core loading, a link being picked —
+    /// and never once a frame. `None` for a cart the shelf cannot name.
+    fn auto_link(&self, stem: &str) -> Option<(String, String, LinkKind)> {
         let (cart, _) = self.shelf().find(stem)?;
-        let auto = link_kind(&cart.code, &cart.title, slot_store::header_clean(&cart.rom));
-        Some((cart, auto))
+        let (title, code) = slot_store::header_ids(cart);
+        let auto = link_kind(&code, &title, slot_store::header_clean(&cart.rom));
+        Some((title, code, auto))
     }
 
     fn on_shelf(&self) -> bool {
         matches!(self.phase, Phase::Shelf)
+    }
+
+    pub fn browsed_rom(&self) -> Option<&std::path::Path> {
+        if !self.on_shelf() {
+            return None;
+        }
+        let shelf = self.shelf();
+        shelf.carts.get(shelf.index).map(|c| c.rom.as_path())
     }
 
     fn insert(&mut self, clean: bool) {
@@ -3578,6 +3718,10 @@ impl App {
         else {
             return;
         };
+        eprintln!(
+            "slot: launch: insert {cart} at {:.1} ms",
+            crate::boot_time::ms()
+        );
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
@@ -3681,8 +3825,12 @@ impl App {
             Ok(()) => {
                 self.state.cart = None;
                 self.state.cart_platform = None;
+                self.card_writes.ok();
             }
-            Err(e) => eprintln!("slot: eject: {e}"),
+            Err(e) => {
+                eprintln!("slot: eject: {e}");
+                self.card_writes.failed("eject", &e);
+            }
         }
     }
 
@@ -3783,7 +3931,14 @@ impl App {
 
     /// The lid's twin, and the only one of the two the device is certain to see. A tap
     /// dozes and a second one wakes.
+    ///
+    /// The wake has already happened on the press (`apply`'s `PowerPress` arm), and its release
+    /// stops here: otherwise a tap on a sleeping device would light it and put it straight back
+    /// out. The `Doze` arm still catches a doze reached between the press and the release.
     fn power_press(&mut self) {
+        if std::mem::take(&mut self.woke_on_press) {
+            return;
+        }
         match self.phase {
             Phase::Doze { .. } => self.wake(),
             _ => self.doze(),
@@ -3966,7 +4121,7 @@ impl App {
         let carried = self
             .seated()
             .and_then(|stem| self.auto_link(stem))
-            .is_some_and(|(cart, _)| link_carried(&cart.code, &cart.title));
+            .is_some_and(|(title, code, _)| link_carried(&code, &title));
         if !carried {
             self.hud.toast(Toast::NoLink, self.now());
             return;
@@ -4156,9 +4311,9 @@ impl App {
         if self.core != Core::Gpsp {
             return false;
         }
-        self.auto_link(stem).is_some_and(|(cart, auto)| {
-            serial_option(self.link_hardware.other(), auto, &cart.code, &cart.title)
-                != serial_option(self.link_hardware, auto, &cart.code, &cart.title)
+        self.auto_link(stem).is_some_and(|(title, code, auto)| {
+            serial_option(self.link_hardware.other(), auto, &code, &title)
+                != serial_option(self.link_hardware, auto, &code, &title)
         })
     }
 
@@ -4358,7 +4513,7 @@ impl App {
             return;
         };
         if let Err(e) = slot_store::write_selected_core(&root, &cart.stem, core) {
-            eprintln!("slot: core: could not write selected_core.ini: {e}");
+            eprintln!("slot: core: could not write selected_core.txt: {e}");
         }
     }
 
@@ -4379,9 +4534,11 @@ impl App {
         self.state.shelf_cart = selected.as_ref().map(|(stem, _)| stem.clone());
         self.state.shelf_platform = selected.map(|(_, platform)| platform);
         if let Some(root) = &self.root {
-            if let Err(e) = write_slot_state(root, &self.state) {
+            let written = write_slot_state(root, &self.state);
+            if let Err(e) = &written {
                 eprintln!("slot: slot.state: {e}");
             }
+            self.card_writes.wrote("slot.state", &written);
         }
     }
 
@@ -4452,7 +4609,21 @@ impl App {
     /// carries out and which has to be on the card before the core it reads is dropped.
     /// Waits for an autosave still being written. Every other write of the resume goes after
     /// it, so the older state can never land over a newer one.
+    /// `persist`, off the game's thread: for volume, brightness and mute, which are changed
+    /// while a game runs and would otherwise stall it for a write and a sync on every press.
+    fn persist_soon(&self) {
+        if let Some(root) = &self.root {
+            self.state_writer.save(root, &self.state);
+        }
+    }
+
+    /// Waits for a `persist_soon` write to land. Tests read `slot.state` after one.
+    pub fn flush_state(&self) {
+        self.state_writer.flush();
+    }
+
     pub fn settle_saves(&mut self) {
+        self.state_writer.flush();
         if let Some(h) = self.pending_save.take() {
             let _ = h.join();
         }
@@ -4480,17 +4651,20 @@ impl App {
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "autosave");
         let (root, platform, core, cart) =
             (root.clone(), self.platform, self.core, cart.to_owned());
+        let failing = self.card_writes.clone();
         let write = move || {
-            if let Err(e) = persist::flush(
+            let written = persist::flush(
                 &root,
                 platform,
                 core,
                 &cart,
                 state.as_deref(),
                 sav.as_deref(),
-            ) {
+            );
+            if let Err(e) = &written {
                 eprintln!("slot: autosave: {e}");
             }
+            failing.wrote("autosave", &written);
         };
         match std::thread::Builder::new()
             .name("slot-autosave".into())
@@ -4515,16 +4689,18 @@ impl App {
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
-        if let Err(e) = persist::flush(
+        let written = persist::flush(
             root,
             self.platform,
             self.core,
             cart,
             state.as_deref(),
             sav.as_deref(),
-        ) {
+        );
+        if let Err(e) = &written {
             eprintln!("slot: flush: {e}");
         }
+        self.card_writes.wrote("flush", &written);
     }
 
     /// The ring for the cart in the slot. `None` outside the binary, where there is no
@@ -4774,6 +4950,11 @@ impl App {
         self.hud.said(self.now())
     }
 
+    /// Whether the card alarm is up: the card is read-only or the last write to it failed.
+    pub fn card_alarm(&self) -> bool {
+        self.hud.alarmed()
+    }
+
     /// One shot, and it hands the game back the way loading does. Undoing an undo would be a
     /// redo, and the switcher is not a place to sit and shuffle.
     pub fn undo(&mut self, now: Millis) {
@@ -4938,7 +5119,12 @@ fn free_stamp(ring: &StateRing, now: i64) -> String {
         .unwrap_or_default();
     // Local, from the same wall clock the captions are read against. A stamp in utc would
     // name every state an hour or several from the time the polaroid says it was taken.
-    let mut secs = now;
+    //
+    // Never behind the newest one, though: the ring keeps the newest stamps, so a save taken
+    // with the clock set back (a battery run flat) sorted as the oldest and was the one a full
+    // ring dropped to make room for it. From slot 894201d.
+    let newest = taken.iter().filter_map(|s| parse_stamp(s)).max();
+    let mut secs = newest.map_or(now, |n| now.max(n + 1));
     let mut stamp = format_stamp(secs);
     while taken.contains(&stamp) {
         secs += 1;
@@ -4999,7 +5185,7 @@ struct Look {
     /// The game picture's colour depth, and the card's own values for `Custom`.
     colour_depth: ColourDepth,
     colour_custom: [f32; 3],
-    /// The emulator a SNES cart starts on when `selected_core.ini` does not name one. Not how
+    /// The emulator a SNES cart starts on when `selected_core.txt` does not name one. Not how
     /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
     snes_core: Core,
 }

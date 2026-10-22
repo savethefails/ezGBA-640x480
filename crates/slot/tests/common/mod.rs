@@ -413,6 +413,8 @@ pub struct StubPlatform {
     /// same state every tick forever: the value does not move, only the count would.
     led_writes: Arc<AtomicUsize>,
     headphones: Arc<std::sync::atomic::AtomicBool>,
+    read_only: Arc<std::sync::atomic::AtomicBool>,
+    card_log: Option<PathBuf>,
 }
 
 /// `LedState` has no `Copy`-friendly integer form of its own — it is deliberately opaque to
@@ -513,6 +515,8 @@ fn rig_with_led(
         led: led.clone(),
         led_writes: led_writes.clone(),
         headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        card_log: None,
     };
     (
         Power::new(Box::new(platform), timeout),
@@ -606,6 +610,18 @@ impl Platform for StubPlatform {
     fn headphones(&self) -> bool {
         self.headphones.load(Ordering::Relaxed)
     }
+
+    fn card_read_only(&self) -> bool {
+        self.read_only.load(Ordering::Relaxed)
+    }
+
+    fn card_log(&self) -> Option<PathBuf> {
+        self.card_log.clone()
+    }
+
+    fn card_kernel_lines(&self) -> Vec<String> {
+        vec![STUB_KERNEL_LINE.to_owned()]
+    }
 }
 
 /// Says the clock has already been confirmed. A root with no `clock_set` stops on the clock
@@ -639,9 +655,40 @@ pub fn app_playing_with_jack(root: &Path, stem: &str) -> (App, Arc<std::sync::at
         led: Arc::new(AtomicU8::new(u8::MAX)),
         led_writes: Arc::new(AtomicUsize::new(0)),
         headphones: jack.clone(),
+        read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        card_log: None,
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, jack)
+}
+
+pub const STUB_KERNEL_LINE: &str = "FAT-fs (mmcblk0p7): error, invalid access to FAT";
+
+pub fn app_playing_with_card(root: &Path, stem: &str) -> (App, Arc<std::sync::atomic::AtomicBool>) {
+    app_playing_with_card_log(root, stem, None)
+}
+
+pub fn app_playing_with_card_log(
+    root: &Path,
+    stem: &str,
+    card_log: Option<PathBuf>,
+) -> (App, Arc<std::sync::atomic::AtomicBool>) {
+    let mut a = app_playing_with(root, stem, StubSnapshot::boxed());
+    let read_only = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let platform = StubPlatform {
+        backlight: Arc::new(AtomicU8::new(0)),
+        root: root.to_path_buf(),
+        clock: Clock::at(CLOCK_IS_SET),
+        charge: Arc::new(AtomicU8::new(0)),
+        percent: Arc::new(AtomicU8::new(50)),
+        led: Arc::new(AtomicU8::new(u8::MAX)),
+        led_writes: Arc::new(AtomicUsize::new(0)),
+        headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        read_only: read_only.clone(),
+        card_log,
+    };
+    a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
+    (a, read_only)
 }
 
 /// The same, wired to a platform whose charge state and percent a test can move

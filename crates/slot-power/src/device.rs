@@ -4,7 +4,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{Battery, Charge, LedState, Platform};
 
@@ -13,9 +13,45 @@ use crate::{Battery, Charge, LedState, Platform};
 /// 100 on others.
 const TOP_STEP: u32 = 9;
 
+/// The dimmest lit step, as a share of `max_brightness`: the second of the old even steps,
+/// because some panels do not light at all at 1. From slot 3b6349c.
+const BACKLIGHT_FLOOR: f64 = 8.0 / 255.0;
+
+/// The steps from the floor to full follow `t^1.75`, so the low end goes dimmer than even
+/// steps did, which is where a night-time player wants it. From slot 664e546.
+const BACKLIGHT_CURVE: f64 = 1.75;
+
 /// Where the event nodes live. Only the motor is opened from here; the buttons are the
 /// binary's own business.
 const DEV_INPUT: &str = "/dev/input";
+
+/// The RG35XXSP's WiFi driver, which the link radio uses. Its shutdown hook hangs a reboot or a
+/// power off on a black screen, so both unload it first (power off from slot ad5ce8a, #117).
+const WIFI_MODULE: &str = "8821cs";
+
+/// How long `rmmod` gets before the shutdown goes on without it. The unload can hang too, and
+/// the card is synced before it starts, so giving up costs nothing that matters.
+const WIFI_UNLOAD_WAIT: Duration = Duration::from_secs(5);
+
+/// Unloads the WiFi driver, waiting at most `WIFI_UNLOAD_WAIT`. From slot c5de4cc.
+fn unload_wifi() {
+    let Ok(mut rmmod) = Command::new("rmmod").arg(WIFI_MODULE).spawn() else {
+        return;
+    };
+    let until = Instant::now() + WIFI_UNLOAD_WAIT;
+    while Instant::now() < until {
+        if !matches!(rmmod.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The card alarm's record, on the device's own storage.
+const CARD_LOG: &str = "/data/slot-card.log";
+
+/// The kernel's last lines about the card kept with an alarm.
+const KERNEL_LINES: usize = 40;
 
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
@@ -413,6 +449,17 @@ fn charge_at(dir: &Path) -> Charge {
     }
 }
 
+fn backlight_value(step: u8, max: u32) -> u32 {
+    let step = u32::from(step).min(TOP_STEP);
+    if step == 0 {
+        return 0;
+    }
+    let t = f64::from(step - 1) / f64::from(TOP_STEP - 1);
+    let floor = (f64::from(max) * BACKLIGHT_FLOOR).round().max(1.0);
+    let span = f64::from(max) - floor;
+    (floor + span * t.powf(BACKLIGHT_CURVE)).round() as u32
+}
+
 fn headphones_in(gpio: &str) -> bool {
     gpio.lines()
         .find(|l| l.contains("|Headphone detection"))
@@ -425,14 +472,28 @@ impl Platform for DevicePlatform {
         fs::read_to_string(self.sysfs.join("kernel/debug/gpio")).is_ok_and(|g| headphones_in(&g))
     }
 
+    fn card_read_only(&self) -> bool {
+        read_only(&self.root)
+    }
+
+    fn card_log(&self) -> Option<PathBuf> {
+        Some(PathBuf::from(CARD_LOG))
+    }
+
+    fn card_kernel_lines(&self) -> Vec<String> {
+        Command::new("dmesg")
+            .output()
+            .map(|o| card_kernel_lines(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or_default()
+    }
+
     /// Step 0 is the panel off rather than the panel dim: it is what the lid closes with, and
     /// any floor under it lights a shut clamshell.
     fn set_backlight(&mut self, step: u8) {
         let Some(backlight) = &self.backlight else {
             return;
         };
-        let step = u32::from(step).min(TOP_STEP);
-        let value = self.max_brightness * step / TOP_STEP;
+        let value = backlight_value(step, self.max_brightness);
         // A node that was found and will not take a write is a different fault from one that
         // was never there, and from outside they are the same dark panel.
         let write = |file: PathBuf, body: String| {
@@ -496,7 +557,10 @@ impl Platform for DevicePlatform {
     }
 
     fn restart(&mut self) -> ! {
-        self.breadcrumb("restart: reached slot, about to sync");
+        self.breadcrumb("restart: reached slot, syncing before the WiFi driver unloads");
+        let _ = Command::new("sync").status();
+        unload_wifi();
+        self.breadcrumb("restart: WiFi driver unloaded or given up on, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("restart: sync returned, about to signal init");
         let _ = Command::new("reboot").status();
@@ -505,7 +569,10 @@ impl Platform for DevicePlatform {
     }
 
     fn poweroff(&mut self) -> ! {
-        self.breadcrumb("poweroff: reached slot, about to sync");
+        self.breadcrumb("poweroff: reached slot, syncing before the WiFi driver unloads");
+        let _ = Command::new("sync").status();
+        unload_wifi();
+        self.breadcrumb("poweroff: WiFi driver unloaded or given up on, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("poweroff: sync returned, about to signal init");
         let _ = Command::new("poweroff").status();
@@ -584,4 +651,43 @@ impl Platform for DevicePlatform {
             motor.play(on);
         }
     }
+}
+
+/// The lines of `dmesg` about the card's filesystem or the SD controller, the last
+/// `KERNEL_LINES` of them.
+pub fn card_kernel_lines(dmesg: &str) -> Vec<String> {
+    let lines: Vec<String> = dmesg
+        .lines()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            l.contains("fat-fs")
+                || l.contains("exfat")
+                || l.contains("remount")
+                || l.contains("i/o error")
+                || (l.contains("mmcblk") && (l.contains("error") || l.contains("fail")))
+        })
+        .map(str::to_owned)
+        .collect();
+    let skip = lines.len().saturating_sub(KERNEL_LINES);
+    lines.into_iter().skip(skip).collect()
+}
+
+/// Whether `path` is on a read-only mount, from `/proc/mounts`.
+pub fn read_only(path: &Path) -> bool {
+    fs::read_to_string("/proc/mounts").is_ok_and(|m| read_only_in(&m, path))
+}
+
+/// The same, against a mount table handed in. The closest mount decides, not the root, and an
+/// option that merely mentions `ro` (`errors=remount-ro`) is not the card being read-only.
+pub fn read_only_in(mounts: &str, path: &Path) -> bool {
+    mounts
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let point = Path::new(f.nth(1)?);
+            let options = f.nth(1)?;
+            path.starts_with(point).then_some((point, options))
+        })
+        .max_by_key(|(point, _)| point.as_os_str().len())
+        .is_some_and(|(_, options)| options.split(',').any(|o| o == "ro"))
 }

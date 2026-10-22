@@ -12,7 +12,7 @@ use std::path::Path;
 /// shelves are one per platform now, which leaves nothing for a second type to say. The name
 /// collision with `slot_ui::Shelf` — the carousel widget — is unchanged: `slot::app` holds one
 /// of those per `Platform`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Platform {
     #[default]
     Gba,

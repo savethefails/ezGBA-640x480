@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use common::{
-    app_playing_in, boot, panel, session_with_platform, tmp_root_with_carts,
+    app_playing_in, boot, clocked, panel, session_with_platform, tmp_root_with_carts,
     tmp_root_with_real_carts, StubSnapshot,
 };
 use slot::app::Phase;
@@ -279,6 +279,92 @@ fn a_committed_shutdown_holds_the_core_still() {
     assert!(s.app().powering_off(), "the hold did not power off");
     s.update(DT);
     await_paused(&mut s);
+}
+
+/// A dozing device with a hand on POWER, from a real doze reached through the gesture layer.
+/// Holding POWER while dozing used to run the shutdown on a dark panel, so a user got no
+/// feedback and kept holding into the PMIC's six second cutoff. Read off the far side of
+/// `Platform`, the only place the panel is real. From slot d25d627, with ezGBA's hold, which
+/// powers off rather than raising a menu.
+#[test]
+fn power_pressed_while_dozing_lights_the_panel_before_the_hold_powers_off() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    let (power, backlight) = panel(d.path(), Duration::from_secs(180));
+    s.app_mut().set_power(power);
+    let lit = backlight.load(Ordering::Relaxed);
+    assert!(
+        lit > 0,
+        "the panel never came on, so going dark proves nothing"
+    );
+
+    let mut now = 0;
+    event(&mut s, RawEvent::Down(Btn::Power), &mut now);
+    event(&mut s, RawEvent::Up(Btn::Power), &mut now);
+    assert!(
+        matches!(s.app().phase(), Phase::Doze { .. }),
+        "the device never dozed"
+    );
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        0,
+        "the doze left the panel lit"
+    );
+
+    // On the press, not the release.
+    event(&mut s, RawEvent::Down(Btn::Power), &mut now);
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        lit,
+        "the panel is still dark under the thumb trying to wake it"
+    );
+    assert!(!matches!(s.app().phase(), Phase::Doze { .. }));
+
+    // The same press, held on, still powers off, now on a panel the user can see.
+    let pressed = now;
+    while now < pressed + POWER_HOLD_MS + FRAME_MS {
+        step(&mut s, &mut now);
+    }
+    assert!(s.app().powering_off(), "the hold no longer powers off");
+    assert_eq!(
+        backlight.load(Ordering::Relaxed),
+        lit,
+        "the shutdown is running on a panel nobody can see"
+    );
+}
+
+/// The press that lit the panel is not also the press that puts it back out, and the tap after
+/// it still dozes. From slot d25d627.
+#[test]
+fn the_press_that_woke_the_panel_does_not_doze_again_when_it_is_let_go() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    let (power, backlight) = panel(d.path(), Duration::from_secs(180));
+    s.app_mut().set_power(power);
+    let lit = backlight.load(Ordering::Relaxed);
+
+    let mut now = 0;
+    event(&mut s, RawEvent::Down(Btn::Power), &mut now);
+    event(&mut s, RawEvent::Up(Btn::Power), &mut now);
+    assert!(matches!(s.app().phase(), Phase::Doze { .. }));
+
+    event(&mut s, RawEvent::Down(Btn::Power), &mut now);
+    event(&mut s, RawEvent::Up(Btn::Power), &mut now);
+    assert!(
+        !matches!(s.app().phase(), Phase::Doze { .. }),
+        "the tap that woke the device put it straight back to sleep"
+    );
+    assert_eq!(backlight.load(Ordering::Relaxed), lit);
+
+    event(&mut s, RawEvent::Down(Btn::Power), &mut now);
+    event(&mut s, RawEvent::Up(Btn::Power), &mut now);
+    assert!(
+        matches!(s.app().phase(), Phase::Doze { .. }),
+        "POWER stopped being able to put the device out"
+    );
+    assert_eq!(backlight.load(Ordering::Relaxed), 0);
 }
 
 /// Waits for the worker to report that it read `Paused`, rather than for the frame count to

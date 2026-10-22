@@ -81,6 +81,14 @@ pub trait RetroCore: Send {
     /// A core with no way to skip a render draws every frame, which is correct but slower, so
     /// the default does nothing.
     fn set_frame_skip(&mut self, _skip: bool) {}
+    /// Whether the *next* `run_frame`s are ones whose state will be loaded over and whose sound
+    /// will be thrown away: run-ahead's frames ahead. A core may then skip making their sound at
+    /// all, since nothing it would leave behind outlives the load. Said before the frame, for the
+    /// same reason as `set_frame_skip`, and cleared before the load that winds them back.
+    ///
+    /// A core that cannot skip its sound makes it anyway, which is correct but slower, so the
+    /// default does nothing.
+    fn set_frame_discarded(&mut self, _discarded: bool) {}
     /// The last picture, `video_size` wide and high and packed, four bytes a pixel: little
     /// endian XRGB8888, so the byte order is B, G, R, unused.
     fn video_xrgb8888(&self) -> &[u8];
@@ -91,6 +99,12 @@ pub trait RetroCore: Send {
     fn take_audio(&mut self) -> Vec<i16>;
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError>;
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError>;
+    /// `unserialize`, for a state this same core saved moments ago and that is never written
+    /// out: run-ahead's wind back, every present. A core may load it by a faster path than one
+    /// that has to stand up to being read back by another run.
+    fn unserialize_runahead(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        self.unserialize(data)
+    }
     fn save_ram(&self) -> Option<Vec<u8>>;
     fn load_save_ram(&mut self, data: &[u8]) -> Result<(), CoreError>;
     fn av_info(&self) -> AvInfo;

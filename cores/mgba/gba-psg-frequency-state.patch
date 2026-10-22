@@ -1,0 +1,42 @@
+diff --git a/src/gba/audio.c b/src/gba/audio.c
+index ca5167f..cf73f12 100644
+--- a/src/gba/audio.c
++++ b/src/gba/audio.c
+@@ -448,6 +448,14 @@ static void _sample(struct mTiming* timing, void* user, uint32_t cyclesLate) {
+ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState* state) {
+ 	GBAudioPSGSerialize(&audio->psg, &state->audio.psg, &state->audio.flags);
+ 
++	// The tone and wave channels' frequencies, which their registers keep none of: SOUND1CNT_X,
++	// SOUND2CNT_HI and SOUND3CNT_X store only bit 14, so a load rewrote each with a frequency of
++	// 0 and the channel played at its lowest pitch until the game wrote it again. Kept in the
++	// PSG state's reserved words, with bit 15 to tell them from a state saved before this.
++	STORE_32LE(0x8000 | audio->psg.ch1.control.frequency, 0, &state->audio.psg.ch1.reserved);
++	STORE_32LE(0x8000 | audio->psg.ch2.control.frequency, 0, &state->audio.psg.ch2.reserved[0]);
++	STORE_16LE(0x8000 | audio->psg.ch3.rate, 0, &state->audio.psg.ch3.reserved);
++
+ 	STORE_32(audio->chA.internalSample, 0, &state->audio.internalA);
+ 	STORE_32(audio->chB.internalSample, 0, &state->audio.internalB);
+ 	memcpy(state->samples.chA, audio->chA.samples, sizeof(audio->chA.samples));
+@@ -520,6 +528,22 @@ void GBAAudioDeserialize(struct GBAAudio* audio, const struct GBASerializedState
+ 	LOAD_16(reg, GBA_REG_SOUND4CNT_HI, state->io);
+ 	GBAIOWrite(audio->p, GBA_REG_SOUND4CNT_HI, reg & 0x7FFF);
+ 
++	// After the registers, whose rewrite above set every one of these to 0.
++	uint32_t frequency;
++	LOAD_32LE(frequency, 0, &state->audio.psg.ch1.reserved);
++	if (frequency & 0x8000) {
++		audio->psg.ch1.control.frequency = frequency & 0x7FF;
++	}
++	LOAD_32LE(frequency, 0, &state->audio.psg.ch2.reserved[0]);
++	if (frequency & 0x8000) {
++		audio->psg.ch2.control.frequency = frequency & 0x7FF;
++	}
++	uint16_t rate;
++	LOAD_16LE(rate, 0, &state->audio.psg.ch3.reserved);
++	if (rate & 0x8000) {
++		audio->psg.ch3.rate = rate & 0x7FF;
++	}
++
+ 	LOAD_32(audio->chA.internalSample, 0, &state->audio.internalA);
+ 	LOAD_32(audio->chB.internalSample, 0, &state->audio.internalB);
+ 	memcpy(audio->chA.samples, state->samples.chA, sizeof(audio->chA.samples));

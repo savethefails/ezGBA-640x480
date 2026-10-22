@@ -7,7 +7,7 @@ use crate::root;
 
 /// Names the dylib outright, for a build that keeps it somewhere the search does not look.
 ///
-/// This wins over `System/selected_core.ini` for which dylib loads — it stays a developer
+/// This wins over `System/selected_core.txt` for which dylib loads — it stays a developer
 /// escape hatch, not a second way to pick a core. It is not silent about that: it does not
 /// touch which `Core` a cart resolves to (still the ini, still what the core half of
 /// `States/<platform>/<core>/` is named after), only which file `open_core` opens. Pointing
@@ -262,6 +262,9 @@ pub fn apply_core_options(
         // cart's own header read honestly, and naming a model here would override what the cart
         // says about itself. Nothing sets `mgba_use_bios` or `mgba_skip_bios`.
         core.set_option("mgba_sgb_borders", "OFF");
+        // Pokémon Pinball: Ruby & Sapphire only rumbles once it has seen a Game Boy Player answer
+        // its logo check, which mGBA only gives with this on. From slot 15e6886.
+        core.set_option("mgba_force_gbp", "ON");
         // The next two put back what a Game Boy Advance SP showed when an original monochrome
         // Game Boy cartridge was pushed into it. The SP has no monochrome mode to fall back on:
         // a Game Boy cart runs through the Game Boy Color compatibility the AGB inherits, and
@@ -314,6 +317,10 @@ pub fn apply_core_options(
     }
     if which == Core::Gpsp {
         core.set_option("gpsp_serial", serial);
+        // A cartridge clock that follows the system clock, so Ruby, Sapphire and Emerald's day
+        // goes on while the game is off. gpSP's default advances it only with emulated frames.
+        // From slot a74600e.
+        core.set_option("gpsp_rtc_time_source", "system");
         if bios {
             core.set_option("gpsp_boot_mode", "bios");
         }
@@ -325,7 +332,7 @@ pub fn apply_core_options(
         // Setting it here is what keeps the row from being a lie on a gpSP cart. The quick menu
         // is a device-wide screen shown on the shelf with nothing seated, so it cannot know which
         // core the next cart will use; a row that only reached mGBA would do nothing, silently,
-        // for every cart whose `selected_core.ini` line says gpsp.
+        // for every cart whose `selected_core.txt` line says gpsp.
         core.set_option(
             "gpsp_color_correction",
             if colour { "enabled" } else { "disabled" },

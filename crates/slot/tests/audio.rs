@@ -1,4 +1,6 @@
-use slot::audio::{ring_capacity, AudioSink, Ring, StubSink, GBA_HZ};
+use std::time::{Duration, Instant};
+
+use slot::audio::{ring_capacity, AudioSink, Ring, StubSink, OUTPUT_HZ};
 
 fn ramp(frames: usize, from: i16) -> Vec<i16> {
     (0..frames * 2)
@@ -253,12 +255,12 @@ fn a_cart_sound_is_not_held_back_by_the_cushion() {
 #[test]
 fn the_cushion_at_an_odd_capacity_still_ends_on_a_frame() {
     assert_eq!(
-        ring_capacity(GBA_HZ) % 2,
+        ring_capacity(32_768) % 2,
         1,
         "this rate no longer has an odd capacity, so it no longer exercises the bug"
     );
-    let r = Ring::new(ring_capacity(GBA_HZ));
-    r.reopen(GBA_HZ);
+    let r = Ring::new(ring_capacity(32_768));
+    r.reopen(32_768);
 
     // Drain the cushion the way the device does, then push a block whose two channels can be
     // told apart and read it straight back.
@@ -292,4 +294,50 @@ fn silence_releases_the_device_only_after_three_quiet_seconds() {
         "sound did not reclaim the device"
     );
     assert!(s.hear(&quiet, period), "one sound did not restart the wait");
+}
+
+#[test]
+fn a_released_device_drains_at_the_audio_clock_despite_late_wakeups() {
+    let span = Duration::from_secs_f64(512.0 / OUTPUT_HZ as f64);
+    let mut pace = slot::audio::Pacer::new(span);
+    let start = Instant::now();
+    let mut now = start;
+    let periods = 1_000u32;
+    for _ in 0..periods {
+        now += Duration::from_micros(200);
+        now += pace.wait(now) + Duration::from_micros(500);
+    }
+    let drift = (now - start).abs_diff(span * periods);
+    assert!(
+        drift < span,
+        "{periods} periods took {drift:?} longer than the audio they drained"
+    );
+}
+
+#[test]
+fn a_released_device_resyncs_after_a_long_stall_instead_of_bursting() {
+    let span = Duration::from_millis(10);
+    let mut pace = slot::audio::Pacer::new(span);
+    let start = Instant::now();
+    assert_eq!(pace.wait(start), span);
+    assert_eq!(
+        pace.wait(start + span * 2),
+        Duration::ZERO,
+        "a short lag was not caught up"
+    );
+    assert_eq!(
+        pace.wait(start + Duration::from_secs(2)),
+        span,
+        "a stall was paid back by draining without sleeping"
+    );
+}
+
+#[test]
+fn reopening_the_device_forgets_the_released_schedule() {
+    let span = Duration::from_millis(10);
+    let mut pace = slot::audio::Pacer::new(span);
+    let start = Instant::now();
+    pace.wait(start);
+    pace.reset();
+    assert_eq!(pace.wait(start + span * 3), span);
 }

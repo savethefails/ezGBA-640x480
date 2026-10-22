@@ -177,6 +177,7 @@ fn chrome_into(c: &Cart, seat: f32, out: &mut Vec<Draw>) {
         cart: c,
         face: None,
         rest: CENTRED,
+        scale: 1.0,
         lower: 0.0,
         seat,
         alert: None,
@@ -201,6 +202,7 @@ fn a_cart_standing_off_centre_slides_across_as_it_goes_in() {
             cart: &c,
             face: None,
             rest: off,
+            scale: 1.0,
             lower: 0.0,
             seat,
             alert: None,
@@ -237,6 +239,7 @@ fn draw_powering_on(t: f32, out: &mut Vec<Draw>) {
         cart: &c,
         face: None,
         rest: CENTRED,
+        scale: 1.0,
         lower: 0.0,
         seat: 1.0,
         alert: None,
@@ -672,6 +675,7 @@ fn the_empty_slot_is_the_same_slot_the_chrome_draws() {
         cart: &c,
         face: None,
         rest: CENTRED,
+        scale: 1.0,
         lower: 0.0,
         seat: 1.0,
         alert: None,
@@ -922,5 +926,93 @@ fn the_cart_catches_on_the_top_edge_of_the_slot() {
             (at - lip).abs() < 16.0,
             "{name} hesitates at {at} but the slot's top edge is {lip}"
         );
+    }
+}
+
+/// A cart pressed while the row is still springing is handed over where and as big as the row
+/// was drawing it, and grows to full size on the way down rather than on the first frame. The
+/// row's quad is the start, the slot's is the end, and every frame between moves one way. From
+/// slot f89df1c.
+#[test]
+fn a_cart_taken_off_a_moving_row_starts_where_the_row_had_it() {
+    let carts: Vec<Cart> = (0..5)
+        .map(|i| Cart {
+            stem: format!("Game {i}"),
+            ..cart()
+        })
+        .collect();
+    let mut s = Shelf::new(carts.clone());
+    for _ in 0..600 {
+        s.update(1.0 / 60.0);
+    }
+    s.right();
+    s.update(1.0 / 60.0);
+    let (rest, scale) = s.selected_at();
+    assert!(scale < 0.99, "the row had settled, so this tests nothing");
+    let lower = 30.0;
+    let mut row = Vec::new();
+    s.draw_row(None, 0.0, 0.0, 1.0, lower, &mut row);
+    let from_row = row
+        .iter()
+        .map(quad)
+        .find(|q| (q.x - rest).abs() < 0.5)
+        .expect("the row does not draw its selection where it says");
+
+    let draw = |seat: f32| {
+        let mut out = Vec::new();
+        SlotChrome {
+            cart: &carts[1],
+            face: None,
+            rest,
+            scale,
+            lower,
+            seat,
+            alert: None,
+            dim: 0.0,
+            screen: 0.0,
+            game: false,
+        }
+        .draw(&mut out);
+        out
+    };
+    // Found at full size, where the cart is a cart sized quad, and read at the same place in the
+    // list at every other seat: the chrome draws the same things in the same order throughout.
+    let full = draw(1.0);
+    let i = cart_at(&full);
+    let at = |seat: f32| {
+        let out = draw(seat);
+        assert_eq!(
+            out.len(),
+            full.len(),
+            "the chrome drew a different list at {seat}"
+        );
+        quad(&out[i])
+    };
+    let start = at(0.0);
+    assert!(
+        (start.x - from_row.x).abs() < 0.5
+            && (start.y - from_row.y).abs() < 0.5
+            && (start.w - from_row.w).abs() < 0.5
+            && (start.h - from_row.h).abs() < 0.5,
+        "the chrome starts the cart at {start:?} where the row had it at {from_row:?}"
+    );
+    let end = at(1.0);
+    assert!((end.w - CART_W as f32).abs() < 0.01 && (end.h - CART_H as f32).abs() < 0.01);
+    let mut last = start;
+    for step in 1..=20 {
+        let q = at(step as f32 / 20.0);
+        assert!(
+            q.w >= last.w - 0.01,
+            "the cart shrank to {} from {}",
+            q.w,
+            last.w
+        );
+        assert!(
+            q.y >= last.y - 0.01,
+            "the cart rose to {} from {}",
+            q.y,
+            last.y
+        );
+        last = q;
     }
 }

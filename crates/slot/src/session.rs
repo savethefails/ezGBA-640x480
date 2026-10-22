@@ -7,18 +7,22 @@ use slot_store::{Core, Platform};
 use slot_ui::FfState;
 
 use crate::app::{App, Phase};
-use crate::audio::{open_sink, AudioSink, Ring, Sfx, GBA_HZ};
+use crate::audio::{AudioSink, Ring, Sfx};
 use crate::core::open_core;
 use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
 use crate::input::Pad;
 use crate::persist;
+use crate::prefetch::Prefetch;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
-/// How long the motor keeps running after the core last asked for it: long enough to ride
-/// through the frames between a game's pulses, short enough that a stop is still felt as one.
-pub const RUMBLE_HOLD_MS: Millis = 100;
+/// The shortest buzz: a tap the game asks for over a frame or two still runs the motor this
+/// long, so it is felt. From slot e2c8068.
+pub const RUMBLE_MIN_MS: Millis = 100;
+/// The longest buzz: a pulse the game keeps asking for is cut off here, so a Pinball hit is a
+/// knock rather than a drone. From slot 2c25c50.
+pub const RUMBLE_MAX_MS: Millis = 150;
 
 pub struct Session {
     root: PathBuf,
@@ -34,10 +38,12 @@ pub struct Session {
     /// What the motor was last set to. On the device that setting is a write to hardware and
     /// the core asks for the same value most frames.
     motor: u16,
-    /// The last rumble the core asked for and when. A core sets its motor per frame and lets
-    /// go between, so short gaps in what it asks for are held across rather than chattering
-    /// the motor off and on. See `RUMBLE_HOLD_MS`.
+    /// The pulse under way: when it began and the strength last asked for. It runs at least
+    /// `RUMBLE_MIN_MS`, stops the frame the game stops asking after that, and never runs past
+    /// `RUMBLE_MAX_MS`.
     pulse: Option<(Millis, u16)>,
+    /// The cart the shelf is resting on, read through into the page cache. See `prefetch`.
+    prefetch: Prefetch,
     /// A reload for a link is underway: the core in the slot was spawned for it, and `App` is
     /// waiting to hear whether it loaded. See `reload_for_link`.
     reloading: bool,
@@ -47,12 +53,12 @@ pub struct Session {
 
 impl Session {
     pub fn boot(root: PathBuf) -> Self {
-        let mut sink: Box<dyn AudioSink> = open_sink();
-        // A frontend for one console knows the rate before it knows the cart. A device that
-        // refuses it still opens, and the worker resamples to whatever it did take.
-        if let Err(e) = sink.open(GBA_HZ) {
-            eprintln!("slot: audio: {e}");
-        }
+        Self::boot_with(root, crate::audio::opened_sink())
+    }
+
+    /// `boot`, with an audio sink already opened, which the device opens on a thread while the
+    /// panel and the GPU come up.
+    pub fn boot_with(root: PathBuf, sink: Box<dyn AudioSink>) -> Self {
         Session {
             app: App::boot(&root),
             root,
@@ -64,6 +70,7 @@ impl Session {
             fast: false,
             motor: 0,
             pulse: None,
+            prefetch: Prefetch::default(),
             reloading: false,
             greeting_pcm: None,
         }
@@ -143,6 +150,10 @@ impl Session {
         }
         self.motor = strength;
         self.app.set_rumble(strength);
+    }
+
+    pub fn prefetching(&self) -> Option<&std::path::Path> {
+        self.prefetch.reading()
     }
 
     /// The core's end of the motor, or nothing when the slot is empty.
@@ -401,8 +412,11 @@ impl Session {
         self.sync_reload();
         // After the core sync: a handle spawned or dropped this frame has published nothing
         // the renderer may show.
-        self.app
-            .set_game_ready(self.emu.as_ref().is_some_and(EmuHandle::has_published));
+        let ready = self.emu.as_ref().is_some_and(EmuHandle::has_published);
+        if ready && !self.app.game_ready() {
+            launch("first frame shown");
+        }
+        self.app.set_game_ready(ready);
         self.sync_speed();
         self.sync_rewind_hud();
         self.sync_ff_hud();
@@ -410,6 +424,8 @@ impl Session {
         // Last, after the phase has moved and after a core spawned this frame exists to be told:
         // this is the frame a cart seats on, and whoever owns a shoulder now owns it from here.
         self.sync_pad();
+        let now = self.app.now();
+        self.prefetch.browse(self.app.browsed_rom(), now);
     }
 
     /// The core writes its motor from the emulator thread and this is the one place that
@@ -426,12 +442,24 @@ impl Session {
             }
         };
         let now = self.app.now();
-        if asked > 0 {
-            self.pulse = Some((now, asked));
-        }
-        let want = match self.pulse {
-            Some((at, strength)) if now.saturating_sub(at) < RUMBLE_HOLD_MS => strength,
-            _ => 0,
+        let want = match (asked, self.pulse) {
+            (0, Some((at, strength))) if now.saturating_sub(at) < RUMBLE_MIN_MS => strength,
+            (0, _) => {
+                self.pulse = None;
+                0
+            }
+            (asked, Some((at, _))) => {
+                self.pulse = Some((at, asked));
+                if now.saturating_sub(at) < RUMBLE_MAX_MS {
+                    asked
+                } else {
+                    0
+                }
+            }
+            (asked, None) => {
+                self.pulse = Some((now, asked));
+                asked
+            }
         };
         self.rumble(want);
     }
@@ -660,7 +688,7 @@ impl Session {
         // makes that class of drift structurally unreachable now instead of merely unobserved.
         //
         // The platform outranks the file, and only a GBA or SNES cart's line is read at all.
-        // `selected_core.ini` is hand-edited on the card, so nothing there stops a line reading
+        // `selected_core.txt` is hand-edited on the card, so nothing there stops a line reading
         // `Tetris = gpsp` — and gpSP does not run Game Boy games: it would refuse the ROM or
         // paint garbage, with the cart's states filed under a core that never ran it. mGBA is
         // the only core that runs one, so there is no choice for the file to be expressing and
@@ -679,6 +707,7 @@ impl Session {
             // The official PICO-8, the only thing that runs a PICO-8 cart here.
             Platform::Pico8 => Core::Pico8,
         };
+        launch(&format!("opening {stem} on {}", core.as_str()));
         self.app.set_core(core);
         // `platform` comes straight off the `Cart` the shelf scanned, not re-derived from the
         // stem: it is what closes the same class of drift for a `.gb` and a `.gba` cart that
@@ -695,9 +724,11 @@ impl Session {
         self.app.set_link_loaded(serial);
         // A clean start skips the state, it does not delete it: the file stays on the card
         // for the next tap to resume from.
-        let resume = (!self.app.starting_clean())
-            .then(|| persist::read_resume(&self.root, platform, core, stem))
-            .flatten();
+        let resume = match self.app.starting_clean() {
+            true => Ok(None),
+            false => persist::try_read_resume(&self.root, platform, core, stem),
+        };
+        launch("resume state read");
         // Colour correction is read here, at the one moment a libretro core reads an option at
         // all. The quick menu that sets it is only ever open on the shelf, with the core already
         // dropped, so the cart going in now is always the first to see a change made there — the
@@ -716,13 +747,28 @@ impl Session {
         // refused the resume above, and a refusal from the mock standing in for a missing dylib
         // means something entirely different from a refusal by the cart's own core.
         self.app.set_named_core(opened.named);
-        let sav = persist::read_sav(&self.root, platform, stem);
+        launch("core opened");
+        let sav = persist::try_read_sav(&self.root, platform, stem);
+        launch("save read");
+        // A save or state the card failed to read is not "none": the game starts without it,
+        // and the core is told its own is not the player's, so nothing writes over the file.
+        let sav = self.app.card_read("save", sav);
+        let resume = self.app.card_read("resume", resume);
+        let (sav_unread, resume_unread) = (sav.is_none(), resume.is_none());
+        let (sav, resume) = (sav.flatten(), resume.flatten());
         let ring = self.sink.ring();
         // Game Boy link mode keeps no link state: only a GBA pair is wrapped and unwrapped.
         let emu = match player.filter(|_| platform == Platform::Gba) {
             Some(p) => EmuHandle::spawn_linked(opened.core, rom, ring, sav, resume, p),
             None => EmuHandle::spawn(opened.core, rom, ring, sav, resume),
         };
+        if sav_unread {
+            emu.refuse_save_ram();
+        }
+        if resume_unread {
+            emu.refuse_resume();
+        }
+        self.app.set_resume_unread(resume_unread);
         // A cart seated after the level was lowered has to start there, not at full.
         emu.set_volume(self.app.output_volume());
         // L2 never rewinds on this build (see `Gestures::down`), so a rewind trail is a
@@ -787,4 +833,9 @@ impl Session {
 pub(crate) fn trace() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("SLOT_TRACE").is_some())
+}
+
+/// One step of a game's launch in the log, with its time since boot. From slot 4b5b4d6.
+fn launch(step: &str) {
+    eprintln!("slot: launch: {step} at {:.1} ms", crate::boot_time::ms());
 }

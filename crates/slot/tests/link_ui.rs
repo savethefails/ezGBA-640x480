@@ -1,6 +1,6 @@
 //! The in-game menu and the link it starts.
 //!
-//! Nothing here shells out to `ags-net` or touches a network interface: every starter is
+//! Nothing here shells out to `slotlink.sh` or touches a network interface: every starter is
 //! built through `LinkStarter::spawn_with`, whose slow parts are injected. The one test that
 //! needs a real `TcpLink` makes one over loopback, because `LinkProgress::Ready` carries a
 //! transport and there is no other way to have one.
@@ -359,7 +359,7 @@ fn a_peer_lost_during_the_hold_closes_the_screen_and_breaks_the_badge() {
 }
 
 /// B asks the worker to stop, and the screen stays where it is until it answers. The real
-/// `up` now kills its `ags-net` child on a cancel rather than waiting out a joiner's search,
+/// `up` now kills its `slotlink.sh` child on a cancel rather than waiting out a joiner's search,
 /// so that answer comes quickly — but it still comes from the worker, and closing before it
 /// would put the player back in their game with an access point still coming up behind them.
 /// This fake ignores the flag, which is the slowest case that shape allows.
@@ -370,7 +370,7 @@ fn b_during_the_radio_step_does_not_hand_the_game_back_early() {
     let (release, held) = channel::<()>();
     app.start_link(
         LinkStarter::spawn_with(
-            // Stands in for an `ags-net link` that has not answered yet.
+            // Stands in for a `slotlink.sh link` that has not answered yet.
             Box::new(move |_, _| {
                 held.recv().expect("released");
                 Ok(())
@@ -576,7 +576,7 @@ fn the_link_screen_draws_its_role_over_the_game() {
 
 /// A real `Session` with a gpSP cart playing. The core falls back to the mock, as it does for
 /// every test in this crate that does not fetch a real dylib; what matters here is that
-/// `selected_core.ini` says gpSP, because that is what decides the link screen exists.
+/// `selected_core.txt` says gpSP, because that is what decides the link screen exists.
 fn session_playing_on_gpsp() -> (Session, TempDir, Millis) {
     let d = common::tmp_root_with_carts(&["Emerald"]);
     // A cart gpSP can carry, as in `playing_on`: the link screen does not open otherwise.

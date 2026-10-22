@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
-use crate::gba::{header_code, header_title};
+use crate::gba::header_title_code;
 use crate::platform::Platform;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -22,7 +24,7 @@ pub struct Cart {
     /// The four character header game code, empty when the rom has none. A Game Boy cart has
     /// no equivalent field, so this is always empty for `Platform::Gb` and `Platform::Gbc`.
     pub code: String,
-    /// The shell the player chose for this cart in `cart_shell.ini`, or `None` for the one the
+    /// The shell the player chose for this cart in `cart_shell.txt`, or `None` for the one the
     /// built-in table picks. See `cart_shell`.
     pub shell: Option<crate::ShellChoice>,
 }
@@ -76,6 +78,12 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 continue;
             }
         };
+        // One listing per art folder rather than a stat per cart, which on a large card was most
+        // of the boot. Matched case-insensitively, as the card's FAT matches them anyway.
+        let labels_dir = root.join("Labels").join(platform.dir_name());
+        let labels = listing(&labels_dir);
+        let images_dir = root.join("Images").join(platform.dir_name());
+        let images = listing(&images_dir);
         for entry in entries {
             let Ok(entry) = entry else {
                 continue;
@@ -83,54 +91,34 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
             let rom = entry.path();
             // The folder decides the platform; the extension decides whether this is a cart at
             // all. A `.gba` under `GB/` is neither, and is passed over in silence.
-            if is_hidden(&rom) || !rom.is_file() || !platform.accepts(&rom) {
+            if is_hidden(&rom) || !platform.accepts(&rom) || !is_file(&entry) {
                 continue;
             }
             let Some(stem) = rom.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            let label = root
-                .join("Labels")
-                .join(platform.dir_name())
-                .join(format!("{stem}.png"));
-            let box_art = root
-                .join("Images")
-                .join(platform.dir_name())
-                .join(format!("{stem}.png"));
-            let (title, code) = match platform {
-                Platform::Gba => (
-                    header_title(&rom).unwrap_or_default(),
-                    header_code(&rom).unwrap_or_default(),
-                ),
-                // A Game Boy cart has no GBA-style four-character game code, and the fields
-                // `gba.rs` reads sit below the Game Boy header entirely — 0xA0 and 0xAC are in
-                // the cartridge's RST vectors, so they would read arbitrary opcode bytes.
-                Platform::Gb | Platform::Gbc => {
-                    (crate::gb::title(&rom).unwrap_or_default(), String::new())
-                }
-                // Nothing on the shelf reads a SNES header yet: the label is the file's name.
-                Platform::Snes | Platform::Pico8 => (String::new(), String::new()),
-            };
+            let png = format!("{stem}.png").to_lowercase();
             // A `.p8.png` cart is its own label: PICO-8 prints the cart's picture on it.
             // A picture in `Labels/PICO8/` still wins, as it does on every other shelf.
-            let label = if label.is_file() {
-                Some(label)
-            } else if platform == Platform::Pico8
-                && rom
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
-            {
-                Some(rom.clone())
-            } else {
-                None
-            };
+            let label = labels
+                .get(&png)
+                .map(|name| labels_dir.join(name))
+                .or_else(|| {
+                    (platform == Platform::Pico8
+                        && rom
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("png")))
+                    .then(|| rom.clone())
+                });
+            // The header's title and game code are not read here: opening every rom on the card
+            // was the rest of the boot. `header_ids` reads them when something needs them.
             carts.push(Cart {
                 platform,
                 stem: stem.to_string(),
-                title,
-                code,
+                title: String::new(),
+                code: String::new(),
                 label,
-                box_art: box_art.is_file().then_some(box_art),
+                box_art: images.get(&png).map(|name| images_dir.join(name)),
                 shell: shells.get(&crate::cart_shell::key(stem)).copied(),
                 rom,
             });
@@ -140,6 +128,58 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
         (a.platform as u8, sort_key(&a.stem)).cmp(&(b.platform as u8, sort_key(&b.stem)))
     });
     Ok(carts)
+}
+
+/// A folder's entries by lowercased name, hidden ones left out. Empty for a folder that is not
+/// there.
+pub fn listing(dir: &Path) -> HashMap<String, String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return HashMap::new();
+    };
+    entries
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.'))
+        .map(|name| (name.to_lowercase(), name))
+        .collect()
+}
+
+/// Off the directory entry rather than a stat, except through a symlink.
+fn is_file(entry: &std::fs::DirEntry) -> bool {
+    match entry.file_type() {
+        Ok(t) if t.is_symlink() => entry.path().is_file(),
+        Ok(t) => t.is_file(),
+        Err(_) => false,
+    }
+}
+
+/// A cart's header title and game code, as `(title, code)`, read from the rom the first time
+/// they are asked for and kept. `scan` leaves them empty so a boot opens no rom; whatever acts
+/// on a cart's identity (the shell table, the link screen, a core loading) asks here. A GBA cart
+/// has both; a Game Boy cart a title and no code; a SNES cart neither, as before.
+pub fn header_ids(cart: &Cart) -> (String, String) {
+    if !cart.title.is_empty() || !cart.code.is_empty() {
+        return (cart.title.clone(), cart.code.clone());
+    }
+    static IDS: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();
+    let mut ids = IDS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    ids.entry(cart.rom.clone())
+        .or_insert_with(|| match cart.platform {
+            Platform::Gba => header_title_code(&cart.rom).unwrap_or_default(),
+            // A Game Boy cart has no GBA-style four-character game code, and the fields
+            // `gba.rs` reads sit below the Game Boy header entirely.
+            Platform::Gb | Platform::Gbc => (
+                crate::gb::cached_header(&cart.rom)
+                    .map(|h| h.title)
+                    .unwrap_or_default(),
+                String::new(),
+            ),
+            // Nothing reads a SNES header yet, and a PICO-8 cart has none.
+            Platform::Snes | Platform::Pico8 => (String::new(), String::new()),
+        })
+        .clone()
 }
 
 /// Where a title files on the shelf: digits first, then A to Z, and case ignored.

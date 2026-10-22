@@ -76,7 +76,7 @@ jobs:
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
           file "$out/System/snes9x_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
-          test -f "$out/System/ags-net"
+          test -f "$out/System/slotlink.sh"
           file "$out/System/pico8_libretro.so" | grep -q aarch64
           test -f "$out/System/pico8/p8ss.so"
           test -f "$out/System/pico8/lib/libSDL2-2.0.so.0"

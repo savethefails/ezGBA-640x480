@@ -21,6 +21,23 @@
 //!     --state /mnt/sdcard/States/gpsp/Apotris/resume.state --system /mnt/sdcard/BIOS \
 //!     --steps 4 --frameskip'
 //! ```
+//!
+//! `--serialize` instead times a save and a load after every frame, and what preemptive frames
+//! (save every frame; on an input change, load and re-run N frames) would cost per display frame.
+//!
+//! `--runahead N` instead times one present of slot's run-ahead (`emu::run_ahead`) at N frames:
+//! the real frame undrawn, a save, N frames ahead with only the last drawn and their sound
+//! discarded, and the load back, each part on its own. slot gives run-ahead up on a game that
+//! needs more than 12 ms a present, so that is the number to read the median and p95 against.
+//! `--no-skip` runs the same present with every frame drawn and heard and an ordinary load, as
+//! slot did before it told snes9x which frames to skip, so the two can be compared on one build.
+//! With `--state` pointing at a resume state taken mid-race, Mario Kart on snes9x:
+//!
+//! ```text
+//! adb shell '/tmp/core_bench /mnt/sdcard/System/snes9x_libretro.so \
+//!     "/mnt/sdcard/Games/SNES/Super Mario Kart.sfc" --state /mnt/sdcard/mariokart.state \
+//!     --runahead 1'
+//! ```
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -30,7 +47,8 @@ use std::time::Instant;
 use slot_retro::{ButtonMask, LibretroCore, RetroCore};
 
 const USAGE: &str = "usage: core_bench CORE ROM [--state FILE] [--system DIR] [--steps S] \
-[--frames N] [--warmup W] [--repeats R] [--frameskip] [--option KEY=VALUE]...";
+[--frames N] [--warmup W] [--repeats R] [--frameskip] [--serialize] [--runahead N [--no-skip]] \
+[--option KEY=VALUE]...";
 
 struct Args {
     core: PathBuf,
@@ -43,6 +61,9 @@ struct Args {
     warmup: u32,
     repeats: u32,
     frameskip: bool,
+    serialize: bool,
+    runahead: Option<u32>,
+    no_skip: bool,
     options: Vec<(String, String)>,
 }
 
@@ -70,6 +91,9 @@ fn parse(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         warmup: 300,
         repeats: 5,
         frameskip: false,
+        serialize: false,
+        runahead: None,
+        no_skip: false,
         options: Vec::new(),
     };
     while let Some(arg) = it.next() {
@@ -81,6 +105,9 @@ fn parse(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             "--warmup" => a.warmup = value(&mut it, &arg)?.parse().map_err(|e| format!("{e}"))?,
             "--repeats" => a.repeats = count(&mut it, &arg)?,
             "--frameskip" => a.frameskip = true,
+            "--serialize" => a.serialize = true,
+            "--runahead" => a.runahead = Some(count(&mut it, &arg)?),
+            "--no-skip" => a.no_skip = true,
             "--option" => {
                 let kv = value(&mut it, &arg)?;
                 let (k, v) = kv.split_once('=').ok_or("--option takes KEY=VALUE")?;
@@ -142,6 +169,13 @@ fn run(a: &Args) -> Result<(), Box<dyn Error>> {
         }
     };
 
+    if a.serialize {
+        return serialize_cost(&mut core, &start, a.frames);
+    }
+    if let Some(ahead) = a.runahead {
+        return runahead_cost(&mut core, &start, a, ahead);
+    }
+
     let presents = a.frames.div_ceil(a.steps);
     let frames = presents * a.steps;
     println!(
@@ -186,6 +220,129 @@ fn run(a: &Args) -> Result<(), Box<dyn Error>> {
         (hi - lo) / mid * 100.0,
         (fps / 60.0).min(f64::from(a.steps)),
         a.steps,
+    );
+    Ok(())
+}
+
+/// Median, p95 and max of `ms`, sorted in place.
+fn spread(ms: &mut [f64]) -> (f64, f64, f64) {
+    ms.sort_by(f64::total_cmp);
+    (median(ms), ms[(ms.len() - 1) * 95 / 100], ms[ms.len() - 1])
+}
+
+fn ms_since(t: Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1000.0
+}
+
+fn serialize_cost(
+    core: &mut LibretroCore,
+    start: &[u8],
+    frames: u32,
+) -> Result<(), Box<dyn Error>> {
+    core.unserialize(start)?;
+    let idle = ButtonMask::default();
+    let (mut run, mut save, mut load) = (Vec::new(), Vec::new(), Vec::new());
+    let mut size = 0;
+    for _ in 0..frames {
+        let t = Instant::now();
+        core.run_frame(idle);
+        core.take_audio();
+        run.push(ms_since(t));
+        let t = Instant::now();
+        let state = core.serialize()?;
+        save.push(ms_since(t));
+        size = state.len();
+        let t = Instant::now();
+        core.unserialize(&state)?;
+        load.push(ms_since(t));
+    }
+    let (r, s, l) = (spread(&mut run), spread(&mut save), spread(&mut load));
+    println!("state {size} bytes, {frames} frames");
+    for (name, (m, p, x)) in [("run", r), ("save", s), ("load", l)] {
+        println!("{name:>5}: median {m:.3}  p95 {p:.3}  max {x:.3} ms");
+    }
+    for n in 1..=2 {
+        // A frame with no input change: run and save. One with a change: load, re-run the n
+        // frames it replaces plus the new one, and save. Both at p95.
+        let steady = r.1 + s.1;
+        let change = l.1 + f64::from(n + 1) * r.1 + s.1;
+        println!(
+            "preemptive {n}: steady {steady:.1} ms, on a change {change:.1} ms, against 16.76"
+        );
+    }
+    Ok(())
+}
+
+/// One present of `emu::run_ahead` a frame, timed part by part. Kept in step with it by hand:
+/// slot-retro cannot reach the slot crate's worker.
+fn runahead_cost(
+    core: &mut LibretroCore,
+    start: &[u8],
+    a: &Args,
+    ahead: u32,
+) -> Result<(), Box<dyn Error>> {
+    let skip = !a.no_skip;
+    let idle = ButtonMask::default();
+    println!(
+        "core {} rom {} runahead {ahead} {} frames {} warmup {}",
+        a.core.display(),
+        a.rom.display(),
+        if skip {
+            "skipping"
+        } else {
+            "drawing every frame (--no-skip)"
+        },
+        a.frames,
+        a.warmup,
+    );
+    core.unserialize(start)?;
+    for _ in 0..a.warmup {
+        core.run_frame(idle);
+    }
+    core.take_audio();
+    let (mut real, mut save, mut hidden, mut load, mut total) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..a.frames {
+        let began = Instant::now();
+        core.set_frame_skip(skip);
+        core.run_frame(idle);
+        core.take_audio();
+        real.push(ms_since(began));
+        let t = Instant::now();
+        let state = core.serialize()?;
+        save.push(ms_since(t));
+        let t = Instant::now();
+        core.set_frame_discarded(skip);
+        for k in 0..ahead {
+            core.set_frame_skip(skip && k + 1 < ahead);
+            core.run_frame(idle);
+        }
+        core.set_frame_discarded(false);
+        core.take_audio();
+        hidden.push(ms_since(t));
+        let t = Instant::now();
+        if skip {
+            core.unserialize_runahead(&state)?;
+        } else {
+            core.unserialize(&state)?;
+        }
+        load.push(ms_since(t));
+        total.push(ms_since(began));
+    }
+    for (name, ms) in [
+        ("real frame", &mut real),
+        ("save", &mut save),
+        ("frames ahead", &mut hidden),
+        ("load", &mut load),
+        ("present", &mut total),
+    ] {
+        let (m, p, x) = spread(ms);
+        println!("{name:>12}: median {m:.3}  p95 {p:.3}  max {x:.3} ms");
+    }
+    let p95 = total[(total.len() - 1) * 95 / 100];
+    println!(
+        "{} slot's 12 ms run-ahead budget at p95",
+        if p95 <= 12.0 { "within" } else { "OVER" }
     );
     Ok(())
 }

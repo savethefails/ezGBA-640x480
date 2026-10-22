@@ -11,7 +11,10 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn dylib() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/mgba_libretro.dylib")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../vendor/mgba_libretro.{}",
+        std::env::consts::DLL_EXTENSION
+    ))
 }
 
 fn test_core() -> Option<LibretroCore> {
@@ -170,5 +173,103 @@ fn the_bios_intro_plays_when_a_bios_is_present() {
     assert!(
         lit * 2 > all,
         "{lit} of {all} pixels are lit: the rom is already painting and the intro was skipped"
+    );
+}
+
+/// From slot 656ce7e. `LibretroCore` asks the core for its state size once per game, so every
+/// later save is taken at that size: two saves of one frame have to agree, and a state with
+/// zeros after it, as one taken at a size since outgrown would be, has to load as the state.
+#[test]
+fn mgba_states_repeat_and_load_with_trailing_padding() {
+    let _g = lock();
+    let Some(mut c) = test_core() else { return };
+    c.load(&test_rom()).unwrap();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+    let s = c.serialize().unwrap();
+    assert_eq!(
+        c.serialize().unwrap(),
+        s,
+        "a second save of the same frame differed"
+    );
+
+    c.unserialize(&s).unwrap();
+    c.run_frame(ButtonMask::default());
+    let expected = c.video_xrgb8888().to_vec();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+
+    let mut padded = s.clone();
+    padded.extend_from_slice(&[0u8; 4096]);
+    c.unserialize(&padded)
+        .expect("mGBA refused a state with zeros after it");
+    c.run_frame(ButtonMask::default());
+    assert_eq!(c.video_xrgb8888(), expected);
+}
+
+const RTC_SRAM: usize = 0x2000;
+const RTC_BLOCK: usize = 48;
+
+fn rtc_rom() -> PathBuf {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x100..0x104].copy_from_slice(&[0x00, 0xc3, 0x50, 0x01]);
+    rom[0x104..0x108].copy_from_slice(&[0xce, 0xed, 0x66, 0x66]);
+    rom[0x134..0x13d].copy_from_slice(b"SLOT RTC\0");
+    rom[0x147] = 0x10;
+    rom[0x148] = 0x00;
+    rom[0x149] = 0x02;
+    rom[0x14d] = rom[0x134..0x14d]
+        .iter()
+        .fold(0u8, |a, b| a.wrapping_sub(*b).wrapping_sub(1));
+    rom[0x150..0x152].copy_from_slice(&[0x18, 0xfe]);
+    let p = Path::new(env!("CARGO_TARGET_TMPDIR")).join("slot-rtc.gbc");
+    std::fs::write(&p, rom).expect("write rtc rom");
+    p
+}
+
+fn rtc_sav(days: u32, unix: u64) -> Vec<u8> {
+    let mut sav = vec![0x5a; RTC_SRAM];
+    let regs = [12u32, 34, 5, days, 0];
+    for r in regs.iter().chain(regs.iter()) {
+        sav.extend_from_slice(&r.to_le_bytes());
+    }
+    sav.extend_from_slice(&unix.to_le_bytes());
+    assert_eq!(sav.len(), RTC_SRAM + RTC_BLOCK);
+    sav
+}
+
+fn booted_with(sav: &[u8]) -> Option<LibretroCore> {
+    let mut c = test_core()?;
+    c.load(&rtc_rom()).unwrap();
+    c.load_save_ram(sav).unwrap();
+    for _ in 0..5 {
+        c.run_frame(ButtonMask::default());
+    }
+    Some(c)
+}
+
+#[test]
+fn a_cartridge_clock_rides_along_in_the_save_ram() {
+    let _g = lock();
+    let sav = rtc_sav(100, 1_700_000_000);
+    let Some(c) = booted_with(&sav) else { return };
+    assert_eq!(c.save_ram().as_deref(), Some(&sav[..]));
+}
+
+#[test]
+fn the_cartridge_clock_in_a_save_reaches_the_game() {
+    let _g = lock();
+    let Some(mut a) = booted_with(&rtc_sav(100, 1_700_000_000)) else {
+        return;
+    };
+    let state = a.serialize().unwrap();
+    drop(a);
+    let mut b = booted_with(&rtc_sav(200, 1_700_000_000)).unwrap();
+    assert_ne!(
+        state,
+        b.serialize().unwrap(),
+        "the save's clock never reached the core"
     );
 }

@@ -1487,7 +1487,7 @@ fn the_highlighted_cart_becomes_the_lid_rather_than_a_second_cart() {
     );
 
     let (_, lid, turn) = turned_at(&out, f.lid).expect("no lid");
-    let want = grown(lid_from(shelf_cart_at(rest), 0.0).0, TURN_PAD as f32);
+    let want = grown(lid_from(shelf_cart_at(rest, 1.0), 0.0).0, TURN_PAD as f32);
     assert!(
         near(lid, [want.x, want.y, want.w, want.h]),
         "the lid starts at {lid:?}"
@@ -1502,7 +1502,7 @@ fn the_highlighted_cart_becomes_the_lid_rather_than_a_second_cart() {
     let slid = frame(&app);
     let (_, lid, turn) = turned_at(&slid, f.lid).expect("the lid vanished mid-slide");
     assert_eq!(turn, 0.0, "the lid turned while it slid");
-    let shelf = shelf_cart_at(rest);
+    let shelf = shelf_cart_at(rest, 1.0);
     let want = grown(
         Placed {
             y: shelf.y - SLIDE_UP * 0.5,
@@ -1708,7 +1708,7 @@ fn the_open_waits_on_the_shelf_for_its_faces() {
     app.set_core_board_faces(f.board, f.lid);
     app.update(0.016);
     let out = frame(&app);
-    let shelf = grown(shelf_cart_at(rest), TURN_PAD as f32);
+    let shelf = grown(shelf_cart_at(rest, 1.0), TURN_PAD as f32);
     let (_, lid, _) = turned_at(&out, f.lid).expect("no lid once the faces arrived");
     assert!(
         near(lid, [shelf.x, shelf.y, shelf.w, shelf.h]),
@@ -2014,7 +2014,7 @@ fn a_shoulder_still_held_when_the_cart_seats_never_reaches_a_game_boy_core() {
     }
 }
 
-/// A display preference, remembered per cart, in the shape `selected_core.ini` already has —
+/// A display preference, remembered per cart, in the shape `selected_core.txt` already has —
 /// and it is the card that remembers it, which is why the second half boots the whole session
 /// again rather than reading the app's own field back.
 #[test]

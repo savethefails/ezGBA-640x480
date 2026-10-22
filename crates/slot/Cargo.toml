@@ -15,6 +15,7 @@ device = ["slot-gfx/device"]
 # winit it can never use. The `host` and `device` features above are what turn the backend
 # on, and they are mutually exclusive.
 slot-gfx = { path = "../slot-gfx", default-features = false }
+libc = { workspace = true }
 slot-input = { path = "../slot-input" }
 slot-power = { path = "../slot-power" }
 slot-retro = { path = "../slot-retro" }

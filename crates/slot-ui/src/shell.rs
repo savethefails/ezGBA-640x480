@@ -106,7 +106,7 @@ pub const SNES_SHELL: Shell = shell([0x8a, 0x87, 0x8e], Finish::Solid);
 const SNES_TITLES: &[(&str, Shell)] =
     &[("KILLER INSTINCT", shell([0x2c, 0x2b, 0x2e], Finish::Solid))];
 
-/// A shell chosen in `cart_shell.ini` wins; otherwise, what plastic this cart shipped in: by
+/// A shell chosen in `cart_shell.txt` wins; otherwise, what plastic this cart shipped in: by
 /// game code for GBA; for a Game Boy pak by its code or title, then its CGB flag; for a SNES
 /// pak by its title. The folder is not asked, since `.gb` and `.gbc`
 /// extensions routinely disagree with the flag.
@@ -120,7 +120,7 @@ pub fn shell_for(cart: &Cart) -> Shell {
         return shell(choice.colour, finish);
     }
     match cart.platform {
-        Platform::Gba => gba_shell_for(&cart.code),
+        Platform::Gba => gba_shell_for(&slot_store::header_ids(cart).1),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
         Platform::Snes => snes_shell_for(&cart.rom),
         Platform::Pico8 => PICO8_SHELL,
@@ -133,7 +133,7 @@ pub fn gba_shell_for(code: &str) -> Shell {
 }
 
 fn gb_shell_for(rom: &Path) -> Shell {
-    let Some(h) = slot_store::gb::header(rom) else {
+    let Some(h) = slot_store::gb::cached_header(rom) else {
         return flag_shell(slot_store::gb::class(rom));
     };
     let by_title = || {

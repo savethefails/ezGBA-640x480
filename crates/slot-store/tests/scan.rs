@@ -1,7 +1,7 @@
 mod common;
 
 use common::tmp_root;
-use slot_store::{scan, Platform};
+use slot_store::{header_ids, scan, Platform};
 use tempfile::TempDir;
 
 /// `rel` is a path relative to `Games/`, e.g. `"GBA/Pokemon Emerald.gba"`.
@@ -32,7 +32,7 @@ fn a_png_in_labels_is_paired_to_its_rom_by_stem() {
         carts[1].label.is_some(),
         "a label in Labels/ was not picked up"
     );
-    assert_eq!(carts[1].title, "POKEMON EMER");
+    assert_eq!(header_ids(&carts[1]).0, "POKEMON EMER");
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn an_appledouble_sidecar_is_not_shelved_as_a_cart() {
 fn header_title_of_a_truncated_rom_is_none_not_a_panic() {
     let d = tmp_root();
     std::fs::write(d.path().join("Games/GBA/Tiny.gba"), [0u8; 8]).unwrap();
-    assert!(scan(d.path()).unwrap()[0].title.is_empty());
+    assert!(header_ids(&scan(d.path()).unwrap()[0]).0.is_empty());
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn a_header_title_that_is_not_text_is_dropped_rather_than_mangled() {
     let mut rom = vec![0u8; 0x100];
     rom[0xa0..0xac].copy_from_slice(&[0xffu8; 12]);
     std::fs::write(d.path().join("Games/GBA/Garbage.gba"), rom).unwrap();
-    assert!(scan(d.path()).unwrap()[0].title.is_empty());
+    assert!(header_ids(&scan(d.path()).unwrap()[0]).0.is_empty());
 }
 
 #[test]
@@ -144,4 +144,28 @@ fn the_same_stem_on_two_platforms_is_two_carts_with_two_labels() {
         gba.label.is_none(),
         "the GBA cart borrowed the Game Boy label"
     );
+}
+
+/// From slot 8f72b45: art is found by one listing of its folder, so its name's case is the
+/// card's business, not the scan's.
+#[test]
+fn a_label_pairs_with_its_rom_whatever_the_case_of_its_name() {
+    let d = tmp_root();
+    write_rom(&d, "GBA/Pokemon Emerald.gba", "POKEMON EMER");
+    write_png(&d, "GBA/pokemon emerald.PNG");
+    let carts = scan(d.path()).unwrap();
+    assert_eq!(
+        carts[0].label.as_deref(),
+        Some(d.path().join("Labels/GBA/pokemon emerald.PNG").as_path())
+    );
+}
+
+/// From slot 8f72b45: a boot opens no rom. The header is read when something asks for it.
+#[test]
+fn a_scan_reads_names_and_leaves_the_rom_headers_for_later() {
+    let d = tmp_root();
+    write_rom(&d, "GBA/Advance Wars.gba", "ADVANCEWARS");
+    let cart = scan(d.path()).unwrap().remove(0);
+    assert!(cart.title.is_empty() && cart.code.is_empty());
+    assert_eq!(header_ids(&cart).0, "ADVANCEWARS");
 }
