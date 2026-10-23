@@ -181,9 +181,7 @@ impl Cable {
     pub fn accept(&mut self, buf: &[u8]) -> bool {
         match buf.first() {
             Some(&KIND_READY) => {
-                crate::link_log!(
-                    "slot: cable: the joiner is running the host's game, session under way"
-                );
+                eprintln!("slot: cable: the joiner is running the host's game, session under way");
                 self.peer_ready = true;
                 return true;
             }
@@ -194,10 +192,6 @@ impl Cable {
             Some(&KIND_STATE_END) => {
                 self.incoming.extend_from_slice(&buf[1..]);
                 self.complete = true;
-                crate::link_log!(
-                    "slot: cable: received {} bytes of the host's state",
-                    self.incoming.len()
-                );
                 return true;
             }
             _ => {}

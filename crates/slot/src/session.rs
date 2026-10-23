@@ -366,21 +366,6 @@ impl Session {
         // ending. Ahead of `sync_speed` below, so the frame the overlay closes on is already
         // a frame the game is running again.
         if let Some((client_id, transport)) = self.app.take_link_transport() {
-            // One line opening each session in the link log, so two devices' logs can be
-            // matched up: which build, which end, which rom file.
-            let build = crate::build_info::Build::current();
-            crate::link_log!(
-                "slot: link: session on {}{} as {}, {}",
-                build.hash,
-                if build.dirty { "+" } else { "" },
-                match self.app.link_player() {
-                    Some(p) => format!("cable player {p}"),
-                    None => format!("netpacket client {client_id}"),
-                },
-                self.app
-                    .seated_cart()
-                    .map_or_else(|| "no cart".into(), |c| c.rom.display().to_string())
-            );
             match &self.emu {
                 // Which route carries it is decided by whether a port was loaded for: the cable
                 // is the only one that opens the core in link mode, so `link_player` is the one
@@ -391,7 +376,7 @@ impl Session {
                 },
                 // No core to carry it. Dropping the transport closes the socket, which is
                 // the only honest thing to do with a session that has nowhere to run.
-                None => crate::link_log!("slot: link: a transport arrived with no core to run it"),
+                None => eprintln!("slot: link: a transport arrived with no core to run it"),
             }
         }
         // A link picked in a mode the running core was not loaded with. Carried out here for the
@@ -808,7 +793,7 @@ impl Session {
     /// old core is dropped before the new one opens: dropping joins its worker, which is what
     /// lets the core go, and libretro allows only one.
     fn reload_for_link(&mut self, stem: &str, serial: &'static str) {
-        crate::link_log!("slot: link: loading {stem} again with gpsp_serial={serial}");
+        eprintln!("slot: link: loading {stem} again with gpsp_serial={serial}");
         if self.emu.is_some() {
             self.app.flush_resume();
         }
