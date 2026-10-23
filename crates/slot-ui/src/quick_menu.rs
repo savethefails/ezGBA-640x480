@@ -12,6 +12,7 @@ pub enum QuickRow {
     DateTime,
     Picture,
     SnesPicture,
+    Pico8Bezel,
     Grid,
     GridDepth,
     Scaler,
@@ -29,10 +30,11 @@ impl QuickRow {
     /// `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 12] = [
+    pub const ALL: [QuickRow; 13] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::SnesPicture,
+        QuickRow::Pico8Bezel,
         QuickRow::Grid,
         QuickRow::GridDepth,
         QuickRow::Scaler,
@@ -54,6 +56,7 @@ impl QuickRow {
             QuickRow::DateTime => "Date & Time",
             QuickRow::Picture => "GBA Picture",
             QuickRow::SnesPicture => "SNES Picture",
+            QuickRow::Pico8Bezel => "PICO-8 Bezel",
             QuickRow::Grid => "LCD Grid",
             QuickRow::GridDepth => "Grid Depth",
             QuickRow::Scaler => "Scaler",
@@ -125,10 +128,12 @@ pub enum QuickValue {
     Custom,
     Snes9x2005,
     Snes9x,
+    Quiet,
+    Palette,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 35] = [
+    pub const ALL: [QuickValue; 37] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -164,6 +169,8 @@ impl QuickValue {
         QuickValue::Custom,
         QuickValue::Snes9x2005,
         QuickValue::Snes9x,
+        QuickValue::Quiet,
+        QuickValue::Palette,
     ];
 
     /// The Sharpness row's steps, in the order the arrows walk them.
@@ -214,6 +221,8 @@ impl QuickValue {
             QuickValue::Custom => "Custom",
             QuickValue::Snes9x2005 => "Snes9x 2005",
             QuickValue::Snes9x => "Snes9x",
+            QuickValue::Quiet => "Quiet",
+            QuickValue::Palette => "Palette",
         }
     }
 
@@ -255,7 +264,8 @@ impl QuickValue {
 }
 
 /// A size up from the power menu's rows: 30 px type on rows as tall as the space above the
-/// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34.
+/// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34,
+/// thirteen at 32.
 /// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar
 /// at either.
 pub const QUICK_PITCH: f32 = {

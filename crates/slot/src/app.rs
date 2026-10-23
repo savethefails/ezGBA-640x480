@@ -8,8 +8,9 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
-    Aspect, Cart, ColourDepth, Core, LcdGrid, Platform, Scaling, SlotState, SnesPicture,
-    StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, SlotState,
+    SnesPicture, StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
+    VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -616,6 +617,9 @@ pub struct App {
     /// One picture from `Wallpapers`, behind everything the shelf draws. `None` on a card
     /// that carries none, which is the common case.
     wallpaper: Option<TexId>,
+    /// The two PICO-8 bezels, Quiet then Palette, drawn at boot and shown behind a PICO-8 game
+    /// as `Look::pico8_bezel` says.
+    bezel_faces: Option<[TexId; 2]>,
     /// What is printed on the case: the battery's percent, and the time as it stands.
     battery_percent: slot_ui::Printed,
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
@@ -786,6 +790,7 @@ impl App {
             greeting_face: None,
             about_a_down: None,
             wallpaper: None,
+            bezel_faces: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
             mark_faces: Vec::new(),
@@ -1102,6 +1107,11 @@ impl App {
                 LcdGrid::Lcd => QuickValue::Lcd,
             }),
             QuickRow::GridDepth => Some(QuickValue::depth(self.look.depth)),
+            QuickRow::Pico8Bezel => Some(match self.look.pico8_bezel {
+                Pico8Bezel::Off => QuickValue::Off,
+                Pico8Bezel::Quiet => QuickValue::Quiet,
+                Pico8Bezel::Palette => QuickValue::Palette,
+            }),
             QuickRow::SnesPicture => Some(match self.look.snes_picture {
                 SnesPicture::Sharp => QuickValue::SnesSharp,
                 SnesPicture::FourThree => QuickValue::FourThree,
@@ -1186,6 +1196,11 @@ impl App {
         for (_, shelf) in &mut self.shelves {
             shelf.set_pico8_shadow(face);
         }
+    }
+
+    /// Quiet, then Palette: see `bezel_faces`.
+    pub fn set_bezel_faces(&mut self, faces: [TexId; 2]) {
+        self.bezel_faces = Some(faces);
     }
 
     pub fn set_wallpaper(&mut self, face: TexId) {
@@ -2219,6 +2234,10 @@ impl App {
                 look.snes_picture = look.snes_picture.step(by);
                 ("snes-picture", look.snes_picture.word().to_string())
             }
+            QuickRow::Pico8Bezel => {
+                look.pico8_bezel = look.pico8_bezel.step(by);
+                ("pico8-bezel", look.pico8_bezel.word().to_string())
+            }
             QuickRow::Scaler => {
                 look.scaler = look.scaler.step(by);
                 ("scaler", look.scaler.word().to_string())
@@ -2281,6 +2300,7 @@ impl App {
             | QuickRow::Grid
             | QuickRow::GridDepth
             | QuickRow::SnesPicture
+            | QuickRow::Pico8Bezel
             | QuickRow::Scaler
             | QuickRow::Sharpness
             | QuickRow::RunAhead
@@ -3314,8 +3334,30 @@ impl App {
     /// picture; the chrome puts it in the same list, in front of the cart.
     fn push_game(&self, out: &mut Vec<Draw>) {
         if self.game_visible() {
+            self.push_bezel(out);
             out.push(Draw::Game);
         }
+    }
+
+    /// The bars beside a PICO-8 game, under it: the game's square is drawn over the bezel's
+    /// black middle. On a square panel the game fills it and covers the bezel whole.
+    fn push_bezel(&self, out: &mut Vec<Draw>) {
+        let at = match self.look.pico8_bezel {
+            Pico8Bezel::Off => return,
+            Pico8Bezel::Quiet => 0,
+            Pico8Bezel::Palette => 1,
+        };
+        let Some(faces) = self.bezel_faces.filter(|_| self.core == Core::Pico8) else {
+            return;
+        };
+        out.push(Draw::Tex {
+            x: 0.0,
+            y: 0.0,
+            w: OUT_W as f32,
+            h: OUT_H as f32,
+            tex: faces[at],
+            alpha: 1.0,
+        });
     }
 
     fn chrome(&self, stem: &str, dim: f32, out: &mut Vec<Draw>) {
@@ -5197,6 +5239,8 @@ struct Look {
     /// The emulator a SNES cart starts on when `selected_core.txt` does not name one. Not how
     /// the game is drawn either, but kept with the rest for the same reason as `runahead`.
     snes_core: Core,
+    /// What fills the bars beside a PICO-8 game.
+    pico8_bezel: Pico8Bezel,
 }
 
 impl From<&Theme> for Look {
@@ -5212,6 +5256,7 @@ impl From<&Theme> for Look {
             colour_depth: theme.colour_depth,
             colour_custom: theme.colour_custom,
             snes_core: theme.snes_core,
+            pico8_bezel: theme.pico8_bezel,
         }
     }
 }

@@ -57,6 +57,22 @@ pub struct Theme {
     /// `selected_core.txt` does not name. snes9x2005 is the default, being fast enough for
     /// run-ahead.
     pub snes_core: crate::Core,
+    /// `pico8-bezel off`, `quiet` or `palette`. See `Pico8Bezel`.
+    pub pico8_bezel: Pico8Bezel,
+}
+
+/// What fills the bars either side of a PICO-8 game, which is a square on a 4:3 panel. Both are
+/// drawn in PICO-8's own 16 colours and its alternate palette, and neither names the console.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Pico8Bezel {
+    /// Black bars, as every card had before this existed.
+    #[default]
+    Off,
+    /// Dark blue next to the game dithering out to black at the panel's edges, and a thin rim.
+    Quiet,
+    /// Flat bands from black to dark blue, the two palettes as chips low on either bar, and the
+    /// logo's sparkle at the top right.
+    Palette,
 }
 
 /// How much depth the game picture is given, after the image-adjustment settings RG35XXSP
@@ -145,6 +161,14 @@ impl Word for SnesPicture {
     const WORDS: &'static [(Self, &'static str)] = &[
         (SnesPicture::Sharp, "sharp"),
         (SnesPicture::FourThree, "4:3"),
+    ];
+}
+
+impl Word for Pico8Bezel {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (Pico8Bezel::Off, "off"),
+        (Pico8Bezel::Quiet, "quiet"),
+        (Pico8Bezel::Palette, "palette"),
     ];
 }
 
@@ -237,6 +261,7 @@ impl Default for Theme {
             colour_depth: ColourDepth::Off,
             colour_custom: [1.0; 3],
             snes_core: crate::Core::Snes9x2005,
+            pico8_bezel: Pico8Bezel::Off,
         }
     }
 }
@@ -276,6 +301,7 @@ impl Theme {
                 ("snes-picture", v) => set(&mut theme.snes_picture, v),
                 ("boot-picture", v) => set(&mut theme.boot_picture, v),
                 ("colour-depth", v) => set(&mut theme.colour_depth, v),
+                ("pico8-bezel", v) => set(&mut theme.pico8_bezel, v),
                 ("snes-core", "snes9x") => theme.snes_core = crate::Core::Snes9x,
                 ("snes-core", "snes9x2005" | "snes9x2005_plus") => {
                     theme.snes_core = crate::Core::Snes9x2005

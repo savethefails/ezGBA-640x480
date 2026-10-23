@@ -9,9 +9,9 @@ use slot_power::{Platform, Power};
 // Aliased because `slot_power::Platform` above is already `Platform` here and is a different
 // thing entirely: that one is the machine slot is running on, this one is the machine a shelf's
 // cartridges were made for.
-use slot_store::{format_stamp, Platform as CartPlatform};
+use slot_store::{format_stamp, Pico8Bezel, Platform as CartPlatform};
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_face_with, cart_shadow, chip_face,
+    arrows_hint_face, badge_face, bezel_face, cart_face, cart_face_with, cart_shadow, chip_face,
     chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face,
     menu_face, photo_face, pico8_cart_shadow, quick_caret_face, quick_label_face,
     quick_legend_faces, quick_value_face, set_clock_hint_face, snes_cart_shadow, socket_face,
@@ -294,6 +294,13 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_mark_faces(marks);
+        // Both PICO-8 bezels, so the menu can switch between them without drawing on a frame.
+        // Nearest, as pixel art at its own size has nothing to blend.
+        let bezels = [Pico8Bezel::Quiet, Pico8Bezel::Palette].map(|b| {
+            let rgba = bezel_face(b).expect("a bezel that draws something");
+            compositor.create_texture_nearest(OUT_W, OUT_H, &rgba)
+        });
+        self.session.app_mut().set_bezel_faces(bezels);
         self.upload_wallpaper(compositor);
     }
 

@@ -117,6 +117,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
     for want in [
         QuickRow::Picture,
         QuickRow::SnesPicture,
+        QuickRow::Pico8Bezel,
         QuickRow::Grid,
         QuickRow::GridDepth,
         QuickRow::Scaler,
@@ -300,10 +301,11 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 11] = [
+const SELECTABLE: [QuickRow; 12] = [
     QuickRow::DateTime,
     QuickRow::Picture,
     QuickRow::SnesPicture,
+    QuickRow::Pico8Bezel,
     QuickRow::Grid,
     QuickRow::GridDepth,
     QuickRow::Scaler,
@@ -464,7 +466,8 @@ fn the_arrows_change_the_look_and_write_it_to_theme_txt() {
         "an arrow moved the bar"
     );
 
-    // Past SNES Picture to the grid.
+    // Past SNES Picture and PICO-8 Bezel to the grid.
+    press(&mut a, Btn::Down);
     press(&mut a, Btn::Down);
     press(&mut a, Btn::Down);
     for want in [QuickValue::Strict, QuickValue::Lcd, QuickValue::Lcd] {
@@ -691,4 +694,74 @@ fn colour_depth_and_the_snes_emulator_are_kept_on_the_card() {
         slot_store::Core::Snes9x
     );
     slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
+}
+
+/// PICO-8 Bezel walks Off, Quiet and Palette, stops at the ends, and writes each to the card.
+#[test]
+fn the_pico8_bezel_row_steps_and_is_kept_on_the_card() {
+    let (d, mut a) = on_carousel_with_theme("");
+    assert_eq!(a.quick_value(QuickRow::Pico8Bezel), Some(QuickValue::Off));
+    open_at(&mut a, QuickRow::Pico8Bezel);
+    for want in [QuickValue::Quiet, QuickValue::Palette, QuickValue::Palette] {
+        press(&mut a, Btn::Right);
+        assert_eq!(a.quick_value(QuickRow::Pico8Bezel), Some(want));
+    }
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap(),
+        "pico8-bezel palette\n"
+    );
+    press(&mut a, Btn::Left);
+    assert_eq!(
+        slot_store::Theme::read(d.path()).pico8_bezel,
+        slot_store::Pico8Bezel::Quiet
+    );
+    let (_d, a) = on_carousel_with_theme("pico8-bezel palette\n");
+    assert_eq!(
+        a.quick_value(QuickRow::Pico8Bezel),
+        Some(QuickValue::Palette)
+    );
+}
+
+/// The bezel the card names goes under a PICO-8 game, never over it, and never under anything
+/// else: a GBA game fills the panel and keeps its black.
+#[test]
+fn the_bezel_is_drawn_under_a_pico8_game_and_only_there() {
+    let bezel_under_game = |theme: &str, core: slot_store::Core| -> Option<usize> {
+        let d = tmp_root_with_carts(&["Emerald"]);
+        std::fs::write(d.path().join("Config/theme.txt"), theme).expect("write theme.txt");
+        let mut a = app_playing_in(d.path(), "Emerald");
+        // The first frame the core draws, and the screen up to full behind it.
+        a.set_game_ready(true);
+        for _ in 0..120 {
+            a.update(1.0 / 60.0);
+        }
+        a.set_bezel_faces([TexId::from_raw(900), TexId::from_raw(901)]);
+        a.set_core(core);
+        let out = frame(&a);
+        let game = out
+            .iter()
+            .position(|d| matches!(d, Draw::Game))
+            .expect("the game is drawn");
+        let bezel = out.iter().position(|d| {
+            matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(900) || *tex == TexId::from_raw(901))
+        })?;
+        assert!(bezel < game, "the bezel is drawn over the game");
+        assert_eq!(
+            placed(&out, 900).or(placed(&out, 901)),
+            Some([0.0, 0.0, OUT_W as f32, 480.0])
+        );
+        Some(900 + usize::from(placed(&out, 901).is_some()))
+    };
+    use slot_store::Core;
+    assert_eq!(
+        bezel_under_game("pico8-bezel quiet\n", Core::Pico8),
+        Some(900)
+    );
+    assert_eq!(
+        bezel_under_game("pico8-bezel palette\n", Core::Pico8),
+        Some(901)
+    );
+    assert_eq!(bezel_under_game("pico8-bezel off\n", Core::Pico8), None);
+    assert_eq!(bezel_under_game("", Core::Pico8), None);
+    assert_eq!(bezel_under_game("pico8-bezel palette\n", Core::Mgba), None);
 }

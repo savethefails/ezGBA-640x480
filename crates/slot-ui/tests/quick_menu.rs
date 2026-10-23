@@ -96,6 +96,7 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Date & Time",
             "GBA Picture",
             "SNES Picture",
+            "PICO-8 Bezel",
             "LCD Grid",
             "Grid Depth",
             "Scaler",
@@ -150,7 +151,9 @@ fn the_values_read_as_the_menu_prints_them() {
             "Deep",
             "Custom",
             "Snes9x 2005",
-            "Snes9x"
+            "Snes9x",
+            "Quiet",
+            "Palette"
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
