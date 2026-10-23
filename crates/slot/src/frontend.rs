@@ -294,9 +294,9 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_mark_faces(marks);
-        // Both PICO-8 bezels, so the menu can switch between them without drawing on a frame.
+        // Every PICO-8 bezel, so the menu can switch between them without drawing on a frame.
         // Nearest, as pixel art at its own size has nothing to blend.
-        let bezels = [Pico8Bezel::Quiet, Pico8Bezel::Palette].map(|b| {
+        let bezels = [Pico8Bezel::Quiet, Pico8Bezel::Palette, Pico8Bezel::Soft].map(|b| {
             let rgba = bezel_face(b).expect("a bezel that draws something");
             compositor.create_texture_nearest(OUT_W, OUT_H, &rgba)
         });

@@ -6,9 +6,10 @@
 use slot_store::Pico8Bezel;
 use slot_ui::{bezel_face, OUT_H, OUT_W};
 
-const BEZELS: [(Pico8Bezel, &str); 2] = [
+const BEZELS: [(Pico8Bezel, &str); 3] = [
     (Pico8Bezel::Quiet, "quiet"),
     (Pico8Bezel::Palette, "palette"),
+    (Pico8Bezel::Soft, "soft"),
 ];
 
 fn px(face: &[u8], x: u32, y: u32) -> [u8; 4] {

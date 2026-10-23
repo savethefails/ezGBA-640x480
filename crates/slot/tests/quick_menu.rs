@@ -696,24 +696,30 @@ fn colour_depth_and_the_snes_emulator_are_kept_on_the_card() {
     slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
 }
 
-/// PICO-8 Bezel walks Off, Quiet and Palette, stops at the ends, and writes each to the card.
+/// PICO-8 Bezel walks Off, Quiet, Palette and Soft, stops at the ends, and writes each to the
+/// card.
 #[test]
 fn the_pico8_bezel_row_steps_and_is_kept_on_the_card() {
     let (d, mut a) = on_carousel_with_theme("");
     assert_eq!(a.quick_value(QuickRow::Pico8Bezel), Some(QuickValue::Off));
     open_at(&mut a, QuickRow::Pico8Bezel);
-    for want in [QuickValue::Quiet, QuickValue::Palette, QuickValue::Palette] {
+    for want in [
+        QuickValue::Quiet,
+        QuickValue::Palette,
+        QuickValue::Soft,
+        QuickValue::Soft,
+    ] {
         press(&mut a, Btn::Right);
         assert_eq!(a.quick_value(QuickRow::Pico8Bezel), Some(want));
     }
     assert_eq!(
         std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap(),
-        "pico8-bezel palette\n"
+        "pico8-bezel soft\n"
     );
     press(&mut a, Btn::Left);
     assert_eq!(
         slot_store::Theme::read(d.path()).pico8_bezel,
-        slot_store::Pico8Bezel::Quiet
+        slot_store::Pico8Bezel::Palette
     );
     let (_d, a) = on_carousel_with_theme("pico8-bezel palette\n");
     assert_eq!(
@@ -735,22 +741,21 @@ fn the_bezel_is_drawn_under_a_pico8_game_and_only_there() {
         for _ in 0..120 {
             a.update(1.0 / 60.0);
         }
-        a.set_bezel_faces([TexId::from_raw(900), TexId::from_raw(901)]);
+        a.set_bezel_faces([900, 901, 902].map(TexId::from_raw));
         a.set_core(core);
         let out = frame(&a);
         let game = out
             .iter()
             .position(|d| matches!(d, Draw::Game))
             .expect("the game is drawn");
-        let bezel = out.iter().position(|d| {
-            matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(900) || *tex == TexId::from_raw(901))
+        let (bezel, id) = out.iter().enumerate().find_map(|(i, d)| {
+            (900..903)
+                .find(|&id| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(id)))
+                .map(|id| (i, id))
         })?;
         assert!(bezel < game, "the bezel is drawn over the game");
-        assert_eq!(
-            placed(&out, 900).or(placed(&out, 901)),
-            Some([0.0, 0.0, OUT_W as f32, 480.0])
-        );
-        Some(900 + usize::from(placed(&out, 901).is_some()))
+        assert_eq!(placed(&out, id), Some([0.0, 0.0, OUT_W as f32, 480.0]));
+        Some(id)
     };
     use slot_store::Core;
     assert_eq!(
@@ -760,6 +765,10 @@ fn the_bezel_is_drawn_under_a_pico8_game_and_only_there() {
     assert_eq!(
         bezel_under_game("pico8-bezel palette\n", Core::Pico8),
         Some(901)
+    );
+    assert_eq!(
+        bezel_under_game("pico8-bezel soft\n", Core::Pico8),
+        Some(902)
     );
     assert_eq!(bezel_under_game("pico8-bezel off\n", Core::Pico8), None);
     assert_eq!(bezel_under_game("", Core::Pico8), None);

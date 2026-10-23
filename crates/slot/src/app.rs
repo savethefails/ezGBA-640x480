@@ -617,9 +617,9 @@ pub struct App {
     /// One picture from `Wallpapers`, behind everything the shelf draws. `None` on a card
     /// that carries none, which is the common case.
     wallpaper: Option<TexId>,
-    /// The two PICO-8 bezels, Quiet then Palette, drawn at boot and shown behind a PICO-8 game
+    /// The PICO-8 bezels, Quiet, Palette and Soft, drawn at boot and shown behind a PICO-8 game
     /// as `Look::pico8_bezel` says.
-    bezel_faces: Option<[TexId; 2]>,
+    bezel_faces: Option<[TexId; 3]>,
     /// What is printed on the case: the battery's percent, and the time as it stands.
     battery_percent: slot_ui::Printed,
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
@@ -1111,6 +1111,7 @@ impl App {
                 Pico8Bezel::Off => QuickValue::Off,
                 Pico8Bezel::Quiet => QuickValue::Quiet,
                 Pico8Bezel::Palette => QuickValue::Palette,
+                Pico8Bezel::Soft => QuickValue::Soft,
             }),
             QuickRow::SnesPicture => Some(match self.look.snes_picture {
                 SnesPicture::Sharp => QuickValue::SnesSharp,
@@ -1198,8 +1199,8 @@ impl App {
         }
     }
 
-    /// Quiet, then Palette: see `bezel_faces`.
-    pub fn set_bezel_faces(&mut self, faces: [TexId; 2]) {
+    /// Quiet, Palette, then Soft: see `bezel_faces`.
+    pub fn set_bezel_faces(&mut self, faces: [TexId; 3]) {
         self.bezel_faces = Some(faces);
     }
 
@@ -3346,6 +3347,7 @@ impl App {
             Pico8Bezel::Off => return,
             Pico8Bezel::Quiet => 0,
             Pico8Bezel::Palette => 1,
+            Pico8Bezel::Soft => 2,
         };
         let Some(faces) = self.bezel_faces.filter(|_| self.core == Core::Pico8) else {
             return;

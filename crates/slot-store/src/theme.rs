@@ -57,7 +57,7 @@ pub struct Theme {
     /// `selected_core.txt` does not name. snes9x2005 is the default, being fast enough for
     /// run-ahead.
     pub snes_core: crate::Core,
-    /// `pico8-bezel off`, `quiet` or `palette`. See `Pico8Bezel`.
+    /// `pico8-bezel off`, `quiet`, `palette` or `soft`. See `Pico8Bezel`.
     pub pico8_bezel: Pico8Bezel,
 }
 
@@ -73,6 +73,9 @@ pub enum Pico8Bezel {
     /// Flat bands from black to dark blue, the two palettes as chips low on either bar, and the
     /// logo's sparkle at the top right.
     Palette,
+    /// Palette's bands alone, running straight up to the game with the game's shadow on them, so
+    /// the bezel sits under the picture rather than framing it.
+    Soft,
 }
 
 /// How much depth the game picture is given, after the image-adjustment settings RG35XXSP
@@ -169,6 +172,7 @@ impl Word for Pico8Bezel {
         (Pico8Bezel::Off, "off"),
         (Pico8Bezel::Quiet, "quiet"),
         (Pico8Bezel::Palette, "palette"),
+        (Pico8Bezel::Soft, "soft"),
     ];
 }
 

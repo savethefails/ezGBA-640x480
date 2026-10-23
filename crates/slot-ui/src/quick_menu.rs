@@ -130,10 +130,11 @@ pub enum QuickValue {
     Snes9x,
     Quiet,
     Palette,
+    Soft,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 37] = [
+    pub const ALL: [QuickValue; 38] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -171,6 +172,7 @@ impl QuickValue {
         QuickValue::Snes9x,
         QuickValue::Quiet,
         QuickValue::Palette,
+        QuickValue::Soft,
     ];
 
     /// The Sharpness row's steps, in the order the arrows walk them.
@@ -223,6 +225,7 @@ impl QuickValue {
             QuickValue::Snes9x => "Snes9x",
             QuickValue::Quiet => "Quiet",
             QuickValue::Palette => "Palette",
+            QuickValue::Soft => "Soft",
         }
     }
 

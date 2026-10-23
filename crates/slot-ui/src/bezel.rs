@@ -68,6 +68,7 @@ pub fn bezel_face(bezel: Pico8Bezel) -> Option<Vec<u8>> {
         Pico8Bezel::Off => return None,
         Pico8Bezel::Quiet => quiet(&mut face),
         Pico8Bezel::Palette => palette(&mut face),
+        Pico8Bezel::Soft => soft(&mut face),
     }
     Some(face.0)
 }
@@ -91,11 +92,51 @@ fn quiet(face: &mut Face) {
     }
 }
 
-/// Three flat bands from black at the panel's edges to navy beside the game, each joined to the
-/// next by a column of PICO-8's checker fill; a dark blue line a block off the game; the two
-/// palettes as chips low on either bar; and the logo's sparkle at the top right, where the logo
-/// keeps it.
+/// `bands`, a dark blue line a block off the game, the two palettes as chips low on either bar,
+/// and the logo's sparkle at the top right, where the logo keeps it.
 fn palette(face: &mut Face) {
+    bands(face);
+    for x in [BAR - 2 * BLOCK, OUT_W - BAR + BLOCK] {
+        face.fill(x, 0, BLOCK, OUT_H, DARK_BLUE);
+    }
+    for x in [BAR - BLOCK, OUT_W - BAR] {
+        face.fill(x, 0, BLOCK, OUT_H, BLACK);
+    }
+    // Colour 0 at the foot, a block apart, so up close each is its own chip and at arm's length
+    // the two runs are a faint dotted line.
+    for (x, colours) in [(38, PICO8), (OUT_W - 42, ALTERNATE)] {
+        for (i, colour) in colours.iter().enumerate() {
+            face.block(x, 440 - i as u32 * 2 * BLOCK, *colour);
+        }
+    }
+    sparkle(face, OUT_W - 40, 40);
+}
+
+/// Palette's bands and nothing on them, running straight up to the game, with the game's own
+/// shadow on them: three blocks of midnight dithered thinner away from the game. A line or a
+/// lip at the game's edge makes the bezel a frame standing over the picture; the shadow puts it
+/// underneath.
+fn soft(face: &mut Face) {
+    bands(face);
+    for (x0, left) in [(0, true), (OUT_W - BAR, false)] {
+        for (k, density) in [0.75, 0.5, 0.25].into_iter().enumerate() {
+            let bx = if left {
+                BAR_BLOCKS - 1 - k as u32
+            } else {
+                k as u32
+            };
+            for by in 0..OUT_H / BLOCK {
+                if bayer(bx, by) < density {
+                    face.block(x0 + bx * BLOCK, by * BLOCK, MIDNIGHT);
+                }
+            }
+        }
+    }
+}
+
+/// Three flat bands from black at the panel's edges to navy beside the game, each joined to the
+/// next by a column of PICO-8's checker fill.
+fn bands(face: &mut Face) {
     let bands = [BLACK, MIDNIGHT, NAVY];
     let width = BAR_BLOCKS / bands.len() as u32;
     for (x0, left) in [(0, true), (OUT_W - BAR, false)] {
@@ -114,20 +155,6 @@ fn palette(face: &mut Face) {
             }
         }
     }
-    for x in [BAR - 2 * BLOCK, OUT_W - BAR + BLOCK] {
-        face.fill(x, 0, BLOCK, OUT_H, DARK_BLUE);
-    }
-    for x in [BAR - BLOCK, OUT_W - BAR] {
-        face.fill(x, 0, BLOCK, OUT_H, BLACK);
-    }
-    // Colour 0 at the foot, a block apart, so up close each is its own chip and at arm's length
-    // the two runs are a faint dotted line.
-    for (x, colours) in [(38, PICO8), (OUT_W - 42, ALTERNATE)] {
-        for (i, colour) in colours.iter().enumerate() {
-            face.block(x, 440 - i as u32 * 2 * BLOCK, *colour);
-        }
-    }
-    sparkle(face, OUT_W - 40, 40);
 }
 
 /// The logo's sparkle: a white heart with the palette's brights around it, and a dark blue

@@ -153,7 +153,8 @@ fn the_values_read_as_the_menu_prints_them() {
             "Snes9x 2005",
             "Snes9x",
             "Quiet",
-            "Palette"
+            "Palette",
+            "Soft"
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
