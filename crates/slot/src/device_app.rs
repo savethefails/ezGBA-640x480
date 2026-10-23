@@ -32,6 +32,7 @@ pub fn run() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(CARD));
     slot::crash::install(Some(&slot::root::logs_dir(&root).join("slot-crash.log")));
+    slot::link_log::install(&slot::root::logs_dir(&root).join(slot::link_log::LINK_LOG_NAME));
     let mut surface = match FbdevSurface::new() {
         Ok(s) => s,
         Err(e) => {

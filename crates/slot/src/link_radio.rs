@@ -204,6 +204,10 @@ fn link_command(root: &Path, verb: &str) -> Command {
     cmd.arg(root.join("System/slotlink.sh"))
         .arg("link")
         .arg(verb);
+    // The radio's own trace, into the link log, so the two read in order in one file.
+    if let Some(log) = crate::link_log::path() {
+        cmd.env("AGS_LINK_TRACE", log);
+    }
     cmd
 }
 

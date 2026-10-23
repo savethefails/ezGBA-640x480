@@ -19,6 +19,7 @@ pub mod input;
 pub mod latency;
 pub mod link_art_builder;
 pub mod link_kind;
+pub mod link_log;
 pub mod link_net;
 pub mod link_radio;
 pub mod link_screen;

@@ -255,7 +255,9 @@ impl LinkStarter {
                     RadioFail::NoHost => LinkFail::NobodyCame,
                     RadioFail::Cancelled => LinkFail::Cancelled,
                     RadioFail::Radio(why) => {
-                        eprintln!("slot: link: {role:?} could not bring the radio up: {why}");
+                        crate::link_log!(
+                            "slot: link: {role:?} could not bring the radio up: {why}"
+                        );
                         LinkFail::Radio
                     }
                 };
@@ -270,7 +272,7 @@ impl LinkStarter {
             // after it, so a hang shows the address it is hanging on. The two ends must agree
             // on this port and nothing reconciles them if they do not, so it is the first
             // thing worth being able to compare between two logs.
-            eprintln!("slot: link: {role:?} using {HOST_ADDR}:{port}");
+            crate::link_log!("slot: link: {role:?} using {HOST_ADDR}:{port}");
             match socket(port, &flag) {
                 // No teardown here, and that is the point of the whole module: the session
                 // this just handed over runs over that network.
@@ -281,9 +283,9 @@ impl LinkStarter {
                     // joiner reaches here even after a cancel, because `TcpLink::join` is a
                     // plain `connect` that never looks at the flag. Nothing else owns the
                     // network at that point, so this thread is the one that has to put it back.
-                    eprintln!("slot: link: {role:?} connected on {HOST_ADDR}:{port}");
+                    crate::link_log!("slot: link: {role:?} connected on {HOST_ADDR}:{port}");
                     if tx.send(LinkProgress::Ready(link)).is_err() {
-                        eprintln!("slot: link: nobody left to hand it to, radio back down");
+                        crate::link_log!("slot: link: nobody left to hand it to, radio back down");
                         radio_down();
                     }
                 }
@@ -292,7 +294,7 @@ impl LinkStarter {
                     // screen only has room for those three. The kind is what separates
                     // "nothing was listening" from "it went away mid-handshake", and both
                     // arrive on screen as PeerVanished.
-                    eprintln!(
+                    crate::link_log!(
                         "slot: link: {role:?} failed on {HOST_ADDR}:{port}: {e} (kind {:?})",
                         e.kind()
                     );

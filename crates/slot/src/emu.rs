@@ -940,19 +940,19 @@ impl Worker {
                             // and its bytes 4..8 are a CPU register that differs on every machine.
                             let own = core.serialize().unwrap_or_default();
                             if link_state::is_pair(&state) && !link_state::same_bios(&state, &own) {
-                                eprintln!("slot: cable: the host runs another GBA BIOS");
+                                crate::link_log!("slot: cable: the host runs another GBA BIOS");
                                 self.shared.bios_mismatch.store(true, Ordering::Relaxed);
                             } else if link_state::is_pair(&state)
                                 && !link_state::same_rom(&state, &own)
                             {
-                                eprintln!(
+                                crate::link_log!(
                                     "slot: cable: the host's copy of the game is another ROM"
                                 );
                                 self.shared.rom_mismatch.store(true, Ordering::Relaxed);
                             } else {
                                 match core.unserialize(&state) {
                                     Ok(()) => {
-                                        eprintln!(
+                                        crate::link_log!(
                                             "slot: cable: restored {} bytes, running the host's game",
                                             state.len()
                                         );
@@ -961,7 +961,11 @@ impl Worker {
                                     }
                                     // Nothing to run in step with. Better to sit refusing to
                                     // start than to play a different game to the other device.
-                                    Err(e) => eprintln!("slot: cable: the state was refused: {e}"),
+                                    Err(e) => crate::link_log!(
+                                        "slot: cable: the state was refused ({} bytes, {} here): {e}",
+                                        state.len(),
+                                        own.len()
+                                    ),
                                 }
                             }
                         }
@@ -1165,7 +1169,7 @@ impl Worker {
                                         // takes in and restores a megabyte (see `Cable::armed`).
                                         let lost = c.armed() && c.stalled() >= cable::QUIET_FRAMES;
                                         if lost && c.stalled() == cable::QUIET_FRAMES {
-                                            eprintln!(
+                                            crate::link_log!(
                                                 "slot: cable: player {} lost its peer: {} presents without its buttons for frame {}",
                                                 c.player(),
                                                 c.stalled(),
@@ -1200,7 +1204,7 @@ impl Worker {
                     cable_core += core_time;
                     if cable_said.elapsed() >= Duration::from_secs(5) {
                         let secs = cable_said.elapsed().as_secs_f32();
-                        eprintln!(
+                        crate::link_log!(
                             "slot: cable: {} presents, {} stalled, {:.1} fps, {:.1} ms core ({:.1} ms waiting) of {:.1} ms present",
                             cable_presents,
                             cable_stalls,
@@ -1424,12 +1428,14 @@ impl Worker {
                 if player == 0 {
                     match core.serialize() {
                         Ok(state) => {
-                            eprintln!("slot: cable: sending {} bytes of state", state.len());
+                            crate::link_log!("slot: cable: sending {} bytes of state", state.len());
                             for p in cable::state_packets(&state) {
                                 wire.send(NETPACKET_RELIABLE, &p);
                             }
                         }
-                        Err(e) => eprintln!("slot: cable: the core would not serialize: {e}"),
+                        Err(e) => {
+                            crate::link_log!("slot: cable: the core would not serialize: {e}")
+                        }
                     }
                     c.prime();
                 }
