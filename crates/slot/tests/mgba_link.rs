@@ -1498,3 +1498,44 @@ fn a_joiner_refuses_a_host_with_another_copy_of_the_rom() {
     );
     emu.end_link();
 }
+
+/// The host's pair at `BeginCable` comes from a link-mode core that may already have run
+/// run-ahead, and run-ahead learns a state size once. A game with no mGBA override, as Mario
+/// Kart: Super Circuit has none, shrinks its state the first time it touches SRAM, so a pair
+/// saved at the learned size would be zero-padded, and the joiner's link loader refuses
+/// trailing bytes: it would sit on "set up the link cable" for good.
+#[test]
+fn a_host_pair_saved_after_the_state_shrank_is_taken_by_the_joiner() {
+    let _g = common::core_lock();
+    let Some(dylib) = vendored() else { return };
+    let rom = common::sram_rom();
+
+    let mut host = link_core(&dylib, 0);
+    host.load(&rom).expect("link mode refused the rom");
+    for _ in 0..2 {
+        host.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+    }
+    let learned = host.serialize_runahead().expect("no link state");
+    for _ in 0..30 {
+        host.run_frame_linked(ButtonMask::default(), ButtonMask::default());
+    }
+    let padded = host.serialize_runahead().expect("no link state");
+    let pair = host.serialize().expect("no link state");
+    drop(host);
+    assert!(
+        pair.len() < learned.len(),
+        "the pair was {} bytes, the {} it had been: padded, or SRAM never shrank it",
+        pair.len(),
+        learned.len()
+    );
+
+    let mut joiner = link_core(&dylib, 1);
+    joiner.load(&rom).expect("link mode refused the rom");
+    assert!(
+        joiner.unserialize(&padded).is_err(),
+        "the joiner took a padded pair, so this test no longer shows why the host's must be exact"
+    );
+    joiner
+        .unserialize(&pair)
+        .expect("the joiner refused the host's pair");
+}

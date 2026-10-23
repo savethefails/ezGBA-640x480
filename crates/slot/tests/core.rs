@@ -240,46 +240,6 @@ fn on_mgba_loading_a_state_while_the_game_writes_its_second_flash_bank_keeps_the
     }
 }
 
-/// Waits ten frames and writes one byte of SRAM. Its game code is one mGBA has no override for,
-/// as Mario Kart: Super Circuit's is not, so until that write mGBA carries the whole 128 KB save
-/// buffer in a state, and after it the 32 KB of SRAM it has taken the cart for.
-fn sram_rom() -> PathBuf {
-    const CODE: [u32; 17] = [
-        0xe3a00301, //        mov  r0, #0x04000000
-        0xe3a0140e, //        mov  r1, #0x0E000000      the save
-        0xe3a0900a, //        mov  r9, #10
-        0xeb000005, // wait:  bl   vsync
-        0xe2599001, //        subs r9, r9, #1
-        0x1afffffc, //        bne  wait
-        0xe3a0405a, //        mov  r4, #0x5A
-        0xe5c14000, //        strb r4, [r1]            one byte of SRAM
-        0xeb000000, // idle:  bl   vsync
-        0xeafffffd, //        b    idle
-        0xe1d040b6, // vsync: ldrh r4, [r0, #6]        VCOUNT
-        0xe35400a0, //        cmp  r4, #160
-        0x2afffffc, //        bhs  vsync
-        0xe1d040b6, // 1:     ldrh r4, [r0, #6]
-        0xe35400a0, //        cmp  r4, #160
-        0x3afffffc, //        blo  1b
-        0xe12fff1e, //        bx   lr
-    ];
-    let mut rom = vec![0u8; 0x8000];
-    rom[0..4].copy_from_slice(&0xea00002eu32.to_le_bytes()); // b 0xc0
-    rom[0xa0..0xac].copy_from_slice(b"SRAM SHRINK\0");
-    rom[0xac..0xb0].copy_from_slice(b"ZSRS");
-    rom[0xb0..0xb2].copy_from_slice(b"01");
-    rom[0xb2] = 0x96;
-    let sum = rom[0xa0..0xbd].iter().fold(0u8, |a, b| a.wrapping_add(*b));
-    rom[0xbd] = 0u8.wrapping_sub(sum).wrapping_sub(0x19);
-    for (i, w) in CODE.iter().enumerate() {
-        let o = 0xc0 + i * 4;
-        rom[o..o + 4].copy_from_slice(&w.to_le_bytes());
-    }
-    let p = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sram-shrink.gba");
-    std::fs::write(&p, rom).expect("write sram rom");
-    p
-}
-
 /// A state that shrinks after its size was learned: here a save chip mGBA detected on first use. `serialize` is exact whatever came before, because a padded
 /// state is refused by mGBA's link loader, which a host's pair is sent to; only run-ahead's own
 /// save, which comes back into this same core, may carry the padding.
@@ -290,7 +250,7 @@ fn on_mgba_a_save_after_the_state_shrank_is_exact() {
         eprintln!("no vendored mGBA core, skipping");
         return;
     };
-    let rom = sram_rom();
+    let rom = common::sram_rom();
     let mut core = LibretroCore::open(&dylib).expect("vendored core is present but would not open");
     core.load(&rom).expect("mGBA refused the rom");
     for _ in 0..2 {
