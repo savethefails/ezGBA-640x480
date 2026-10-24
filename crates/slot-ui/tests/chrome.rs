@@ -1,8 +1,8 @@
 use slot_store::{Cart, Platform};
 use slot_ui::{
-    cart_box, draw_empty_slot, edge, housing, icon_box, opening, recess, Draw, Shelf, SlotChrome,
-    ALERT_PX, CART_H, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, MOUTH_H, OUT_H, OUT_W,
-    SNES_LABEL_H, SNES_LABEL_Y,
+    cart_box, draw_empty_slot, edge, housing, icon_box, opening, recess, Case, Draw, Shelf,
+    SlotChrome, ALERT_PX, CART_H, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, MOUTH_H, OUT_H,
+    OUT_W, SNES_LABEL_H, SNES_LABEL_Y,
 };
 
 /// Where a shelf of three or more stands its selected cart, which is what the chrome is handed
@@ -184,6 +184,8 @@ fn chrome_into(c: &Cart, seat: f32, out: &mut Vec<Draw>) {
         dim: 0.5,
         screen: 0.0,
         game: true,
+        case: Case::theme(),
+        whimsy: None,
     }
     .draw(out);
 }
@@ -209,6 +211,8 @@ fn a_cart_standing_off_centre_slides_across_as_it_goes_in() {
             dim: 0.0,
             screen: 0.0,
             game: false,
+            case: Case::theme(),
+            whimsy: None,
         }
         .draw(&mut out);
         quad(&out[cart_at(&out)]).x
@@ -246,6 +250,8 @@ fn draw_powering_on(t: f32, out: &mut Vec<Draw>) {
         dim: 0.0,
         screen: t,
         game: true,
+        case: Case::theme(),
+        whimsy: None,
     }
     .draw(out);
 }
@@ -682,6 +688,8 @@ fn the_empty_slot_is_the_same_slot_the_chrome_draws() {
         dim: 0.0,
         screen: 0.0,
         game: false,
+        case: Case::theme(),
+        whimsy: None,
     }
     .draw(&mut seated);
 
@@ -971,6 +979,8 @@ fn a_cart_taken_off_a_moving_row_starts_where_the_row_had_it() {
             dim: 0.0,
             screen: 0.0,
             game: false,
+            case: Case::theme(),
+            whimsy: None,
         }
         .draw(&mut out);
         out

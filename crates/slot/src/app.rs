@@ -13,12 +13,12 @@ use slot_store::{
     VOLUME_MAX,
 };
 use slot_ui::{
-    board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, ClockPicker,
-    Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
-    QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast,
-    BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
-    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    board_from, board_zoom, draw_backdrop, draw_dressed_slot, draw_footer, draw_sticker, ease,
+    grown, lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, Case,
+    ClockPicker, Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids,
+    PowerChoice, QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome,
+    TexId, Toast, Whimsy, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE,
+    HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -3171,12 +3171,20 @@ impl App {
                             SHELF_ROW_LOWER,
                             out,
                         );
-                        draw_empty_slot(out);
+                        draw_dressed_slot(&self.case(), out);
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
                     // art's title sits - is not the part the row sits directly over.
                     _ => {
-                        self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out);
+                        self.shelf().draw_row(
+                            None,
+                            self.shelf_shake(),
+                            0.0,
+                            1.0,
+                            SHELF_ROW_LOWER,
+                            out,
+                        );
+                        draw_dressed_slot(&self.case(), out);
                         slot_ui::draw_slot_name(
                             self.slot_letter_face,
                             self.slot_letter_alpha(),
@@ -3411,8 +3419,54 @@ impl App {
             dim,
             screen: self.screen,
             game: self.game_ready,
+            case: self.case_for(cart),
+            whimsy: self.whimsy(cart),
         }
         .draw(out);
+    }
+
+    /// The device's face for a cart: candy in a PICO-8 cart's plastic on the bright shelf, and
+    /// the theme's own for every real cart.
+    fn case_for(&self, cart: &Cart) -> Case {
+        if self.shelf().bright && cart.platform == Platform::Pico8 {
+            Case::candy(slot_ui::shell_for(cart).colour)
+        } else {
+            Case::theme()
+        }
+    }
+
+    /// The face as the row stands: the carts either side of the middle of the screen, blended
+    /// by how far between them it is, so the machine changes plastic as the row slides.
+    fn case(&self) -> Case {
+        let shelf = self.shelf();
+        let Some((a, b, t)) = shelf.at_middle() else {
+            return Case::theme();
+        };
+        let (Some(a), Some(b)) = (shelf.carts.get(a), shelf.carts.get(b)) else {
+            return Case::theme();
+        };
+        self.case_for(a).mix(self.case_for(b), t)
+    }
+
+    /// A PICO-8 cart's fantasy over its insert or eject. A cart already in the slot at boot
+    /// made no movement, so it gets none.
+    fn whimsy(&self, cart: &Cart) -> Option<Whimsy> {
+        if cart.platform != Platform::Pico8 {
+            return None;
+        }
+        let (ejecting, t) = match &self.phase {
+            Phase::Inserting {
+                t, resumed: false, ..
+            } => (false, *t),
+            Phase::Ejecting { t, .. } => (true, *t),
+            _ => return None,
+        };
+        Some(Whimsy {
+            colour: slot_ui::shell_for(cart).colour,
+            ejecting,
+            t,
+            travel_s: if ejecting { EJECT_S } else { SEATED_AT },
+        })
     }
 
     /// Whether the cart on its way back out is carrying the refusal symbol.

@@ -504,6 +504,19 @@ impl Shelf {
         (OUT_W as f32 / 2.0 + offset * PITCH - w * scale / 2.0, scale)
     }
 
+    /// The two carts either side of the middle of the screen as the row stands this frame, and
+    /// how far the middle is from the first to the second: `(i, i, 0.0)` on a settled row.
+    pub fn at_middle(&self) -> Option<(usize, usize, f32)> {
+        let n = self.carts.len() as i32;
+        if n == 0 {
+            return None;
+        }
+        let c = self.scroll - self.scroll_target();
+        let f = c.floor();
+        let a = (self.index as i32 + f as i32).rem_euclid(n);
+        Some((a as usize, ((a + 1) % n) as usize, c - f))
+    }
+
     pub fn update(&mut self, dt: f32) {
         let accel = -2.0 * OMEGA * self.vel - OMEGA * OMEGA * (self.scroll - self.scroll_target());
         self.vel += accel * dt;

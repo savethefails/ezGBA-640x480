@@ -8,6 +8,7 @@ mod board;
 mod cart;
 mod clock;
 mod draw;
+mod fantasy;
 mod footer;
 mod hud;
 mod icon;
@@ -48,6 +49,7 @@ pub use cart::{
 };
 pub use clock::{clock_label, date_time_text, hhmm, set_clock_hint_face, ClockPicker, Field};
 pub use draw::{Draw, TexId, OUT_H, OUT_W};
+pub use fantasy::{Case, Whimsy, PICO8_PALETTE};
 pub use footer::{draw_footer, Printed};
 pub use hud::{
     badge_at, ff_badge, FfState, Hud, HudKind, LinkBadge, Millis, ALARM_BAND_H, HUD_ICON_PX,
@@ -80,8 +82,8 @@ pub use shell::{
 };
 pub use silhouette::{gb_silhouette, silhouette, GbShell};
 pub use slot_chrome::{
-    draw_empty_slot, draw_slot_name, ease, edge, housing, opening, recess, scrim, set_theme, theme,
-    SlotChrome, ALERT_PX, LIP_H, MOUTH_H, MOUTH_W,
+    draw_dressed_slot, draw_empty_slot, draw_slot_name, ease, edge, housing, opening, recess,
+    scrim, set_theme, theme, SlotChrome, ALERT_PX, LIP_H, MOUTH_H, MOUTH_W,
 };
 pub use starting::{stamp_starting, PillAt};
 pub use sticker::{

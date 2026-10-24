@@ -171,4 +171,24 @@ fn render_pico8_shelf() {
     input.0.push_back(vec![RawEvent::Up(Btn::Right)]);
     run(&mut f, &mut input, 60);
     composed(&mut f, &mut c, "second");
+    // In, and out again, every frame of both. With no PICO-8 core on the machine the game is the
+    // mock's test pattern.
+    if std::env::var("SCRATCH_INSERT").is_err() {
+        return;
+    }
+    input.0.push_back(vec![RawEvent::Down(Btn::A)]);
+    input.0.push_back(vec![RawEvent::Up(Btn::A)]);
+    for i in 0..60 {
+        run(&mut f, &mut input, 1);
+        composed(&mut f, &mut c, &format!("insert-{i:03}"));
+    }
+    // MENU held: out it comes.
+    input.0.push_back(vec![RawEvent::Down(Btn::Menu)]);
+    for i in 0..80 {
+        run(&mut f, &mut input, 1);
+        if i == 6 {
+            input.0.push_back(vec![RawEvent::Up(Btn::Menu)]);
+        }
+        composed(&mut f, &mut c, &format!("eject-{i:03}"));
+    }
 }

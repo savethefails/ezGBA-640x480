@@ -23,8 +23,8 @@ use slot_power::SimPlatform;
 use slot_store::{Cart, Platform as CartPlatform};
 use slot_ui::{
     bright_backdrop_face, cart_box, cart_face, clean_label, edge, housing, label_colour, mark_at,
-    mark_box, opening, recess, rest_y, Draw, SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H,
-    LABEL_Y, PLATE_H,
+    mark_box, opening, recess, rest_y, Case, Draw, SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y,
+    LABEL_H, LABEL_Y, PLATE_H,
 };
 
 /// One batch of events per poll, and nothing once they run out.
@@ -683,6 +683,8 @@ fn both_cartridges_go_into_the_slot_at_their_own_size() {
                 dim: 0.0,
                 screen: 0.0,
                 game: false,
+                case: Case::theme(),
+                whimsy: None,
             }
             .draw(&mut out);
             let px = frame(&mut c, &out, &format!("insert-{name}-{beat}"));
@@ -781,6 +783,8 @@ fn no_frame_of_the_travel_jumps_further_than_the_cartridge_is_tall() {
                     dim: 0.0,
                     screen: 0.0,
                     game: false,
+                    case: Case::theme(),
+                    whimsy: None,
                 }
                 .draw(&mut out);
                 out.iter()

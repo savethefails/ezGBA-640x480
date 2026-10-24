@@ -5,6 +5,7 @@ use slot_store::Cart;
 use slot_store::Theme;
 
 use crate::cart::{cart_box, label_colour, label_text, CART_W};
+use crate::fantasy::{draw_confetti, draw_trim, glow, pose, Case, Whimsy};
 use crate::icon::icon_box;
 use crate::shelf::{foot_y, rest_y};
 
@@ -199,27 +200,68 @@ pub struct SlotChrome<'a> {
     /// Whether there is a picture to show at all. False while the core is still loading,
     /// where the game texture still holds whatever the last cart left in it.
     pub game: bool,
+    /// The colours the device's face is drawn in: `Case::theme()` for the card's own palette.
+    pub case: Case,
+    /// A PICO-8 cart's fantasy, played over the travel; `None` for a real cart, which goes in as
+    /// plastic does.
+    pub whimsy: Option<Whimsy>,
 }
 
 impl SlotChrome<'_> {
     pub fn draw(&self, out: &mut Vec<Draw>) {
         let seat = self.seat.clamp(0.0, 1.0);
         let dim = self.dim.clamp(0.0, 1.0);
+        // When the confetti flies and the slot flashes, in seconds into the travel.
+        let burst = self.whimsy.map(|w| {
+            let at = if w.ejecting { 0.25 } else { CATCH_OUT };
+            at * w.travel_s
+        });
         if dim > 0.0 {
+            // A PICO-8 cart's screen goes down into its own colour, not into black.
+            let [r, g, b, _] = match &self.whimsy {
+                Some(w) => Case::candy(w.colour).opening,
+                None => [0.0, 0.0, 0.0, 1.0],
+            };
             out.push(Draw::Rect {
                 x: 0.0,
                 y: 0.0,
                 w: OUT_W as f32,
                 h: OUT_H as f32,
-                colour: [0.0, 0.0, 0.0, dim],
+                colour: [r, g, b, dim],
             });
         }
 
         let chrome = 1.0 - self.screen.clamp(0.0, 1.0);
 
+        // A PICO-8 cart lights the slot in its own colour as it is gulped or spat.
+        let mut case = self.case;
+        if let (Some(w), Some(burst)) = (&self.whimsy, burst) {
+            let g = glow(w, burst);
+            let [r, gr, b] = w.colour.map(|v| v as f32 / 255.0);
+            case.opening = case
+                .mix(
+                    Case {
+                        opening: [r, gr, b, 1.0],
+                        edge: [1.0; 4],
+                        ..case
+                    },
+                    g,
+                )
+                .opening;
+            case.edge = case
+                .mix(
+                    Case {
+                        edge: [1.0; 4],
+                        ..case
+                    },
+                    g,
+                )
+                .edge;
+        }
+
         // Behind the cart: the opening. It is the inside of the machine, so the cart fills it
         // on the way through rather than sliding behind a painted bar.
-        draw_slot_back(chrome, out);
+        draw_slot_back(&case, chrome, out);
 
         // The cartridge's own box, whatever platform it is for. A cart is an object and goes
         // into the slot at the size it is: a pak drawn in a GBA cart's quad is squashed to
@@ -246,11 +288,30 @@ impl SlotChrome<'_> {
         let x = self.rest + (seated_x(cw) - self.rest) * travel;
         let y = stands + (SEATED_Y - stands) * travel;
         let (cw, ch) = (w0 + (cw - w0) * travel, h0 + (ch - h0) * travel);
+        // A PICO-8 cart's squash, wiggle and spin, about its foot so it lands on what it lands
+        // on. A real cart's pose is the identity, and it is drawn as it always was.
+        let (x, y, cw, ch, turn) = match &self.whimsy {
+            Some(w) => {
+                let p = pose(w, seat, CATCH_IN, CATCH_OUT);
+                let (pw, ph) = (cw * p.sx, ch * p.sy);
+                (x + (cw - pw) / 2.0, y + (ch - ph) - p.lift, pw, ph, p.turn)
+            }
+            None => (x, y, cw, ch, 0.0),
+        };
         // The cart fades with the case rather than through it. A seated cart is really in the
         // slot and has to be drawn, so the whole device face has to leave as one object as the
         // picture takes over. Held at full while the screen is off, which is all of the travel.
         let cart_alpha = if seat >= 1.0 { chrome } else { 1.0 };
         out.push(match self.face {
+            Some(tex) if turn != 0.0 => Draw::Turned {
+                x,
+                y,
+                w: cw,
+                h: ch,
+                tex,
+                alpha: cart_alpha,
+                turn,
+            },
             Some(tex) => Draw::Tex {
                 x,
                 y,
@@ -299,7 +360,12 @@ impl SlotChrome<'_> {
 
         // In front of the cart: the plastic. This is what occludes, and it is what the cart
         // disappears behind.
-        draw_slot_front(chrome, out);
+        draw_slot_front(&case, chrome, out);
+
+        // Out of the slot and over everything: the gulp's confetti, or the spit's sparkles.
+        if let (Some(w), Some(burst)) = (&self.whimsy, burst) {
+            draw_confetti(w, (MOUTH_X, MOUTH_W), LIP_Y, burst, out);
+        }
     }
 }
 
@@ -317,28 +383,28 @@ fn band(x: f32, y: f32, w: f32, h: f32, c: [f32; 4], alpha: f32) -> Draw {
 /// draws behind the cart, because all of it is a hole. The scoop especially: it is a
 /// cut-away in the near plastic, and the whole point of it is that you can see and grip the
 /// cart through it. Painted in front, it was a dark arc lying on top of the cart.
-fn draw_slot_back(alpha: f32, out: &mut Vec<Draw>) {
+fn draw_slot_back(case: &Case, alpha: f32, out: &mut Vec<Draw>) {
     // The top bar of the slot goes back here with the hole it spans. It is the front edge of
     // the case and a cart really does pass behind it, but at two pixels over a 240 px cart
     // all it does is draw a line across the label, and the cart reads as sliding behind a bar
     // rather than into an opening.
-    out.push(band(BAY_X, BAND_Y, BAY_W, LIP_H, housing(), alpha));
-    out.push(band(MOUTH_X, BAND_Y, MOUTH_W, LIP_H, edge(), alpha));
-    out.push(band(BAY_X, BAY_Y, BAY_W, RECESS_H, recess(), alpha));
-    out.push(band(MOUTH_X, SLIT_Y, MOUTH_W, SLIT_H, opening(), alpha));
+    out.push(band(BAY_X, BAND_Y, BAY_W, LIP_H, case.housing, alpha));
+    out.push(band(MOUTH_X, BAND_Y, MOUTH_W, LIP_H, case.edge, alpha));
+    out.push(band(BAY_X, BAY_Y, BAY_W, RECESS_H, case.recess, alpha));
+    out.push(band(MOUTH_X, SLIT_Y, MOUTH_W, SLIT_H, case.opening, alpha));
     for_each_scoop_span(|x, w, depth| {
-        out.push(band(x, SCOOP_Y, w, depth, opening(), alpha));
+        out.push(band(x, SCOOP_Y, w, depth, case.opening, alpha));
     });
 }
 
 /// The plastic. Pieces around the hole, never over it: this is the only thing that occludes
 /// the cart, and what it leaves uncovered is exactly the shape of the recess.
-fn draw_slot_front(alpha: f32, out: &mut Vec<Draw>) {
+fn draw_slot_front(case: &Case, alpha: f32, out: &mut Vec<Draw>) {
     let w = OUT_W as f32;
     let right = BAY_X + BAY_W;
     let floor = SCOOP_Y + SCOOP_D + RIM_W;
-    out.push(band(0.0, BAND_Y, BAY_X, MOUTH_H, housing(), alpha));
-    out.push(band(right, BAND_Y, w - right, MOUTH_H, housing(), alpha));
+    out.push(band(0.0, BAND_Y, BAY_X, MOUTH_H, case.housing, alpha));
+    out.push(band(right, BAND_Y, w - right, MOUTH_H, case.housing, alpha));
 
     // Beside the arc, where the bay is wider than the scoop.
     let near = CX - SCOOP_W / 2.0;
@@ -347,7 +413,7 @@ fn draw_slot_front(alpha: f32, out: &mut Vec<Draw>) {
         SCOOP_Y,
         near - BAY_X,
         floor - SCOOP_Y,
-        housing(),
+        case.housing,
         alpha,
     ));
     let far = CX + SCOOP_W / 2.0;
@@ -356,7 +422,7 @@ fn draw_slot_front(alpha: f32, out: &mut Vec<Draw>) {
         SCOOP_Y,
         right - far,
         floor - SCOOP_Y,
-        housing(),
+        case.housing,
         alpha,
     ));
 
@@ -364,12 +430,20 @@ fn draw_slot_front(alpha: f32, out: &mut Vec<Draw>) {
     // highlight goes last so nothing is painted over it.
     for_each_scoop_span(|x, w, depth| {
         let top = SCOOP_Y + depth + RIM_W;
-        out.push(band(x, top, w, floor - top, housing(), alpha));
+        out.push(band(x, top, w, floor - top, case.housing, alpha));
     });
-    out.push(band(0.0, floor, w, OUT_H as f32 - floor, housing(), alpha));
+    out.push(band(
+        0.0,
+        floor,
+        w,
+        OUT_H as f32 - floor,
+        case.housing,
+        alpha,
+    ));
     for_each_scoop_span(|x, w, depth| {
-        out.push(band(x, SCOOP_Y + depth, w, RIM_W, edge(), alpha));
+        out.push(band(x, SCOOP_Y + depth, w, RIM_W, case.edge, alpha));
     });
+    draw_trim(case, BAY_X, right, BAND_Y, alpha, out);
 }
 
 /// The arc, walked by column and merged into spans of equal depth, so the hole and the
@@ -413,10 +487,15 @@ pub fn draw_slot_name(name: crate::Printed, alpha: f32, out: &mut Vec<Draw>) {
 }
 
 pub fn draw_empty_slot(out: &mut Vec<Draw>) {
+    draw_dressed_slot(&Case::theme(), out);
+}
+
+/// The same, in `case`'s colours.
+pub fn draw_dressed_slot(case: &Case, out: &mut Vec<Draw>) {
     // Both halves. The recess is a hole in the front pieces, so a slot drawn from the front
     // alone is a hole onto the backdrop rather than an opening in a device.
-    draw_slot_back(1.0, out);
-    draw_slot_front(1.0, out);
+    draw_slot_back(case, 1.0, out);
+    draw_slot_front(case, 1.0, out);
 }
 
 /// The travel, in three parts: the cart falls to the lip, rests on it, then is pushed
