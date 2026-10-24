@@ -11,13 +11,13 @@ use slot_power::{Platform, Power};
 // cartridges were made for.
 use slot_store::{format_stamp, Pico8Bezel, Platform as CartPlatform};
 use slot_ui::{
-    arrows_hint_face, badge_face, bezel_face, cart_face, cart_face_with, cart_shadow, chip_face,
-    chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face, icon_face, mark_face,
-    menu_face, photo_face, pico8_cart_shadow, quick_caret_face, quick_label_face,
-    quick_legend_faces, quick_value_face, set_clock_hint_face, snes_cart_shadow, socket_face,
-    sticker_face, title_face, toast_face, wallpaper_face, word_face, CartFace, GbShell, Icon,
-    LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields, Toast, UndoFace,
-    ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    arrows_hint_face, badge_face, bezel_face, bright_backdrop_face, cart_face, cart_face_with,
+    cart_shadow, chip_face, chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face,
+    icon_face, mark_face, menu_face, photo_face, pico8_cart_shadow, quick_caret_face,
+    quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face, snes_cart_shadow,
+    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, CartFace,
+    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
+    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -301,6 +301,10 @@ impl Frontend {
             compositor.create_texture_nearest(OUT_W, OUT_H, &rgba)
         });
         self.session.app_mut().set_bezel_faces(bezels);
+        // The bright shelf's ground, drawn whenever the card carries no wallpaper of its own.
+        let ground = bright_backdrop_face();
+        let ground = compositor.create_texture(OUT_W, OUT_H, &ground);
+        self.session.app_mut().set_bright_ground(ground);
         self.upload_wallpaper(compositor);
     }
 

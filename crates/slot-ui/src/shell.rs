@@ -83,10 +83,6 @@ const GB_CODES: &[(&str, Shell)] = &[
     ("BMG", DUAL_MODE_SHELL),                          // Metal Gear Solid, Colour-only in black
 ];
 
-/// The faux PICO-8 cart: PICO-8's own dark blue, from its 16 colour palette, so the cart reads
-/// as PICO-8's from across the room.
-pub const PICO8_SHELL: Shell = shell([0x1d, 0x2b, 0x53], Finish::Solid);
-
 /// Paks from before the code field, keyed on the 11-byte title. Only outside Japan: Japan's
 /// copies share the title and shipped in the flag's plastic.
 const GB_OVERSEAS_TITLES: &[(&str, Shell)] = &[
@@ -123,8 +119,34 @@ pub fn shell_for(cart: &Cart) -> Shell {
         Platform::Gba => gba_shell_for(&slot_store::header_ids(cart).1),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
         Platform::Snes => snes_shell_for(&cart.rom),
-        Platform::Pico8 => PICO8_SHELL,
+        Platform::Pico8 => pico8_shell_for(&cart.stem),
     }
+}
+
+/// Clear candy plastic, one colour per game, after PICO-8's own brights: a shelf of PICO-8 carts
+/// is a row of different colours rather than one dark blue repeated. Picked off the file name's
+/// hash, so a game is the same colour on every boot.
+pub const PICO8_CANDY: [[u8; 3]; 8] = [
+    [0x8a, 0x4f, 0xff], // purple
+    [0x19, 0xc2, 0xb0], // teal
+    [0x2a, 0x5c, 0xff], // blue
+    [0xff, 0x5f, 0xa8], // pink
+    [0xff, 0x8a, 0x1f], // orange
+    [0x36, 0xd0, 0x6a], // green
+    [0xff, 0x3d, 0x5a], // red
+    [0xff, 0xd2, 0x3a], // yellow
+];
+
+pub fn pico8_shell_for(stem: &str) -> Shell {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in stem.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    shell(
+        PICO8_CANDY[(h % PICO8_CANDY.len() as u64) as usize],
+        Finish::Translucent,
+    )
 }
 
 /// `code` is the four character game code.

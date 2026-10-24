@@ -27,7 +27,7 @@ mod sticker;
 pub mod text;
 mod toast;
 
-pub use backdrop::{draw_backdrop, wallpaper_face};
+pub use backdrop::{bright_backdrop_face, draw_backdrop, wallpaper_face};
 pub use barcode::{code39, CODE39_NARROW, CODE39_WIDE};
 pub use battery::{draw_gauge, BOLT_PX, GAUGE_H, GAUGE_W, WALL};
 pub use bezel::bezel_face;

@@ -8,7 +8,7 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
-    Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, SlotState,
+    Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, ShelfLook, SlotState,
     SnesPicture, StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
     VOLUME_MAX,
 };
@@ -125,6 +125,10 @@ const CORE_PICKER_RECEDE: f32 = 0.26;
 /// `SIDE_ALPHA * (1 - CORE_PICKER_RECEDE)` = 0.55 * 0.74 = 0.407, and the mockup has it at a
 /// quarter: 0.25 / 0.407 = 0.614.
 const CORE_PICKER_DIM: f32 = 0.614;
+/// The same quarter on the bright shelf, whose side carts stand at full strength rather than at
+/// `SIDE_ALPHA`: 0.25 / 0.74 = 0.338. Over the paper that is the neighbours fading back rather
+/// than darkening.
+const CORE_PICKER_DIM_BRIGHT: f32 = 0.338;
 /// The legend's line, under the open cart and clear of the case band.
 const CORE_LEGEND_Y: f32 = 386.0;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
@@ -620,6 +624,9 @@ pub struct App {
     /// The PICO-8 bezels, Quiet, Palette and Soft, drawn at boot and shown behind a PICO-8 game
     /// as `Look::pico8_bezel` says.
     bezel_faces: Option<[TexId; 3]>,
+    /// The bright shelf's ground, drawn at boot: what the shelf stands on when the card carries
+    /// no wallpaper and the theme has it bright.
+    bright_ground: Option<TexId>,
     /// What is printed on the case: the battery's percent, and the time as it stands.
     battery_percent: slot_ui::Printed,
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
@@ -791,6 +798,7 @@ impl App {
             about_a_down: None,
             wallpaper: None,
             bezel_faces: None,
+            bright_ground: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
             mark_faces: Vec::new(),
@@ -838,6 +846,10 @@ impl App {
         let carts = scan(root).unwrap_or_default();
         crate::boot_time::mark("scan");
         let mut app = App::new(carts);
+        // Bright until a wallpaper arrives: `set_wallpaper` turns it back off.
+        for (_, shelf) in &mut app.shelves {
+            shelf.bright = theme.shelf == ShelfLook::Bright;
+        }
         app.look = look;
         app.menu = theme.menu;
         app.root = Some(root.to_path_buf());
@@ -1204,8 +1216,20 @@ impl App {
         self.bezel_faces = Some(faces);
     }
 
+    /// The bright ground, while the shelf is dressed bright.
+    fn ground(&self) -> Option<TexId> {
+        self.bright_ground.filter(|_| self.shelf().bright)
+    }
+
+    pub fn set_bright_ground(&mut self, face: TexId) {
+        self.bright_ground = Some(face);
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
+        for (_, shelf) in &mut self.shelves {
+            shelf.bright = false;
+        }
     }
 
     /// Which wallpaper this session shows, by file name, kept with the shelf at power off.
@@ -3117,7 +3141,7 @@ impl App {
             }
             .draw(out),
             Phase::Shelf => {
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 // Out of the way of the lid, which lifts into the same space.
                 let open = self
                     .core_picker_shown()
@@ -3133,7 +3157,12 @@ impl App {
                         let open = ease(picker.openness(self.now()));
                         // Dimmed by as much of the open as has happened, so the dark arrives
                         // with the lid coming off and leaves with it going back on.
-                        let dim = 1.0 + (CORE_PICKER_DIM - 1.0) * open;
+                        let full = if self.shelf().bright {
+                            CORE_PICKER_DIM_BRIGHT
+                        } else {
+                            CORE_PICKER_DIM
+                        };
+                        let dim = 1.0 + (full - 1.0) * open;
                         self.shelf().draw_row(
                             Some(stem),
                             0.0,
@@ -3167,7 +3196,7 @@ impl App {
                 // The same ground the shelf stands on, scrim and all. The label is a dark
                 // object and the scrim is what a dark object needs to read over a
                 // photograph — it is there for the carts for exactly the same reason.
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 draw_sticker(self.sticker_face, out);
                 return;
             }
@@ -3186,7 +3215,7 @@ impl App {
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
                 if !resumed {
-                    draw_backdrop(self.wallpaper, out);
+                    draw_backdrop(self.wallpaper, self.ground(), out);
                     // Gone by the time the cart is in, the way the row recedes.
                     self.draw_box_art(1.0 - self.seat(), out);
                     self.shelf()
@@ -3199,7 +3228,7 @@ impl App {
             // other way. Darkening on the way out as well as on the way in was the screen
             // playing the same movement twice rather than reversing it.
             Phase::Ejecting { cart, .. } => {
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 self.draw_box_art(1.0 - self.seat(), out);
                 self.shelf()
                     .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);

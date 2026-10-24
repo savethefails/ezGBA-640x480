@@ -31,6 +31,6 @@ pub use stamp::{
     civil_from_days, days_from_civil, days_in_month, format_stamp, parse_stamp, stamp_now,
 };
 pub use theme::{
-    write_theme_setting, Aspect, BootPicture, ColourDepth, LcdGrid, Pico8Bezel, Scaling,
+    write_theme_setting, Aspect, BootPicture, ColourDepth, LcdGrid, Pico8Bezel, Scaling, ShelfLook,
     SnesPicture, Theme, Word, THEME_FILE,
 };
