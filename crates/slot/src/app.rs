@@ -649,6 +649,8 @@ pub struct App {
     /// Whether the core behind the slot has published anything yet. Pushed in, because only
     /// whoever owns the emulator knows: the compositor still holds the last cart's frame.
     game_ready: bool,
+    /// The game has shown a frame that is not all black, since it was last not ready.
+    game_lit: bool,
     /// Accumulated from `update`, which is the only clock the app has. Milliseconds, since
     /// that is what the HUD fade is stated in.
     clock: f64,
@@ -809,6 +811,7 @@ impl App {
             hud: Hud::new(),
             screen: 0.0,
             game_ready: false,
+            game_lit: false,
             clock: 0.0,
             power: None,
             dozed_at: 0,
@@ -2795,6 +2798,20 @@ impl App {
 
     pub fn set_game_ready(&mut self, ready: bool) {
         self.game_ready = ready;
+        if !ready {
+            self.game_lit = false;
+        }
+    }
+
+    /// Whether the game has shown anything but black yet. See `mark_game_lit`.
+    pub fn game_lit(&self) -> bool {
+        self.game_lit
+    }
+
+    /// The game's first frame with a picture in it has reached the screen. Until then the bezel
+    /// stays down, so it never frames a black square while the game is still starting.
+    pub fn mark_game_lit(&mut self) {
+        self.game_lit = true;
     }
 
     pub fn game_ready(&self) -> bool {
@@ -3244,7 +3261,13 @@ impl App {
             }
             // The slot stays on screen until the picture behind it has finished arriving,
             // so the game blooms out of a lit lip rather than replacing it.
-            Phase::Playing { cart } if self.screen < 1.0 => self.chrome(cart, 0.0, out),
+            // The bezel comes up with the picture rather than after it, under the case fading out.
+            Phase::Playing { cart } if self.screen < 1.0 => {
+                if self.game_visible() {
+                    self.push_bezel(self.screen, out);
+                }
+                self.chrome(cart, 0.0, out)
+            }
             Phase::Playing { .. } => self.push_game(out),
             // The paused game stays underneath, covered by the screenshot the switcher
             // draws over the whole screen.
@@ -3372,21 +3395,24 @@ impl App {
     /// picture; the chrome puts it in the same list, in front of the cart.
     fn push_game(&self, out: &mut Vec<Draw>) {
         if self.game_visible() {
-            self.push_bezel(out);
+            self.push_bezel(1.0, out);
             out.push(Draw::Game);
         }
     }
 
     /// The bars beside a PICO-8 game, under it: the game's square is drawn over the bezel's
     /// black middle. On a square panel the game fills it and covers the bezel whole.
-    fn push_bezel(&self, out: &mut Vec<Draw>) {
+    fn push_bezel(&self, alpha: f32, out: &mut Vec<Draw>) {
         let at = match self.look.pico8_bezel {
             Pico8Bezel::Off => return,
             Pico8Bezel::Quiet => 0,
             Pico8Bezel::Palette => 1,
             Pico8Bezel::Soft => 2,
         };
-        let Some(faces) = self.bezel_faces.filter(|_| self.core == Core::Pico8) else {
+        let Some(faces) = self
+            .bezel_faces
+            .filter(|_| self.core == Core::Pico8 && self.game_lit)
+        else {
             return;
         };
         out.push(Draw::Tex {
@@ -3395,7 +3421,7 @@ impl App {
             w: OUT_W as f32,
             h: OUT_H as f32,
             tex: faces[at],
-            alpha: 1.0,
+            alpha,
         });
     }
 

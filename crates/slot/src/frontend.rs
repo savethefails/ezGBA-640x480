@@ -430,6 +430,13 @@ impl Frontend {
         slot_gfx::set_fit(self.session.app().fit());
         compositor.begin_frame();
         if let Some(frame) = self.session.frame() {
+            // The first frame with anything in it, which is when the bezel may come up: a core
+            // still starting, PICO-8's above all while it loads a save, publishes black first.
+            // Here rather than where the core publishes, so the bezel arrives on the very frame
+            // the picture does.
+            if !self.session.app().game_lit() && has_picture(&frame) {
+                self.session.app_mut().mark_game_lit();
+            }
             compositor.upload_game(&frame, frame.size());
             crate::latency::drawn();
         }
@@ -921,8 +928,22 @@ impl UiFaces {
     }
 }
 
+/// Whether an XRGB8888 frame has anything in it but black.
+fn has_picture(xrgb: &[u8]) -> bool {
+    xrgb.chunks_exact(4).any(|p| p[0] | p[1] | p[2] != 0)
+}
+
 #[cfg(test)]
 mod tests {
+    /// Black, whatever the padding byte holds, is no picture; one lit channel anywhere is.
+    #[test]
+    fn a_black_frame_is_no_picture_and_one_lit_pixel_is() {
+        let mut frame = [0u8, 0, 0, 0xff].repeat(128 * 128);
+        assert!(!super::has_picture(&frame));
+        frame[4 * 9000 + 1] = 0x10;
+        assert!(super::has_picture(&frame));
+    }
+
     use super::*;
 
     /// The thread builds one face for every entry the app's setters index by, each with ink in

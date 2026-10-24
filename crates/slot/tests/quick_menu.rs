@@ -743,6 +743,13 @@ fn the_bezel_is_drawn_under_a_pico8_game_and_only_there() {
         }
         a.set_bezel_faces([900, 901, 902].map(TexId::from_raw));
         a.set_core(core);
+        // Not while the game has shown nothing but black: a PICO-8 save still loading.
+        let dark = frame(&a);
+        assert!(
+            !(900..903).any(|id| placed(&dark, id).is_some()),
+            "the bezel came up around a game that has shown nothing yet"
+        );
+        a.mark_game_lit();
         let out = frame(&a);
         let game = out
             .iter()
