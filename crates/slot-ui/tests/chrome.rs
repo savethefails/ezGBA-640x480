@@ -1026,3 +1026,52 @@ fn a_cart_taken_off_a_moving_row_starts_where_the_row_had_it() {
         last = q;
     }
 }
+
+/// While the case fades in front of a seated cart, every piece of plastic is drawn solid in the
+/// ground's colour first, after the cart and under the faded piece. Faded alone over a faded
+/// cart, the plastic let the part of the cart it hides show through it, and the case left before
+/// the cart did.
+#[test]
+fn a_fading_case_hides_the_cart_it_covers() {
+    let c = cart();
+    let mut out = Vec::new();
+    SlotChrome {
+        cart: &c,
+        face: None,
+        rest: CENTRED,
+        scale: 1.0,
+        lower: 0.0,
+        seat: 1.0,
+        alert: None,
+        dim: 0.0,
+        screen: 0.5,
+        game: true,
+        case: Case::theme(),
+        whimsy: None,
+    }
+    .draw(&mut out);
+    let rect = |d: &Draw| match *d {
+        Draw::Rect { x, y, w, h, colour } => Some(([x, y, w, h], colour[3])),
+        _ => None,
+    };
+    let cart_at = out
+        .iter()
+        .position(|d| rect(d).is_some_and(|(q, _)| q[2] == CART_W as f32 && q[3] == CART_H as f32))
+        .expect("no seated cart in the list");
+    let after: Vec<_> = out[cart_at + 1..].iter().filter_map(rect).collect();
+    let faded: Vec<_> = after
+        .iter()
+        .filter(|(_, a)| (*a - 0.5).abs() < 1e-4)
+        .collect();
+    assert!(!faded.is_empty(), "nothing of the case is fading");
+    for (q, _) in &faded {
+        let solid_first = after
+            .iter()
+            .take_while(|(r, a)| !(r == q && (*a - 0.5).abs() < 1e-4))
+            .any(|(r, a)| r == q && *a == 1.0);
+        assert!(
+            solid_first,
+            "the faded piece at {q:?} has nothing solid under it"
+        );
+    }
+}

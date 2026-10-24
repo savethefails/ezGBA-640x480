@@ -216,12 +216,12 @@ impl SlotChrome<'_> {
             let at = if w.ejecting { 0.25 } else { CATCH_OUT };
             at * w.travel_s
         });
+        // What the screen goes down into: black behind a real cart, and behind a PICO-8 cart on
+        // the bright shelf a deep shade of its own colour, as far as the case is its candy.
+        let candy = self.case.trim.clamp(0.0, 1.0);
+        let [r, g, b] = [0, 1, 2].map(|i| self.case.opening[i] * candy);
+        let ground = [r, g, b, 1.0];
         if dim > 0.0 {
-            // A PICO-8 cart's screen goes down into its own colour, not into black.
-            let [r, g, b, _] = match &self.whimsy {
-                Some(w) => Case::candy(w.colour).opening,
-                None => [0.0, 0.0, 0.0, 1.0],
-            };
             out.push(Draw::Rect {
                 x: 0.0,
                 y: 0.0,
@@ -232,6 +232,18 @@ impl SlotChrome<'_> {
         }
 
         let chrome = 1.0 - self.screen.clamp(0.0, 1.0);
+        // The same ground under the picture as it comes up, fading with the case, so the insert's
+        // last frame and the power on's first are the same colour. Black needs no drawing: it is
+        // what the screen is cleared to.
+        if dim == 0.0 && seat >= 1.0 && candy > 0.0 && chrome > 0.0 {
+            out.push(Draw::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: OUT_W as f32,
+                h: OUT_H as f32,
+                colour: [r, g, b, chrome],
+            });
+        }
 
         // A PICO-8 cart lights the slot in its own colour as it is gulped or spat.
         let mut case = self.case;
@@ -350,6 +362,22 @@ impl SlotChrome<'_> {
                 tex,
                 alpha,
             });
+        }
+
+        // The plastic in front of a seated cart, in the ground's colour and solid, while the case
+        // fades. Faded alone, the plastic and the cart are each part see-through, and the part of
+        // the cart the plastic hides showed through it: the case left before the cart did. With
+        // this under it, the case fades onto the ground and the cart shows only where the scoop
+        // shows it.
+        if seat >= 1.0 && chrome < 1.0 {
+            let hidden = Case {
+                housing: ground,
+                recess: ground,
+                opening: ground,
+                edge: ground,
+                trim: 0.0,
+            };
+            draw_slot_front(&hidden, 1.0, out);
         }
 
         // After the cart and before the housing: the panel is the front surface of the
