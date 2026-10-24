@@ -79,6 +79,54 @@ pub fn scaler() -> Scaler {
     }
 }
 
+/// The panel's colour stripes, for drawing the game by subpixel: which order they run in, and
+/// whether across or down. `Off` draws every channel for the middle of the pixel, as a scaler
+/// always has. Whichever the panel is, only it can say, so it comes from the card.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Subpixel {
+    #[default]
+    Off,
+    /// Red, green, blue, left to right.
+    Rgb,
+    /// Blue, green, red, left to right.
+    Bgr,
+    /// Red, green, blue, top to bottom: a panel mounted on its side.
+    VerticalRgb,
+    /// Blue, green, red, top to bottom.
+    VerticalBgr,
+}
+
+impl Subpixel {
+    /// Where the red stripe sits from the middle of a pixel, in pixels across and down; blue
+    /// is the same distance the other way.
+    pub fn red_at(self) -> [f32; 2] {
+        const THIRD: f32 = 1.0 / 3.0;
+        match self {
+            Subpixel::Off => [0.0, 0.0],
+            Subpixel::Rgb => [-THIRD, 0.0],
+            Subpixel::Bgr => [THIRD, 0.0],
+            Subpixel::VerticalRgb => [0.0, -THIRD],
+            Subpixel::VerticalBgr => [0.0, THIRD],
+        }
+    }
+}
+
+static SUBPIXEL: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_subpixel(subpixel: Subpixel) {
+    SUBPIXEL.store(subpixel as u8, Ordering::Relaxed);
+}
+
+pub fn subpixel() -> Subpixel {
+    match SUBPIXEL.load(Ordering::Relaxed) {
+        1 => Subpixel::Rgb,
+        2 => Subpixel::Bgr,
+        3 => Subpixel::VerticalRgb,
+        4 => Subpixel::VerticalBgr,
+        _ => Subpixel::Off,
+    }
+}
+
 /// ezGBA's LCD grid: a soft line on every game pixel edge, taking `gap` panel pixels' worth of
 /// light (across, down), with each game pixel's light given back so the picture is as bright as
 /// without it. `keep` is how strictly: 1.0 lightens a bright pixel's lines until its light fits

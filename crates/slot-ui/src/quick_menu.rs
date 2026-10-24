@@ -17,6 +17,7 @@ pub enum QuickRow {
     GridDepth,
     Scaler,
     Sharpness,
+    Subpixels,
     ColourDepth,
     RunAhead,
     SnesCore,
@@ -30,7 +31,7 @@ impl QuickRow {
     /// `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 13] = [
+    pub const ALL: [QuickRow; 14] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::SnesPicture,
@@ -39,6 +40,7 @@ impl QuickRow {
         QuickRow::GridDepth,
         QuickRow::Scaler,
         QuickRow::Sharpness,
+        QuickRow::Subpixels,
         QuickRow::ColourDepth,
         QuickRow::RunAhead,
         QuickRow::SnesCore,
@@ -61,6 +63,7 @@ impl QuickRow {
             QuickRow::GridDepth => "Grid Depth",
             QuickRow::Scaler => "Scaler",
             QuickRow::Sharpness => "Sharpness",
+            QuickRow::Subpixels => "Subpixels",
             QuickRow::ColourDepth => "Colour Depth",
             QuickRow::RunAhead => "Run-Ahead",
             QuickRow::SnesCore => "SNES Emulator",
@@ -131,10 +134,14 @@ pub enum QuickValue {
     Quiet,
     Palette,
     Soft,
+    SubRgb,
+    SubBgr,
+    SubVerticalRgb,
+    SubVerticalBgr,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 38] = [
+    pub const ALL: [QuickValue; 42] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -173,6 +180,10 @@ impl QuickValue {
         QuickValue::Quiet,
         QuickValue::Palette,
         QuickValue::Soft,
+        QuickValue::SubRgb,
+        QuickValue::SubBgr,
+        QuickValue::SubVerticalRgb,
+        QuickValue::SubVerticalBgr,
     ];
 
     /// The Sharpness row's steps, in the order the arrows walk them.
@@ -226,6 +237,10 @@ impl QuickValue {
             QuickValue::Quiet => "Quiet",
             QuickValue::Palette => "Palette",
             QuickValue::Soft => "Soft",
+            QuickValue::SubRgb => "RGB",
+            QuickValue::SubBgr => "BGR",
+            QuickValue::SubVerticalRgb => "RGB Vertical",
+            QuickValue::SubVerticalBgr => "BGR Vertical",
         }
     }
 
@@ -268,7 +283,7 @@ impl QuickValue {
 
 /// A size up from the power menu's rows: 30 px type on rows as tall as the space above the
 /// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34,
-/// thirteen at 32.
+/// thirteen at 32, fourteen at 29.
 /// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar
 /// at either.
 pub const QUICK_PITCH: f32 = {

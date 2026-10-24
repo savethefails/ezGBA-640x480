@@ -61,6 +61,22 @@ pub struct Theme {
     pub pico8_bezel: Pico8Bezel,
     /// `shelf bright` or `shelf classic`. See `ShelfLook`.
     pub shelf: ShelfLook,
+    /// `subpixel off`, `rgb`, `bgr`, `vertical-rgb` or `vertical-bgr`. See `SubpixelOrder`.
+    pub subpixel: SubpixelOrder,
+}
+
+/// The panel's colour stripes, for drawing the game a stripe at a time rather than a pixel at a
+/// time, as ClearType draws type: an edge lands on the nearest stripe, three times finer in the
+/// direction they run. Off until the card names the panel's order, since the wrong one fringes
+/// every edge with colour.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum SubpixelOrder {
+    #[default]
+    Off,
+    Rgb,
+    Bgr,
+    VerticalRgb,
+    VerticalBgr,
 }
 
 /// How the shelf is dressed when the card carries no wallpaper.
@@ -196,6 +212,16 @@ impl Word for ShelfLook {
     ];
 }
 
+impl Word for SubpixelOrder {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (SubpixelOrder::Off, "off"),
+        (SubpixelOrder::Rgb, "rgb"),
+        (SubpixelOrder::Bgr, "bgr"),
+        (SubpixelOrder::VerticalRgb, "vertical-rgb"),
+        (SubpixelOrder::VerticalBgr, "vertical-bgr"),
+    ];
+}
+
 impl Word for Aspect {
     const WORDS: &'static [(Self, &'static str)] =
         &[(Aspect::FourThree, "4:3"), (Aspect::ThreeTwo, "3:2")];
@@ -287,6 +313,7 @@ impl Default for Theme {
             snes_core: crate::Core::Snes9x2005,
             pico8_bezel: Pico8Bezel::Off,
             shelf: ShelfLook::Bright,
+            subpixel: SubpixelOrder::Off,
         }
     }
 }
@@ -328,6 +355,7 @@ impl Theme {
                 ("colour-depth", v) => set(&mut theme.colour_depth, v),
                 ("pico8-bezel", v) => set(&mut theme.pico8_bezel, v),
                 ("shelf", v) => set(&mut theme.shelf, v),
+                ("subpixel", v) => set(&mut theme.subpixel, v),
                 ("snes-core", "snes9x") => theme.snes_core = crate::Core::Snes9x,
                 ("snes-core", "snes9x2005" | "snes9x2005_plus") => {
                     theme.snes_core = crate::Core::Snes9x2005

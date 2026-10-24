@@ -36,6 +36,7 @@ pub struct GamePass {
     u_out: gl::types::GLint,
     u_scaler: gl::types::GLint,
     u_sharp: gl::types::GLint,
+    u_subpx: gl::types::GLint,
     u_gap: gl::types::GLint,
     u_keep: gl::types::GLint,
     u_even: gl::types::GLint,
@@ -74,6 +75,7 @@ impl GamePass {
             u_out,
             u_scaler,
             u_sharp,
+            u_subpx,
             u_gap,
             u_keep,
             u_even,
@@ -96,6 +98,7 @@ impl GamePass {
             u_out = crate::gl::uniform_location(prog, "u_out");
             u_scaler = crate::gl::uniform_location(prog, "u_scaler");
             u_sharp = crate::gl::uniform_location(prog, "u_sharp");
+            u_subpx = crate::gl::uniform_location(prog, "u_subpx");
             u_gap = crate::gl::uniform_location(prog, "u_gap");
             u_keep = crate::gl::uniform_location(prog, "u_keep");
             u_even = crate::gl::uniform_location(prog, "u_even");
@@ -113,6 +116,7 @@ impl GamePass {
             u_out,
             u_scaler,
             u_sharp,
+            u_subpx,
             u_gap,
             u_keep,
             u_even,
@@ -227,6 +231,8 @@ impl GamePass {
             };
             gl::Uniform1f(self.u_scaler, which);
             gl::Uniform1f(self.u_sharp, sharp);
+            let [sx, sy] = crate::surface::subpixel().red_at();
+            gl::Uniform2f(self.u_subpx, sx, sy);
             // The grid is an LCD's, and a console placed at a television's shape was played on a
             // television, which has none. A SNES's hi-res frames would put a line every 1.25
             // panel pixels besides, which is no grid at all, only a dimming.

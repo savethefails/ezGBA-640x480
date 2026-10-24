@@ -1,6 +1,7 @@
 use slot_gfx::{
-    blue_light_gain, game_rect, set_fit, set_grid, set_picture, set_scaler, Compositor, Draw, Fit,
-    Grid, HeadlessSurface, Picture, Scaler, OUT_H, OUT_W, SRC_H, SRC_W,
+    blue_light_gain, game_rect, set_fit, set_grid, set_picture, set_scaler, set_subpixel,
+    Compositor, Draw, Fit, Grid, HeadlessSurface, Picture, Scaler, Subpixel, OUT_H, OUT_W, SRC_H,
+    SRC_W,
 };
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -1219,4 +1220,61 @@ fn colour_depth_deepens_the_middle_and_leaves_black_and_white_alone() {
     assert!(close(rich, [0x80, 0x50, 0x20]), "{rich:?}");
 
     slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
+}
+
+/// By subpixel, each channel is worked out for where its own stripe is. At 640 across 240 the
+/// second source column runs from 8/3 to 16/3, so its left edge is a third of the way into panel
+/// pixel 2 and its right edge a third of the way into pixel 5. On an RGB panel the red stripe is
+/// the left third of a pixel and the blue the right: at the left edge blue sees most of the
+/// column and red none of it, and at the right edge the other way round. Drawn for the middle of
+/// the pixel, the three are the same grey, which is the blur subpixels take out.
+#[test]
+fn by_subpixel_each_stripe_is_lit_for_where_it_is() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let column: Vec<u8> = (0..(SRC_W * SRC_H) as usize)
+        .flat_map(|i| match i % SRC_W as usize == 1 {
+            true => [255, 255, 255, 0],
+            false => [0, 0, 0, 0],
+        })
+        .collect();
+    c.set_screen_power(1.0);
+    let edges = |c: &mut Compositor| {
+        c.begin_frame();
+        c.upload_game(&column, GBA);
+        c.draw_game();
+        let frame = c.read_frame();
+        let y = (game_rect().1 + game_rect().3 / 2) as usize;
+        (px(&frame, 2, y), px(&frame, 5, y))
+    };
+    for scaler in [Scaler::SharpShimmerless, Scaler::PixelAa(1.0)] {
+        set_scaler(scaler);
+        set_subpixel(Subpixel::Off);
+        let (left, right) = edges(&mut c);
+        for p in [left, right] {
+            assert!(
+                p[0].abs_diff(p[1]) <= 2 && p[1].abs_diff(p[2]) <= 2,
+                "{scaler:?} without subpixels tinted an edge {p:?}"
+            );
+        }
+        set_subpixel(Subpixel::Rgb);
+        let (left, right) = edges(&mut c);
+        assert!(
+            left[0] + 20 < left[1] && left[1] + 20 < left[2],
+            "{scaler:?}: the left edge's stripes {left:?} are not dark to light"
+        );
+        assert!(
+            right[0] > right[1] + 20 && right[1] > right[2] + 20,
+            "{scaler:?}: the right edge's stripes {right:?} are not light to dark"
+        );
+        set_subpixel(Subpixel::Bgr);
+        let (left, _) = edges(&mut c);
+        assert!(
+            left[2] + 20 < left[1] && left[1] + 20 < left[0],
+            "{scaler:?}: on BGR the left edge's stripes {left:?} are not reversed"
+        );
+    }
+    set_subpixel(Subpixel::Off);
+    set_scaler(Scaler::default());
 }
