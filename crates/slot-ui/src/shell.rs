@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use slot_store::gb::Class;
 use slot_store::{Cart, Platform, ShellFinish};
@@ -119,13 +121,18 @@ pub fn shell_for(cart: &Cart) -> Shell {
         Platform::Gba => gba_shell_for(&slot_store::header_ids(cart).1),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
         Platform::Snes => snes_shell_for(&cart.rom),
-        Platform::Pico8 => pico8_shell_for(&cart.stem),
+        Platform::Pico8 => cart
+            .label
+            .as_deref()
+            .and_then(pico8_art_shell)
+            .unwrap_or_else(|| pico8_shell_for(&cart.stem)),
     }
 }
 
 /// Clear candy plastic, one colour per game, after PICO-8's own brights: a shelf of PICO-8 carts
-/// is a row of different colours rather than one dark blue repeated. Picked off the file name's
-/// hash, so a game is the same colour on every boot.
+/// is a row of different colours rather than one dark blue repeated. Picked off the cart's
+/// picture by `pico8_art_shell`, or off the file name's hash when the picture has no colour to
+/// give, so a game is the same colour on every boot.
 pub const PICO8_CANDY: [[u8; 3]; 8] = [
     [0x8a, 0x4f, 0xff], // purple
     [0x19, 0xc2, 0xb0], // teal
@@ -137,6 +144,97 @@ pub const PICO8_CANDY: [[u8; 3]; 8] = [
     [0xff, 0xd2, 0x3a], // yellow
 ];
 
+/// Which candy each of PICO-8's 16 colours reads as, or `None` for one with no colour of its
+/// own to lend a shell: black, dark blue, the greys, white, lavender and peach, the colours of
+/// backgrounds, outlines and skin. Dark green is teal, which no bright is.
+const PICO8_TO_CANDY: [Option<usize>; 16] = [
+    None,    // black
+    None,    // dark blue
+    Some(0), // dark purple: purple
+    Some(1), // dark green: teal
+    Some(4), // brown: orange
+    None,    // dark grey
+    None,    // light grey
+    None,    // white
+    Some(6), // red
+    Some(4), // orange
+    Some(7), // yellow
+    Some(5), // green
+    Some(2), // blue
+    None,    // lavender
+    Some(3), // pink
+    None,    // peach
+];
+
+/// The plastic a PICO-8 cart's own picture calls for, decoded once per picture for the life of
+/// the process, since the case asks it on every frame the shelf slides. `None` when the picture
+/// cannot be read or has no colour in it, for the name's hash to decide.
+pub fn pico8_art_shell(label: &Path) -> Option<Shell> {
+    static COLOURS: OnceLock<Mutex<HashMap<PathBuf, Option<usize>>>> = OnceLock::new();
+    let candy = *COLOURS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(label.to_path_buf())
+        .or_insert_with(|| {
+            crate::art::pico8_label(label, 128, 128).and_then(|rgba| pico8_candy_of(&rgba))
+        });
+    candy.map(|i| shell(PICO8_CANDY[i], Finish::Translucent))
+}
+
+/// The candy that most of a 128 x 128 RGBA picture is, by its PICO-8 colours: each pixel is
+/// taken as the nearest of the 16, weighted toward the middle, where a game puts what it is
+/// about; and a colour is discounted by how much of the picture's edge it fills, since that is
+/// sky, sea or grass behind the subject. Top Speed's red car over its blue sky is red.
+pub fn pico8_candy_of(rgba: &[u8]) -> Option<usize> {
+    const SIDE: usize = 128;
+    const BORDER: usize = 4;
+    if rgba.len() < SIDE * SIDE * 4 {
+        return None;
+    }
+    let nearest = |p: &[u8]| {
+        (0..16)
+            .min_by_key(|&k| {
+                let c = crate::fantasy::PICO8_PALETTE[k];
+                (0..3)
+                    .map(|j| (i32::from(p[j]) - i32::from(c[j])).pow(2))
+                    .sum::<i32>()
+            })
+            .unwrap_or(0)
+    };
+    let mut score = [0f32; PICO8_CANDY.len()];
+    let mut edge = [0u32; PICO8_CANDY.len()];
+    let mut edge_px = 0u32;
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            let at = (y * SIDE + x) * 4;
+            let candy = PICO8_TO_CANDY[nearest(&rgba[at..at + 3])];
+            let on_edge =
+                !(BORDER..SIDE - BORDER).contains(&x) || !(BORDER..SIDE - BORDER).contains(&y);
+            edge_px += u32::from(on_edge);
+            let Some(i) = candy else {
+                continue;
+            };
+            if on_edge {
+                edge[i] += 1;
+            }
+            let (dx, dy) = ((x as f32 - 63.5) / 64.0, (y as f32 - 63.5) / 64.0);
+            score[i] += (-(dx * dx + dy * dy) / 0.5).exp();
+        }
+    }
+    let best = |weigh: &dyn Fn(usize) -> f32| {
+        (0..PICO8_CANDY.len())
+            .map(|i| (i, weigh(i)))
+            .filter(|&(_, s)| s > 0.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    };
+    // A picture all of one colour is all edge too: then that colour is the cart's after all.
+    best(&|i| score[i] * (1.0 - edge[i] as f32 / edge_px as f32).powi(2))
+        .or_else(|| best(&|i| score[i]))
+}
+
+/// The candy picked off `stem`'s hash, for a cart whose picture gives none.
 pub fn pico8_shell_for(stem: &str) -> Shell {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in stem.as_bytes() {

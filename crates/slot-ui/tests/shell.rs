@@ -1,7 +1,8 @@
 use slot_store::scan;
 use slot_ui::{
-    cart_face, gba_shell_for, lookup_order_is_exact_then_family_then_default, mould_of, shell_for,
-    table_keys, Finish, Mould, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, SNES_SHELL,
+    cart_face, gba_shell_for, lookup_order_is_exact_then_family_then_default, mould_of,
+    pico8_candy_of, pico8_shell_for, shell_for, table_keys, Finish, Mould, DEFAULT_SHELL,
+    DMG_SHELL, DUAL_MODE_SHELL, PICO8_CANDY, SNES_SHELL,
 };
 use tempfile::TempDir;
 
@@ -338,4 +339,102 @@ fn cart_shell_ini_colours_a_snes_cart() {
 fn the_flag_plastics_are_unchanged() {
     assert_eq!(gb_shell(b"TETRIS", b"", 0x00, true), DMG_SHELL);
     assert_eq!(gb_shell(b"TETRIS DX", b"", 0x80, true), DUAL_MODE_SHELL);
+}
+
+/// PICO-8's red, blue, green, yellow, light grey and white.
+const P8_RED: [u8; 3] = [0xff, 0x00, 0x4d];
+const P8_BLUE: [u8; 3] = [0x29, 0xad, 0xff];
+const P8_GREEN: [u8; 3] = [0x00, 0xe4, 0x36];
+const P8_YELLOW: [u8; 3] = [0xff, 0xec, 0x27];
+const P8_GREY: [u8; 3] = [0xc2, 0xc3, 0xc7];
+const P8_WHITE: [u8; 3] = [0xff, 0xf1, 0xe8];
+
+fn write_png(path: &std::path::Path, w: u32, h: u32, colour: impl Fn(u32, u32) -> [u8; 3]) {
+    let mut rgba = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            rgba.extend(colour(x, y));
+            rgba.push(0xff);
+        }
+    }
+    let f = std::fs::File::create(path).expect("png");
+    let mut e = png::Encoder::new(std::io::BufWriter::new(f), w, h);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    e.write_header().unwrap().write_image_data(&rgba).unwrap();
+}
+
+/// The shell of a `.p8.png` cart named `stem` whose 128 x 128 picture is `picture`, the rest of
+/// the cart PICO-8's dark grey.
+fn pico8_shell(stem: &str, picture: impl Fn(u32, u32) -> [u8; 3]) -> slot_ui::Shell {
+    let d = tempfile::tempdir().expect("tempdir");
+    let games = d.path().join("Games/PICO8");
+    std::fs::create_dir_all(&games).expect("games dir");
+    write_png(&games.join(format!("{stem}.png")), 160, 205, |x, y| {
+        if (16..144).contains(&x) && (24..152).contains(&y) {
+            picture(x - 16, y - 24)
+        } else {
+            [0x5f, 0x57, 0x4f]
+        }
+    });
+    shell_for(&scan(d.path()).expect("scan")[0])
+}
+
+fn candy(colour: [u8; 3]) -> usize {
+    PICO8_CANDY
+        .iter()
+        .position(|c| *c == colour)
+        .expect("a candy")
+}
+
+/// A red car in the middle of a blue sky over green grass is a red cart: the sky and the grass
+/// fill the picture's edges, so they are what is behind the game, not what it is about.
+#[test]
+fn a_pico8_cart_takes_its_shell_from_the_subject_of_its_picture() {
+    let shell = pico8_shell("racer.p8", |x, y| {
+        if (40..88).contains(&x) && (48..96).contains(&y) {
+            P8_RED
+        } else if y < 80 {
+            P8_BLUE
+        } else {
+            P8_GREEN
+        }
+    });
+    assert_eq!(shell.colour, PICO8_CANDY[6], "red");
+    assert_eq!(shell.finish, Finish::Translucent);
+}
+
+/// A picture of one colour edge to edge is still that colour's.
+#[test]
+fn a_pico8_picture_of_one_colour_gives_that_colour() {
+    let shell = pico8_shell("meadow.p8", |_, _| P8_GREEN);
+    assert_eq!(candy(shell.colour), 5, "green");
+}
+
+/// Black, the greys and white lend a shell nothing, so the name picks as it did before.
+#[test]
+fn a_pico8_picture_with_no_colour_falls_back_to_the_name() {
+    let shell = pico8_shell("mono.p8", |x, _| if x < 64 { P8_GREY } else { P8_WHITE });
+    assert_eq!(shell, pico8_shell_for("mono.p8"));
+}
+
+/// A picture in `Labels/PICO8/` is the cart's label, so it is what the shell is taken from too,
+/// whatever its size.
+#[test]
+fn a_pico8_label_picture_decides_the_shell() {
+    let d = tempfile::tempdir().expect("tempdir");
+    let games = d.path().join("Games/PICO8");
+    let labels = d.path().join("Labels/PICO8");
+    std::fs::create_dir_all(&games).expect("games dir");
+    std::fs::create_dir_all(&labels).expect("labels dir");
+    std::fs::write(games.join("sun.p8"), "pico-8 cartridge\n").expect("cart");
+    write_png(&labels.join("sun.png"), 300, 200, |_, _| P8_YELLOW);
+    let cart = &scan(d.path()).expect("scan")[0];
+    assert!(cart.label.is_some(), "the label is found");
+    assert_eq!(candy(shell_for(cart).colour), 7, "yellow");
+}
+
+#[test]
+fn pico8_candy_of_a_short_buffer_is_none() {
+    assert_eq!(pico8_candy_of(&[0; 16]), None);
 }
