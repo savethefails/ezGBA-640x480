@@ -48,6 +48,40 @@ pub fn pico8_label(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The most a `.p8.png`'s title can be: PICO-8 prints it in its 4 px font, one line of up to
+/// 32 characters, 5 px tall.
+pub const PICO8_TITLE_MAX: (u32, u32) = (128, 5);
+
+/// The title PICO-8 printed under the picture of a cart saved as a `.p8.png`: the first of the
+/// two lines it takes from the comments at the top of the cart's code, in its own font. As RGBA,
+/// opaque white where a letter is and clear between, trimmed to the letters' width. `None` for
+/// any other picture, or a cart whose code names no title.
+pub fn pico8_title(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+    let (src, sw, sh) = decode(path)?;
+    if (sw, sh) != (160, 205) {
+        return None;
+    }
+    // Rows 167 to 171 from x 16, white on the cart's dark grey. The low bits of every pixel
+    // carry the cart's data, so a letter is anything well clear of the grey, not one value.
+    let (x0, y0, (w, h)) = (16, 167, PICO8_TITLE_MAX);
+    let lit = |x: u32, y: u32| {
+        let at = (((y0 + y) * sw + x0 + x) * 4) as usize;
+        src[at..at + 3].iter().map(|&v| u32::from(v)).sum::<u32>() > 480
+    };
+    let cols: Vec<u32> = (0..w).filter(|&x| (0..h).any(|y| lit(x, y))).collect();
+    let (&first, &last) = (cols.first()?, cols.last()?);
+    let tw = last - first + 1;
+    let mut out = vec![0u8; (tw * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..tw {
+            if lit(first + x, y) {
+                out[((y * tw + x) * 4) as usize..][..4].copy_from_slice(&[0xff; 4]);
+            }
+        }
+    }
+    Some((out, tw, h))
+}
+
 /// Decodes `path` and returns RGBA scaled to fit inside `max_w` by `max_h` with its own shape
 /// kept, and the size it came out at. Box art is every shape there is (a GBA box is about
 /// square, a SNES one wide, a title screen 4:3) and none of it may be cropped or squashed.
