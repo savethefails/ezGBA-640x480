@@ -8,17 +8,17 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
-    Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, SlotState,
+    Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, ShelfLook, SlotState,
     SnesPicture, StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
     VOLUME_MAX,
 };
 use slot_ui::{
-    board_from, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, ClockPicker,
-    Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice,
-    QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, TexId, Toast,
-    BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
-    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    board_from, board_zoom, draw_backdrop, draw_dressed_slot, draw_footer, draw_sticker, ease,
+    grown, lid_at, lid_from, lift_of, mark_at, mark_box, on_board, shelf_cart_at, BoxArt, Case,
+    ClockPicker, Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis, Placed, Polaroids,
+    PowerChoice, QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome,
+    TexId, Toast, Whimsy, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE,
+    HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -125,6 +125,10 @@ const CORE_PICKER_RECEDE: f32 = 0.26;
 /// `SIDE_ALPHA * (1 - CORE_PICKER_RECEDE)` = 0.55 * 0.74 = 0.407, and the mockup has it at a
 /// quarter: 0.25 / 0.407 = 0.614.
 const CORE_PICKER_DIM: f32 = 0.614;
+/// The same quarter on the bright shelf, whose side carts stand at full strength rather than at
+/// `SIDE_ALPHA`: 0.25 / 0.74 = 0.338. Over the paper that is the neighbours fading back rather
+/// than darkening.
+const CORE_PICKER_DIM_BRIGHT: f32 = 0.338;
 /// The legend's line, under the open cart and clear of the case band.
 const CORE_LEGEND_Y: f32 = 386.0;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
@@ -620,6 +624,9 @@ pub struct App {
     /// The PICO-8 bezels, Quiet, Palette and Soft, drawn at boot and shown behind a PICO-8 game
     /// as `Look::pico8_bezel` says.
     bezel_faces: Option<[TexId; 3]>,
+    /// The bright shelf's ground, drawn at boot: what the shelf stands on when the card carries
+    /// no wallpaper and the theme has it bright.
+    bright_ground: Option<TexId>,
     /// What is printed on the case: the battery's percent, and the time as it stands.
     battery_percent: slot_ui::Printed,
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
@@ -642,6 +649,8 @@ pub struct App {
     /// Whether the core behind the slot has published anything yet. Pushed in, because only
     /// whoever owns the emulator knows: the compositor still holds the last cart's frame.
     game_ready: bool,
+    /// The game has shown a frame that is not all black, since it was last not ready.
+    game_lit: bool,
     /// Accumulated from `update`, which is the only clock the app has. Milliseconds, since
     /// that is what the HUD fade is stated in.
     clock: f64,
@@ -791,6 +800,7 @@ impl App {
             about_a_down: None,
             wallpaper: None,
             bezel_faces: None,
+            bright_ground: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
             mark_faces: Vec::new(),
@@ -801,6 +811,7 @@ impl App {
             hud: Hud::new(),
             screen: 0.0,
             game_ready: false,
+            game_lit: false,
             clock: 0.0,
             power: None,
             dozed_at: 0,
@@ -838,6 +849,10 @@ impl App {
         let carts = scan(root).unwrap_or_default();
         crate::boot_time::mark("scan");
         let mut app = App::new(carts);
+        // Bright until a wallpaper arrives: `set_wallpaper` turns it back off.
+        for (_, shelf) in &mut app.shelves {
+            shelf.bright = theme.shelf == ShelfLook::Bright;
+        }
         app.look = look;
         app.menu = theme.menu;
         app.root = Some(root.to_path_buf());
@@ -1204,8 +1219,20 @@ impl App {
         self.bezel_faces = Some(faces);
     }
 
+    /// The bright ground, while the shelf is dressed bright.
+    fn ground(&self) -> Option<TexId> {
+        self.bright_ground.filter(|_| self.shelf().bright)
+    }
+
+    pub fn set_bright_ground(&mut self, face: TexId) {
+        self.bright_ground = Some(face);
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
+        for (_, shelf) in &mut self.shelves {
+            shelf.bright = false;
+        }
     }
 
     /// Which wallpaper this session shows, by file name, kept with the shelf at power off.
@@ -2771,6 +2798,20 @@ impl App {
 
     pub fn set_game_ready(&mut self, ready: bool) {
         self.game_ready = ready;
+        if !ready {
+            self.game_lit = false;
+        }
+    }
+
+    /// Whether the game has shown anything but black yet. See `mark_game_lit`.
+    pub fn game_lit(&self) -> bool {
+        self.game_lit
+    }
+
+    /// The game's first frame with a picture in it has reached the screen. Until then the bezel
+    /// stays down, so it never frames a black square while the game is still starting.
+    pub fn mark_game_lit(&mut self) {
+        self.game_lit = true;
     }
 
     pub fn game_ready(&self) -> bool {
@@ -3117,7 +3158,7 @@ impl App {
             }
             .draw(out),
             Phase::Shelf => {
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 // Out of the way of the lid, which lifts into the same space.
                 let open = self
                     .core_picker_shown()
@@ -3133,7 +3174,12 @@ impl App {
                         let open = ease(picker.openness(self.now()));
                         // Dimmed by as much of the open as has happened, so the dark arrives
                         // with the lid coming off and leaves with it going back on.
-                        let dim = 1.0 + (CORE_PICKER_DIM - 1.0) * open;
+                        let full = if self.shelf().bright {
+                            CORE_PICKER_DIM_BRIGHT
+                        } else {
+                            CORE_PICKER_DIM
+                        };
+                        let dim = 1.0 + (full - 1.0) * open;
                         self.shelf().draw_row(
                             Some(stem),
                             0.0,
@@ -3142,12 +3188,20 @@ impl App {
                             SHELF_ROW_LOWER,
                             out,
                         );
-                        draw_empty_slot(out);
+                        draw_dressed_slot(&self.case(), out);
                     }
                     // Lowered so the backdrop's upper portion - usually where a box
                     // art's title sits - is not the part the row sits directly over.
                     _ => {
-                        self.shelf().draw(self.shelf_shake(), SHELF_ROW_LOWER, out);
+                        self.shelf().draw_row(
+                            None,
+                            self.shelf_shake(),
+                            0.0,
+                            1.0,
+                            SHELF_ROW_LOWER,
+                            out,
+                        );
+                        draw_dressed_slot(&self.case(), out);
                         slot_ui::draw_slot_name(
                             self.slot_letter_face,
                             self.slot_letter_alpha(),
@@ -3167,7 +3221,7 @@ impl App {
                 // The same ground the shelf stands on, scrim and all. The label is a dark
                 // object and the scrim is what a dark object needs to read over a
                 // photograph — it is there for the carts for exactly the same reason.
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 draw_sticker(self.sticker_face, out);
                 return;
             }
@@ -3186,7 +3240,7 @@ impl App {
             Phase::Inserting { cart, resumed, .. } => {
                 // Spec section 3: a resumed cart shows no shelf, not even one frame of it.
                 if !resumed {
-                    draw_backdrop(self.wallpaper, out);
+                    draw_backdrop(self.wallpaper, self.ground(), out);
                     // Gone by the time the cart is in, the way the row recedes.
                     self.draw_box_art(1.0 - self.seat(), out);
                     self.shelf()
@@ -3199,7 +3253,7 @@ impl App {
             // other way. Darkening on the way out as well as on the way in was the screen
             // playing the same movement twice rather than reversing it.
             Phase::Ejecting { cart, .. } => {
-                draw_backdrop(self.wallpaper, out);
+                draw_backdrop(self.wallpaper, self.ground(), out);
                 self.draw_box_art(1.0 - self.seat(), out);
                 self.shelf()
                     .draw_row(Some(cart), 0.0, self.seat(), 1.0, SHELF_ROW_LOWER, out);
@@ -3207,7 +3261,13 @@ impl App {
             }
             // The slot stays on screen until the picture behind it has finished arriving,
             // so the game blooms out of a lit lip rather than replacing it.
-            Phase::Playing { cart } if self.screen < 1.0 => self.chrome(cart, 0.0, out),
+            // The bezel comes up with the picture rather than after it, under the case fading out.
+            Phase::Playing { cart } if self.screen < 1.0 => {
+                if self.game_visible() {
+                    self.push_bezel(self.screen, out);
+                }
+                self.chrome(cart, 0.0, out)
+            }
             Phase::Playing { .. } => self.push_game(out),
             // The paused game stays underneath, covered by the screenshot the switcher
             // draws over the whole screen.
@@ -3335,21 +3395,24 @@ impl App {
     /// picture; the chrome puts it in the same list, in front of the cart.
     fn push_game(&self, out: &mut Vec<Draw>) {
         if self.game_visible() {
-            self.push_bezel(out);
+            self.push_bezel(1.0, out);
             out.push(Draw::Game);
         }
     }
 
     /// The bars beside a PICO-8 game, under it: the game's square is drawn over the bezel's
     /// black middle. On a square panel the game fills it and covers the bezel whole.
-    fn push_bezel(&self, out: &mut Vec<Draw>) {
+    fn push_bezel(&self, alpha: f32, out: &mut Vec<Draw>) {
         let at = match self.look.pico8_bezel {
             Pico8Bezel::Off => return,
             Pico8Bezel::Quiet => 0,
             Pico8Bezel::Palette => 1,
             Pico8Bezel::Soft => 2,
         };
-        let Some(faces) = self.bezel_faces.filter(|_| self.core == Core::Pico8) else {
+        let Some(faces) = self
+            .bezel_faces
+            .filter(|_| self.core == Core::Pico8 && self.game_lit)
+        else {
             return;
         };
         out.push(Draw::Tex {
@@ -3358,7 +3421,7 @@ impl App {
             w: OUT_W as f32,
             h: OUT_H as f32,
             tex: faces[at],
-            alpha: 1.0,
+            alpha,
         });
     }
 
@@ -3382,8 +3445,54 @@ impl App {
             dim,
             screen: self.screen,
             game: self.game_ready,
+            case: self.case_for(cart),
+            whimsy: self.whimsy(cart),
         }
         .draw(out);
+    }
+
+    /// The device's face for a cart: candy in a PICO-8 cart's plastic on the bright shelf, and
+    /// the theme's own for every real cart.
+    fn case_for(&self, cart: &Cart) -> Case {
+        if self.shelf().bright && cart.platform == Platform::Pico8 {
+            Case::candy(slot_ui::shell_for(cart).colour)
+        } else {
+            Case::theme()
+        }
+    }
+
+    /// The face as the row stands: the carts either side of the middle of the screen, blended
+    /// by how far between them it is, so the machine changes plastic as the row slides.
+    fn case(&self) -> Case {
+        let shelf = self.shelf();
+        let Some((a, b, t)) = shelf.at_middle() else {
+            return Case::theme();
+        };
+        let (Some(a), Some(b)) = (shelf.carts.get(a), shelf.carts.get(b)) else {
+            return Case::theme();
+        };
+        self.case_for(a).mix(self.case_for(b), t)
+    }
+
+    /// A PICO-8 cart's fantasy over its insert or eject. A cart already in the slot at boot
+    /// made no movement, so it gets none.
+    fn whimsy(&self, cart: &Cart) -> Option<Whimsy> {
+        if cart.platform != Platform::Pico8 {
+            return None;
+        }
+        let (ejecting, t) = match &self.phase {
+            Phase::Inserting {
+                t, resumed: false, ..
+            } => (false, *t),
+            Phase::Ejecting { t, .. } => (true, *t),
+            _ => return None,
+        };
+        Some(Whimsy {
+            colour: slot_ui::shell_for(cart).colour,
+            ejecting,
+            t,
+            travel_s: if ejecting { EJECT_S } else { SEATED_AT },
+        })
     }
 
     /// Whether the cart on its way back out is carrying the refusal symbol.

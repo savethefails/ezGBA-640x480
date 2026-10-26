@@ -59,6 +59,19 @@ pub struct Theme {
     pub snes_core: crate::Core,
     /// `pico8-bezel off`, `quiet`, `palette` or `soft`. See `Pico8Bezel`.
     pub pico8_bezel: Pico8Bezel,
+    /// `shelf bright` or `shelf classic`. See `ShelfLook`.
+    pub shelf: ShelfLook,
+}
+
+/// How the shelf is dressed when the card carries no wallpaper.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum ShelfLook {
+    /// A warm light ground with a scatter of PICO-8 coloured confetti, every cart in full colour
+    /// with a soft shadow under it.
+    #[default]
+    Bright,
+    /// The dark ground, and the carts beside the selection dimmed into it.
+    Classic,
 }
 
 /// What fills the bars either side of a PICO-8 game, which is a square on a 4:3 panel. Both are
@@ -176,6 +189,13 @@ impl Word for Pico8Bezel {
     ];
 }
 
+impl Word for ShelfLook {
+    const WORDS: &'static [(Self, &'static str)] = &[
+        (ShelfLook::Bright, "bright"),
+        (ShelfLook::Classic, "classic"),
+    ];
+}
+
 impl Word for Aspect {
     const WORDS: &'static [(Self, &'static str)] =
         &[(Aspect::FourThree, "4:3"), (Aspect::ThreeTwo, "3:2")];
@@ -266,6 +286,7 @@ impl Default for Theme {
             colour_custom: [1.0; 3],
             snes_core: crate::Core::Snes9x2005,
             pico8_bezel: Pico8Bezel::Off,
+            shelf: ShelfLook::Bright,
         }
     }
 }
@@ -306,6 +327,7 @@ impl Theme {
                 ("boot-picture", v) => set(&mut theme.boot_picture, v),
                 ("colour-depth", v) => set(&mut theme.colour_depth, v),
                 ("pico8-bezel", v) => set(&mut theme.pico8_bezel, v),
+                ("shelf", v) => set(&mut theme.shelf, v),
                 ("snes-core", "snes9x") => theme.snes_core = crate::Core::Snes9x,
                 ("snes-core", "snes9x2005" | "snes9x2005_plus") => {
                     theme.snes_core = crate::Core::Snes9x2005

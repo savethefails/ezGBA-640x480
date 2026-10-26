@@ -161,6 +161,9 @@ struct Spec {
     /// The label wraps over the top edge rather than stopping short of it, so its top rows are
     /// where it turns away from the light.
     wraps: bool,
+    /// Candy plastic with a shine on it: lighter at the top and deeper at the foot, and the edges
+    /// facing the light catching it. PICO-8's carts only, whose plastic was never a real one.
+    gloss: bool,
 }
 
 /// Where the board sits inside the shell, as fractions of the face. Its top is the label's, so
@@ -245,6 +248,7 @@ fn spec(shape: Mould) -> Spec {
                 traces_from: 0.749,
             },
             wraps: false,
+            gloss: false,
         },
         Mould::Snes => Spec {
             w: SNES_CART_W,
@@ -264,6 +268,7 @@ fn spec(shape: Mould) -> Spec {
                 traces_from: 0.85,
             },
             wraps: true,
+            gloss: false,
         },
         // Solid plastic, so the board never shows; placed as the GBA's is, under the label.
         Mould::Pico8 => Spec {
@@ -284,6 +289,7 @@ fn spec(shape: Mould) -> Spec {
                 traces_from: 0.85,
             },
             wraps: false,
+            gloss: true,
         },
         Mould::Gb(shell) => Spec {
             w: GB_CART_W,
@@ -303,6 +309,7 @@ fn spec(shape: Mould) -> Spec {
                 traces_from: 0.84,
             },
             wraps: false,
+            gloss: false,
         },
     }
 }
@@ -515,6 +522,11 @@ fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
                 }
             }
         };
+        let c = if s.gloss {
+            shine(s, c, x, y, *depth)
+        } else {
+            c
+        };
         rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
     CartFace {
@@ -522,6 +534,22 @@ fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
         w: s.w,
         h: s.h,
     }
+}
+
+/// Candy plastic's shine. Down the face, light at the top and deeper at the foot; along the edges,
+/// a bright band where they face the light from the upper left and none where they face away.
+fn shine(s: &Spec, c: [u8; 3], x: u32, y: u32, depth: u8) -> [u8; 3] {
+    let (fx, fy) = (x as f32 / s.w as f32, y as f32 / s.h as f32);
+    let shade = if fy < 0.5 {
+        lerp(c, [0xff; 3], ((0.5 - fy) * 2.0 * 46.0) as u32, 255)
+    } else {
+        lerp(c, [0x00; 3], ((fy - 0.5) * 2.0 * 40.0) as u32, 255)
+    };
+    // Within six pixels of the outline, strongest at it; facing the light by how far up and left.
+    let near = 6u32.saturating_sub(depth as u32);
+    let facing = (2.0 - fx - fy).clamp(0.0, 2.0) / 2.0;
+    let gleam = (near as f32 / 6.0 * facing * 150.0) as u32;
+    lerp(shade, [0xff; 3], gleam.min(255), 255)
 }
 
 /// How much of a clear shell's colour is its own surface rather than what is behind it, out of

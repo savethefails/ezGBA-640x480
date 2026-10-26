@@ -16,6 +16,9 @@ use crate::slot_chrome::draw_empty_slot;
 const PITCH: f32 = 220.0;
 const SIDE_SCALE: f32 = 0.70;
 const SIDE_ALPHA: f32 = 0.55;
+/// How far below a cart its shadow on the bright shelf falls, at full size, and how dark it is.
+const DROP: f32 = 8.0;
+const DROP_ALPHA: f32 = 0.16;
 /// Where a cartridge of this height stands on the row: centred on the screen. Every shelf holds
 /// one platform — the card is one folder per system — so a row never mixes heights, and what the
 /// eye reads on the carousel is where the selected cartridge sits in the frame. A GBA cart has
@@ -131,6 +134,11 @@ pub struct Shelf {
     /// firing, and the count lives with it because the rate is a function of how long this one
     /// hold has been going: a new press resets it, which is what keeps taps unaccelerated.
     held: Option<(i32, Millis, usize)>,
+    /// The bright shelf: every cart in full colour, with a soft shadow on the light ground under
+    /// it, rather than the carts beside the selection dimmed into a dark one. Off until the app,
+    /// which knows the theme and whether the card carries a wallpaper, turns it on: see
+    /// `shelf_is_bright`.
+    pub bright: bool,
 }
 
 impl Shelf {
@@ -150,6 +158,7 @@ impl Shelf {
             ride: 0.0,
             vel: 0.0,
             held: None,
+            bright: false,
         }
     }
 
@@ -495,6 +504,19 @@ impl Shelf {
         (OUT_W as f32 / 2.0 + offset * PITCH - w * scale / 2.0, scale)
     }
 
+    /// The two carts either side of the middle of the screen as the row stands this frame, and
+    /// how far the middle is from the first to the second: `(i, i, 0.0)` on a settled row.
+    pub fn at_middle(&self) -> Option<(usize, usize, f32)> {
+        let n = self.carts.len() as i32;
+        if n == 0 {
+            return None;
+        }
+        let c = self.scroll - self.scroll_target();
+        let f = c.floor();
+        let a = (self.index as i32 + f as i32).rem_euclid(n);
+        Some((a as usize, ((a + 1) % n) as usize, c - f))
+    }
+
     pub fn update(&mut self, dt: f32) {
         let accel = -2.0 * OMEGA * self.vel - OMEGA * OMEGA * (self.scroll - self.scroll_target());
         self.vel += accel * dt;
@@ -548,7 +570,9 @@ impl Shelf {
             let offset = target + slot as f32 - self.scroll;
             let t = offset.abs().min(1.0);
             let scale = shrink(offset);
-            let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
+            let bright = self.bright;
+            let side = if bright { 1.0 } else { SIDE_ALPHA };
+            let alpha = (1.0 + (side - 1.0) * t) * (1.0 - recede);
             let (cw, ch) = cart_box(cart.platform);
             let (w, h) = (cw as f32 * scale, ch as f32 * scale);
             // Away from the middle, and further the further out it already was, so the row
@@ -568,9 +592,16 @@ impl Shelf {
             // changed - the row jumping back to its old centred rest for one frame of an
             // eject before landing back on the lowered one.
             let y = foot_y(ch as f32) - h + y_offset;
-            // Black in the cart's own shape, under the dimmed face. Without it the dimming is
-            // transparency, and over a wallpaper the row reads as ghosts of carts.
-            if alpha < 1.0 {
+            // On the bright shelf the cart's own shape, faint and a little below it, is the shadow
+            // it casts on the paper: what puts it on the ground rather than pasted over it.
+            // Otherwise, black in the cart's own shape under the dimmed face. Without it the
+            // dimming is transparency, and over a wallpaper the row reads as ghosts of carts.
+            let (drop, backing_alpha) = if bright {
+                (DROP * scale, alpha * DROP_ALPHA)
+            } else {
+                (0.0, recede_alpha(alpha))
+            };
+            if bright || alpha < 1.0 {
                 // Three backings for three moulds: it is the cart's own outline, and a class C
                 // pak's corners are not a class A/B pak's. See `cart::gb_cart_shadow`.
                 //
@@ -590,12 +621,12 @@ impl Shelf {
                 };
                 if let Some(tex) = backing {
                     out.push(Draw::Tex {
-                        x,
-                        y,
+                        x: x + drop / 2.0,
+                        y: y + drop,
                         w,
                         h,
                         tex,
-                        alpha: recede_alpha(alpha),
+                        alpha: backing_alpha,
                     });
                 }
             }

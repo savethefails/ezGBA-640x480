@@ -26,7 +26,7 @@ fn render_about() {
 
     // The two calls the About arm makes, in order.
     let mut list = Vec::new();
-    draw_backdrop(paper.as_ref().map(|_| TexId::from_raw(0)), &mut list);
+    draw_backdrop(paper.as_ref().map(|_| TexId::from_raw(0)), None, &mut list);
     draw_sticker(Some(TexId::from_raw(1)), &mut list);
 
     let (w, h) = (OUT_W as usize, OUT_H as usize);

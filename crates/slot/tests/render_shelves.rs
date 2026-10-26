@@ -22,8 +22,9 @@ use slot_power::SimPlatform;
 // this runs on and is already spoken for, and this one is the console a cart is for.
 use slot_store::{Cart, Platform as CartPlatform};
 use slot_ui::{
-    cart_box, cart_face, clean_label, edge, housing, label_colour, mark_at, mark_box, opening,
-    recess, rest_y, Draw, SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, PLATE_H,
+    bright_backdrop_face, cart_box, cart_face, clean_label, edge, housing, label_colour, mark_at,
+    mark_box, opening, recess, rest_y, Case, Draw, SlotChrome, CART_W, GB_LABEL_H, GB_LABEL_Y,
+    LABEL_H, LABEL_Y, PLATE_H,
 };
 
 /// One batch of events per poll, and nothing once they run out.
@@ -77,8 +78,23 @@ fn apart(a: [u32; 3], b: [u32; 3]) -> u32 {
 fn banner_ink(px: &[u8]) -> usize {
     (0..PLATE_H as usize)
         .flat_map(|y| (200..520).map(move |x| (x, y)))
-        .filter(|(x, y)| at(px, *x, *y).iter().all(|c| *c > 0x80))
+        .filter(|(x, y)| inked(px, *x, *y))
         .count()
+}
+
+/// The bright shelf's own ground, which is what these cards stand on: they carry no wallpaper.
+fn ground() -> &'static [u8] {
+    static GROUND_FACE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    GROUND_FACE.get_or_init(bright_backdrop_face)
+}
+
+/// Whether a pixel is something drawn over the ground rather than the ground itself, confetti
+/// and all.
+fn inked(px: &[u8], x: usize, y: usize) -> bool {
+    let o = (y * OUT_W as usize + x) * 4;
+    let g = ground();
+    let drawn = at(px, x, y).map(u32::from);
+    apart(drawn, [g[o], g[o + 1], g[o + 2]].map(u32::from)) > 0x30
 }
 
 /// The mark's own box in the screen's top right corner, which is the corner a live session's link
@@ -90,24 +106,14 @@ fn mark_window() -> (usize, usize, usize, usize) {
     (x as usize, y as usize, w as usize, h as usize)
 }
 
-/// Every pixel of the mark, as it reached the panel. Two shelves' marks compare equal only if
-/// they are the same drawing — which is what "the mark changed when the shoulder was pressed"
-/// actually means, and what a count of lit pixels could agree on while showing one picture
-/// three times.
-fn mark_pixels(px: &[u8]) -> Vec<[u8; 3]> {
+/// How much of the mark's box is drawn over what is behind it. The corner is over the shelf's
+/// own ground here — this card has no wallpaper — so anything appreciably off it is the mark's
+/// ink.
+fn mark_ink(px: &[u8]) -> usize {
     let (x0, y0, w, h) = mark_window();
     (y0..y0 + h)
         .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-        .map(|(x, y)| at(px, x, y))
-        .collect()
-}
-
-/// How much of the mark's box is lit above what is behind it. The corner is over the shelf's own
-/// ground here — this card has no wallpaper — so anything appreciably lighter is the mark's ink.
-fn mark_ink(px: &[u8]) -> usize {
-    mark_pixels(px)
-        .iter()
-        .filter(|c| u32::from(c[0]) > GROUND[0] + 0x30)
+        .filter(|&(x, y)| inked(px, x, y))
         .count()
 }
 
@@ -677,6 +683,8 @@ fn both_cartridges_go_into_the_slot_at_their_own_size() {
                 dim: 0.0,
                 screen: 0.0,
                 game: false,
+                case: Case::theme(),
+                whimsy: None,
             }
             .draw(&mut out);
             let px = frame(&mut c, &out, &format!("insert-{name}-{beat}"));
@@ -775,6 +783,8 @@ fn no_frame_of_the_travel_jumps_further_than_the_cartridge_is_tall() {
                     dim: 0.0,
                     screen: 0.0,
                     game: false,
+                    case: Case::theme(),
+                    whimsy: None,
                 }
                 .draw(&mut out);
                 out.iter()
