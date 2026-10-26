@@ -104,6 +104,14 @@ void main() {
 /// in the stored gamma values, so a blended edge is neither darker nor thinner than either side.
 /// `u_scaler` picks between the two: 0.0 sharp-shimmerless, 1.0 Pixel AA.
 ///
+/// Either can be drawn by subpixel, as ClearType draws type: a panel pixel is a red, a green and
+/// a blue stripe side by side, so each channel is worked out for where its own stripe is, a
+/// third of a pixel either side of the middle, rather than all three for the middle. An edge
+/// then lands on the nearest stripe, three times finer than the nearest pixel, in the direction
+/// the stripes run, with every source pixel still its full width. `u_subpx` is where the red
+/// stripe is and zero for none; which order and which way the stripes run is the panel's, and
+/// the card says (`subpixel` in `System/theme.txt`), since the wrong guess fringes every edge.
+///
 /// The LCD grid is ezGBA's own, and replaces both scalers when it is on (`u_gap` above zero). Its
 /// lines are soft bands centred exactly on every source pixel edge, so they are evenly spaced at
 /// the true pitch across the whole picture and symmetric about its middle (see `LINE_W`).
@@ -137,6 +145,9 @@ uniform float u_bright;
 uniform float u_grille;
 uniform float u_scaler;
 uniform float u_sharp;
+// Where the red stripe of a panel pixel sits from its middle, in panel pixels, and so where the
+// blue one does on the other side: (-1/3, 0) for RGB left to right, zero for no subpixels.
+uniform vec2 u_subpx;
 uniform vec2 u_gap;
 uniform float u_keep;
 uniform float u_even;
@@ -146,13 +157,19 @@ varying vec2 v_uv;
 
 #define FIX(c) max(abs(c), 1e-5)
 
-vec2 sharp_shimmerless(vec2 pixel, vec2 source) {
+// The original's arithmetic for a box one panel pixel square whose corner is `lo`, which need not
+// be whole: shifted a third of a pixel, it is the box one colour stripe sees.
+vec2 shimmerless_box(vec2 lo, vec2 source) {
     vec2 scale = u_out / source;
     vec2 invscale = 1.0 / scale;
-    vec4 pixel_borders = vec4(floor(pixel), ceil(pixel));
+    vec4 pixel_borders = vec4(lo, lo + 1.0);
     vec4 texel_borders = floor(invscale.xyxy * pixel_borders);
     vec2 same_texel = step(FIX(0.0), abs(texel_borders.xy - texel_borders.zw));
     return texel_borders.zw + 0.5 - (scale * texel_borders.zw - pixel_borders.xy) * same_texel;
+}
+
+vec2 sharp_shimmerless(vec2 pixel, vec2 source) {
+    return shimmerless_box(floor(pixel), source);
 }
 
 // Similar to smoothstep, but has a configurable slope at x = 0.5.
@@ -260,6 +277,24 @@ void main() {
     vec3 picture;
     if (u_gap.x + u_gap.y > 0.0) {
         picture = grid(source);
+    } else if (u_subpx != vec2(0.0)) {
+        // Each colour stripe its own sample, its box or its point moved a third of a pixel
+        // toward where the stripe really is: an edge lands on the nearest stripe rather than on
+        // the nearest pixel.
+        vec2 at = v_uv * u_out;
+        if (u_scaler < 0.5) {
+            vec2 lo = floor(at);
+            picture = vec3(
+                texture2D(u_game, u_uv.xy + shimmerless_box(lo + u_subpx, source) / u_src).r,
+                texture2D(u_game, u_uv.xy + shimmerless_box(lo, source) / u_src).g,
+                texture2D(u_game, u_uv.xy + shimmerless_box(lo - u_subpx, source) / u_src).b);
+        } else {
+            vec2 per = source / u_out;
+            picture = vec3(
+                pixel_aa_gamma((at + u_subpx) * per, per).r,
+                pixel_aa_gamma(at * per, per).g,
+                pixel_aa_gamma((at - u_subpx) * per, per).b);
+        }
     } else if (u_scaler < 0.5) {
         vec2 texel = sharp_shimmerless(v_uv * u_out, source);
         picture = texture2D(u_game, u_uv.xy + texel / u_src).rgb;

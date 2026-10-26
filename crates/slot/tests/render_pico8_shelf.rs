@@ -171,6 +171,19 @@ fn render_pico8_shelf() {
     input.0.push_back(vec![RawEvent::Up(Btn::Right)]);
     run(&mut f, &mut input, 60);
     composed(&mut f, &mut c, "second");
+    // The quick menu, for judging how its rows sit.
+    if std::env::var("SCRATCH_MENU").is_ok() {
+        input.0.push_back(vec![RawEvent::Down(Btn::Menu)]);
+        input.0.push_back(vec![RawEvent::Up(Btn::Menu)]);
+        run(&mut f, &mut input, 20);
+        for _ in 0..7 {
+            input.0.push_back(vec![RawEvent::Down(Btn::Down)]);
+            input.0.push_back(vec![RawEvent::Up(Btn::Down)]);
+            run(&mut f, &mut input, 4);
+        }
+        composed(&mut f, &mut c, "menu");
+        return;
+    }
     // In, and out again, every frame of both. With no PICO-8 core on the machine the game is the
     // mock's test pattern.
     if std::env::var("SCRATCH_INSERT").is_err() {

@@ -56,6 +56,6 @@ pub use power::{screen_brightness, screen_scale, screen_width};
 pub use surface::{
     blit_is_whole, blit_rect, blit_rect_fit, canvas, fit, fit_rect, fit_scale, game_rect, grid,
     live_rect, picture, scaler, set_fit, set_grid, set_picture, set_scaler, set_source_size,
-    set_tone, source_size, tone, ui_origin, Fit, GfxError, Grid, Picture, Scaler, Surface, Tone,
-    GRID_DEPTH, OUT_H, OUT_W,
+    set_subpixel, set_tone, source_size, subpixel, tone, ui_origin, Fit, GfxError, Grid, Picture,
+    Scaler, Subpixel, Surface, Tone, GRID_DEPTH, OUT_H, OUT_W,
 };

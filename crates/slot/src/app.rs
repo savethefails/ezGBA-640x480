@@ -9,8 +9,8 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, write_theme_setting,
     Aspect, Cart, ColourDepth, Core, LcdGrid, Pico8Bezel, Platform, Scaling, ShelfLook, SlotState,
-    SnesPicture, StateEntry, StateRing, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
-    VOLUME_MAX,
+    SnesPicture, StateEntry, StateRing, SubpixelOrder, Theme, Word, BLUE_LIGHT_MAX, BRIGHTNESS_MAX,
+    RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_backdrop, draw_dressed_slot, draw_footer, draw_sticker, ease,
@@ -1137,6 +1137,13 @@ impl App {
                 Scaling::Shimmerless => QuickValue::Shimmerless,
             }),
             QuickRow::Sharpness => Some(QuickValue::sharpness(self.look.sharpness)),
+            QuickRow::Subpixels => Some(match self.look.subpixel {
+                SubpixelOrder::Off => QuickValue::Off,
+                SubpixelOrder::Rgb => QuickValue::SubRgb,
+                SubpixelOrder::Bgr => QuickValue::SubBgr,
+                SubpixelOrder::VerticalRgb => QuickValue::SubVerticalRgb,
+                SubpixelOrder::VerticalBgr => QuickValue::SubVerticalBgr,
+            }),
             QuickRow::RunAhead => Some(match self.look.runahead {
                 0 => QuickValue::Off,
                 1 => QuickValue::Ahead1,
@@ -2285,6 +2292,10 @@ impl App {
                 ));
                 ("runahead", look.runahead.to_string())
             }
+            QuickRow::Subpixels => {
+                look.subpixel = look.subpixel.step(by);
+                ("subpixel", look.subpixel.word().to_string())
+            }
             QuickRow::ColourDepth => {
                 look.colour_depth = look.colour_depth.step(by);
                 ("colour-depth", look.colour_depth.word().to_string())
@@ -2331,6 +2342,7 @@ impl App {
             | QuickRow::Pico8Bezel
             | QuickRow::Scaler
             | QuickRow::Sharpness
+            | QuickRow::Subpixels
             | QuickRow::RunAhead
             | QuickRow::ColourDepth
             | QuickRow::SnesCore
@@ -5352,6 +5364,8 @@ struct Look {
     snes_core: Core,
     /// What fills the bars beside a PICO-8 game.
     pico8_bezel: Pico8Bezel,
+    /// The panel's colour stripes, for drawing the game by subpixel, or off.
+    subpixel: SubpixelOrder,
 }
 
 impl From<&Theme> for Look {
@@ -5368,6 +5382,7 @@ impl From<&Theme> for Look {
             colour_custom: theme.colour_custom,
             snes_core: theme.snes_core,
             pico8_bezel: theme.pico8_bezel,
+            subpixel: theme.subpixel,
         }
     }
 }
@@ -5390,6 +5405,13 @@ impl Look {
         slot_gfx::set_scaler(match self.scaler {
             Scaling::PixelAa => slot_gfx::Scaler::PixelAa(self.sharpness),
             Scaling::Shimmerless => slot_gfx::Scaler::SharpShimmerless,
+        });
+        slot_gfx::set_subpixel(match self.subpixel {
+            SubpixelOrder::Off => slot_gfx::Subpixel::Off,
+            SubpixelOrder::Rgb => slot_gfx::Subpixel::Rgb,
+            SubpixelOrder::Bgr => slot_gfx::Subpixel::Bgr,
+            SubpixelOrder::VerticalRgb => slot_gfx::Subpixel::VerticalRgb,
+            SubpixelOrder::VerticalBgr => slot_gfx::Subpixel::VerticalBgr,
         });
         slot_gfx::set_picture(match self.picture {
             Aspect::FourThree => slot_gfx::Picture::FourThree,
