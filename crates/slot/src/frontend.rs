@@ -21,7 +21,7 @@ use slot_ui::{
 };
 
 use crate::app::{App, LinkRow, Phase};
-use crate::art_cache::{label_art, title_art};
+use crate::art_cache::label_art;
 use crate::box_art::BoxArtLoader;
 use crate::build_info::Build;
 use crate::face_builder::FaceBuilder;
@@ -592,7 +592,7 @@ fn build_cart_faces(
     carts: &[&slot_store::Cart],
 ) -> Vec<slot_ui::CartFace> {
     let face = |c: &slot_store::Cart| match root {
-        Some(root) => cart_face_with(c, label_art(root, c), title_art(root, c)),
+        Some(root) => cart_face_with(c, label_art(root, c)),
         None => cart_face(c),
     };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());

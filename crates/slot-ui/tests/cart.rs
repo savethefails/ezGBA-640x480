@@ -3,7 +3,7 @@ use slot_ui::{
     cart_face, clean_label, foot_y, gb_label_panel, gb_silhouette, label_colour, label_panel,
     label_text, lowered, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
     GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
-    MOUTH_H, OUT_H, OUT_W, PICO8_CART_H, PICO8_CART_W, PLATE_H, SNES_CART_H,
+    MOUTH_H, OUT_H, OUT_W, PICO8_CART_H, PLATE_H, SNES_CART_H,
 };
 use tempfile::TempDir;
 
@@ -819,111 +819,5 @@ fn each_game_boy_shell_gets_a_black_shadow_of_its_own_exact_outline() {
         bare / 255 > 100,
         "the two shells now differ by {} px, so the shared backing was harmless after all",
         bare / 255
-    );
-}
-
-/// A `.p8.png` as PICO-8 saves one, 160 x 205 on its dark grey, with a picture and, when `title`
-/// is set, white letters on the title's rows: here, `n` 3 px letters a pixel apart.
-fn p8_png_with_title(path: &std::path::Path, title: Option<u32>) {
-    let (w, h) = (160u32, 205u32);
-    let mut rgba = Vec::new();
-    for y in 0..h {
-        for x in 0..w {
-            let in_picture = (16..144).contains(&x) && (24..152).contains(&y);
-            let letter = title.is_some_and(|n| {
-                (167..172).contains(&y) && (18..18 + 4 * n).contains(&x) && (x - 18) % 4 != 3
-            });
-            let c = if letter {
-                [0xff, 0xf1, 0xe8]
-            } else if in_picture {
-                [0x29, 0xad, 0xff]
-            } else {
-                [0x66, 0x66, 0x66]
-            };
-            rgba.extend(c);
-            rgba.push(0xff);
-        }
-    }
-    let f = std::fs::File::create(path).expect("png");
-    let mut e = png::Encoder::new(std::io::BufWriter::new(f), w, h);
-    e.set_color(png::ColorType::Rgba);
-    e.set_depth(png::BitDepth::Eight);
-    e.write_header().unwrap().write_image_data(&rgba).unwrap();
-}
-
-fn pico8_cart(title: Option<u32>) -> (TempDir, slot_store::Cart) {
-    let d = tempfile::tempdir().expect("tempdir");
-    let games = d.path().join("Games/PICO8");
-    std::fs::create_dir_all(&games).expect("games");
-    p8_png_with_title(&games.join("game.p8.png"), title);
-    let cart = scan(d.path()).expect("scan").remove(0);
-    (d, cart)
-}
-
-/// The title is the letters on PICO-8's title rows, trimmed to them; a picture of any other
-/// size, or a cart with no title, has none.
-#[test]
-fn a_p8_png_title_is_read_off_its_rows_and_trimmed() {
-    let (_d, cart) = pico8_cart(Some(5));
-    let (mask, w, h) = slot_ui::pico8_title(&cart.rom).expect("a title");
-    assert_eq!((w, h), (4 * 5 - 1, 5));
-    assert_eq!(mask.len(), (w * h * 4) as usize);
-    assert_eq!(mask[3], 0xff, "the first letter's first column is lit");
-    assert_eq!(mask[(3 * 4 + 3) as usize], 0, "the gap after it is clear");
-    let (_d, untitled) = pico8_cart(None);
-    assert!(slot_ui::pico8_title(&untitled.rom).is_none());
-    let d = tempfile::tempdir().expect("tempdir");
-    let other = d.path().join("other.png");
-    let f = std::fs::File::create(&other).expect("png");
-    let mut e = png::Encoder::new(std::io::BufWriter::new(f), 128, 128);
-    e.set_color(png::ColorType::Rgba);
-    e.set_depth(png::BitDepth::Eight);
-    e.write_header()
-        .unwrap()
-        .write_image_data(&[0xff; 128 * 128 * 4])
-        .unwrap();
-    assert!(slot_ui::pico8_title(&other).is_none());
-}
-
-/// The title is printed light into the band over the picture, ending 16 px in from the right,
-/// and nothing else on the face changes for it.
-#[test]
-fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
-    let (_d, titled) = pico8_cart(Some(8));
-    let (_e, plain) = pico8_cart(None);
-    let a = cart_face(&titled);
-    let b = cart_face(&plain);
-    assert_eq!((a.w, a.h), (b.w, b.h));
-    let mut changed = Vec::new();
-    for y in 0..a.h {
-        for x in 0..a.w {
-            let at = ((y * a.w + x) * 4) as usize;
-            if a.rgba[at..at + 4] != b.rgba[at..at + 4] {
-                changed.push((x, y));
-            }
-        }
-    }
-    assert!(!changed.is_empty(), "no title was printed");
-    let right = PICO8_CART_W - 16;
-    for &(x, y) in &changed {
-        assert!(
-            (right - (4 * 8 - 1)..right).contains(&x) && (17..23).contains(&y),
-            "the title touched {x},{y}, outside the corner"
-        );
-    }
-    let lit = |(x, y): (u32, u32)| {
-        let at = ((y * a.w + x) * 4) as usize;
-        a.rgba[at..at + 3]
-            .iter()
-            .map(|&v| u32::from(v))
-            .sum::<u32>()
-            > b.rgba[at..at + 3]
-                .iter()
-                .map(|&v| u32::from(v))
-                .sum::<u32>()
-    };
-    assert!(
-        lit((right - 4 * 8 + 1, 17)),
-        "the first letter is not lighter"
     );
 }

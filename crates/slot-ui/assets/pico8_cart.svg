@@ -1,10 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 196">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 184">
   <!-- A PICO-8 cart, which has no real plastic: ezGBA's own faux cartridge, built round the
        picture PICO-8 prints on every .p8.png. As wide as the other carts, so the row keeps its
        width, and tall enough that the cart's 128 x 128 picture sits on it at exactly one pixel
        for one. The top left corner is cut away, as on the cart PICO-8 draws around a .p8.png;
-       the other corners are rounded off. Under the shell, across the middle, the board comes out
-       as an edge connector: 12 px of it, from a pixel up inside the shell so the two meet. -->
+       the other corners are rounded off. -->
   <path d="M20 0 H230 Q240 0 240 10 V174 Q240 184 230 184 H10 Q0 184 0 174 V20 Z" fill="#fff"/>
-  <path d="M38 183 H202 V194 Q202 196 200 196 H40 Q38 196 38 194 Z" fill="#fff"/>
 </svg>

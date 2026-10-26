@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 196">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 184">
   <!-- The faux PICO-8 cart's moulding: four short grip ridges each side of the label, the way a
        cartridge is gripped to pull it out. Black is the shadow side of each ridge and white the
        side that catches the light; see `silhouette::rasterise_detail`. -->

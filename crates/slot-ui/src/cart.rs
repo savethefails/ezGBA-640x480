@@ -92,13 +92,9 @@ pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNE
 
 /// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, and tall enough
 /// that the cart's 128 x 128 picture sits in it at one pixel for one, so the pixel art stays
-/// crisp on the shelf. The height takes in the edge connector under the shell.
+/// crisp on the shelf.
 pub const PICO8_CART_W: u32 = 240;
-pub const PICO8_CART_H: u32 = PICO8_SHELL_H + 12;
-/// Where the plastic ends. Below it, across the middle, the board comes out of the shell as an
-/// edge connector with its gold fingers bare: a cart that looks like it plugs into something,
-/// which on the shelf is what says this is the end that goes in the slot.
-pub const PICO8_SHELL_H: u32 = 184;
+pub const PICO8_CART_H: u32 = 184;
 
 /// The picture, centred across and set low, below a band of plastic like the other carts'
 /// grips.
@@ -168,9 +164,6 @@ struct Spec {
     /// Candy plastic with a shine on it: lighter at the top and deeper at the foot, and the edges
     /// facing the light catching it. PICO-8's carts only, whose plastic was never a real one.
     gloss: bool,
-    /// The row the shell ends at, below which only bare board shows: the PICO-8 cart's edge
-    /// connector. The face's height for every cart that keeps its board inside.
-    bare_from: u32,
 }
 
 /// Where the board sits inside the shell, as fractions of the face. Its top is the label's, so
@@ -256,7 +249,6 @@ fn spec(shape: Mould) -> Spec {
             },
             wraps: false,
             gloss: false,
-            bare_from: u32::MAX,
         },
         Mould::Snes => Spec {
             w: SNES_CART_W,
@@ -277,7 +269,6 @@ fn spec(shape: Mould) -> Spec {
             },
             wraps: true,
             gloss: false,
-            bare_from: u32::MAX,
         },
         // Solid plastic, so the board never shows; placed as the GBA's is, under the label.
         Mould::Pico8 => Spec {
@@ -294,13 +285,11 @@ fn spec(shape: Mould) -> Spec {
                 x: (0.135, 0.875),
                 top: PICO8_LABEL_Y as f32 / PICO8_CART_H as f32,
                 pins: (0.17, 0.84),
-                // The fingers are on the connector, out of the shell; the traces run down to it.
-                contacts_from: PICO8_SHELL_H as f32 / PICO8_CART_H as f32,
-                traces_from: 150.0 / PICO8_CART_H as f32,
+                contacts_from: 0.9,
+                traces_from: 0.85,
             },
             wraps: false,
             gloss: true,
-            bare_from: PICO8_SHELL_H,
         },
         Mould::Gb(shell) => Spec {
             w: GB_CART_W,
@@ -321,7 +310,6 @@ fn spec(shape: Mould) -> Spec {
             },
             wraps: false,
             gloss: false,
-            bare_from: u32::MAX,
         },
     }
 }
@@ -383,20 +371,7 @@ fn shadow(w: u32, h: u32, mask: &[u8]) -> CartFace {
 
 pub fn cart_face(cart: &Cart) -> CartFace {
     let art = cart.label.as_deref().and_then(|p| scale_label(cart, p));
-    cart_face_with(cart, art, title_art(cart))
-}
-
-/// The title a PICO-8 cart saved as a `.p8.png` carries under its picture, for `cart_face_with`.
-/// From the cart itself, whatever label it is shown with: a picture in `Labels/PICO8/` replaces
-/// the picture, not the name.
-pub fn title_art(cart: &Cart) -> Option<(Vec<u8>, u32, u32)> {
-    let png = cart
-        .rom
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
-    (cart.platform == Platform::Pico8 && png)
-        .then(|| art::pico8_title(&cart.rom))
-        .flatten()
+    cart_face_with(cart, art)
 }
 
 /// `src` scaled to `label_size` for `cart`. A `.p8.png` is a picture of a whole cart with the
@@ -417,12 +392,8 @@ pub fn label_size(cart: &Cart) -> (u32, u32) {
 }
 
 /// `cart_face` with the label art already scaled to `label_size`, or `None` for the
-/// generated label, and the title from `title_art`, which only a PICO-8 cart has.
-pub fn cart_face_with(
-    cart: &Cart,
-    art: Option<Vec<u8>>,
-    title: Option<(Vec<u8>, u32, u32)>,
-) -> CartFace {
+/// generated label.
+pub fn cart_face_with(cart: &Cart, art: Option<Vec<u8>>) -> CartFace {
     let mould = mould_of(cart);
     let s = spec(mould);
     let shell = shell_for(cart);
@@ -435,9 +406,6 @@ pub fn cart_face_with(
     mould_detail(&s, &mut face);
     recess_label(&s, &mut face, &shell);
     paste_label(&s, &mut face, &label);
-    if let (Mould::Pico8, Some(title)) = (mould, title) {
-        print_title(&mut face, &title);
-    }
     if s.wraps {
         wrap_label(&s, &mut face);
     }
@@ -542,11 +510,6 @@ fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
     let edge = rim_colour(through(shell.colour, shell.colour));
     for (i, depth) in s.depth.iter().enumerate() {
         let (x, y) = (i as u32 % s.w, i as u32 / s.w);
-        if y >= s.bare_from {
-            let c = inside(s, x, y).unwrap_or(BOARD);
-            rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
-            continue;
-        }
         let c = match shell.finish {
             Finish::Solid => shell.colour,
             Finish::Translucent | Finish::Glitter => {
@@ -754,40 +717,6 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
 
 /// Source over, so a label with an alpha channel shows the shell through it rather than
 /// punching a hole in the cart.
-/// Where a PICO-8 cart's title is printed: in the band of plastic over the picture, its right
-/// end 16 px in from the cart's right edge, so it reads as the corner's small print rather than
-/// a second label. One pixel of PICO-8's font for one on the cart, which is drawn one for one.
-const TITLE_RIGHT: u32 = PICO8_CART_W - 16;
-const TITLE_Y: u32 = 17;
-/// How far the letters go toward PICO-8's white: most of the way, so they are printed on the
-/// plastic in its colour rather than stuck over it.
-const TITLE_INK: f32 = 0.85;
-/// The plastic under each letter, a pixel down, darkened to this: what puts the print into the
-/// cart rather than on top of it.
-const TITLE_SHADE: f32 = 0.7;
-
-fn print_title(face: &mut CartFace, (mask, w, h): &(Vec<u8>, u32, u32)) {
-    const WHITE: [f32; 3] = [255.0, 241.0, 232.0];
-    let (w, h) = (*w, *h);
-    let x0 = TITLE_RIGHT.saturating_sub(w);
-    let on = |x: u32, y: u32| x < w && y < h && mask[((y * w + x) * 4 + 3) as usize] > 0;
-    for y in 0..=h {
-        for x in 0..w {
-            let at = (((TITLE_Y + y) * face.w + x0 + x) * 4) as usize;
-            let px = &mut face.rgba[at..at + 3];
-            if on(x, y) {
-                for (c, ink) in px.iter_mut().zip(WHITE) {
-                    *c = (f32::from(*c) + (ink - f32::from(*c)) * TITLE_INK).round() as u8;
-                }
-            } else if y > 0 && on(x, y - 1) {
-                for c in px.iter_mut() {
-                    *c = (f32::from(*c) * TITLE_SHADE).round() as u8;
-                }
-            }
-        }
-    }
-}
-
 fn paste_label(s: &Spec, face: &mut CartFace, label: &[u8]) {
     let (lx, ly, lw, lh) = s.label;
     for y in 0..lh {

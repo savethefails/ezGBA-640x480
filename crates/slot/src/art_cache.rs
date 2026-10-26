@@ -36,25 +36,6 @@ pub fn label_art(root: &Path, cart: &Cart) -> Option<Vec<u8>> {
     .map(|(rgba, _, _)| rgba)
 }
 
-/// The title a PICO-8 `.p8.png` carries under its picture, kept like a label so a boot need not
-/// decode the cart again to print it: see `slot_ui::title_art`.
-pub fn title_art(root: &Path, cart: &Cart) -> Option<Art> {
-    if cart.platform != slot_store::Platform::Pico8
-        || !cart
-            .rom
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("png"))
-    {
-        return None;
-    }
-    cached(
-        &cart.rom,
-        &cache_path(root, "Titles", cart),
-        slot_ui::PICO8_TITLE_MAX,
-        slot_ui::pico8_title,
-    )
-}
-
 /// `cart`'s box art, fitted inside `bound` with its own shape kept.
 pub fn box_art(root: &Path, cart: &Cart, bound: (u32, u32)) -> Option<Art> {
     cached(
