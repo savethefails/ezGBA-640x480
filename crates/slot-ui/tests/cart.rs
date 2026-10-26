@@ -1,9 +1,9 @@
 use slot_store::scan;
 use slot_ui::{
     cart_face, clean_label, foot_y, gb_label_panel, gb_silhouette, label_colour, label_panel,
-    label_text, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
+    label_text, lowered, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
     GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
-    MOUTH_H, OUT_H, OUT_W, PLATE_H,
+    MOUTH_H, OUT_H, OUT_W, PICO8_CART_H, PLATE_H, SNES_CART_H,
 };
 use tempfile::TempDir;
 
@@ -549,6 +549,33 @@ fn every_cartridge_is_centred_on_the_row_and_clears_both_the_plate_and_the_slot(
         (rest_y(GB_CART_H as f32), foot_y(GB_CART_H as f32)),
         (113.5, 366.5)
     );
+}
+
+/// The shelf lowers its row 100 px to leave the top of the screen to box art. Lowered that far,
+/// a cartridge taller than a GBA cart, centred, would stand in the slot: a Game Boy pak's foot
+/// at 466.5 and a PICO-8 cart's at 432, against a lip at 422, with the bottom of each label
+/// under the device. A GBA cart still goes the whole way; every taller one stops on its floor,
+/// with the same 14.5 px of ground between it and the machine.
+#[test]
+fn on_the_lowered_row_every_cartridge_stands_clear_of_the_slot() {
+    let lip = OUT_H as f32 - MOUTH_H;
+    let lower = 100.0;
+    assert_eq!(lowered(CART_H as f32, lower), lower, "the GBA cart moved");
+    for (name, h) in [
+        ("the GBA cart", CART_H),
+        ("the SNES cart", SNES_CART_H),
+        ("the PICO-8 cart", PICO8_CART_H),
+        ("the Game Boy pak", GB_CART_H),
+    ] {
+        let foot = foot_y(h as f32) + lowered(h as f32, lower);
+        assert_eq!(foot, lip - 14.5, "{name}'s foot is at {foot}");
+        assert!(
+            rest_y(h as f32) + lowered(h as f32, lower) > PLATE_H,
+            "{name} is under the HUD plate"
+        );
+    }
+    // Unlowered, nothing changes: every cartridge is centred as it always was.
+    assert_eq!(lowered(GB_CART_H as f32, 0.0), 0.0);
 }
 
 /// A Game Boy cart carries no four character game code, so the shell table has nothing to key

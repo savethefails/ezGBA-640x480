@@ -74,7 +74,7 @@ pub use quick_menu::{
     QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 pub use refusal::Refusal;
-pub use shelf::{box_art_at, box_art_space, foot_y, rest_y, BoxArt, Shelf};
+pub use shelf::{box_art_at, box_art_space, foot_y, lowered, rest_y, BoxArt, Shelf, LOWEST_FOOT};
 pub use shell::{
     gb_table_shells, gba_shell_for, lookup_order_is_exact_then_family_then_default,
     pico8_art_shell, pico8_candy_of, pico8_shell_for, shell_for, table_keys, Finish, Shell,

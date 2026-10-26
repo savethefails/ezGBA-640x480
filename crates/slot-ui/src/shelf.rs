@@ -29,6 +29,9 @@ const DROP_ALPHA: f32 = 0.16;
 /// This is where the *full size* cartridge rests. A side cart is smaller, and it keeps its foot
 /// on the line the selection's foot is on rather than shrinking about the middle, so the row
 /// still reads as objects standing on a shelf: see `foot_y`.
+///
+/// That is the row unlowered. Lowered for box art, a cartridge taller than a GBA cart would go
+/// into the slot, so it stops on the GBA cart's floor instead: see `lowered`.
 pub fn rest_y(h: f32) -> f32 {
     (OUT_H as f32 - h) / 2.0
 }
@@ -38,6 +41,20 @@ pub fn rest_y(h: f32) -> f32 {
 /// as a cart shrinks away, which is what stops the row reading as carts floating.
 pub fn foot_y(h: f32) -> f32 {
     rest_y(h) + h
+}
+
+/// The lowest a cartridge's foot goes when the row is lowered to make room for box art: where
+/// a GBA cart's comes to, 14.5 px above the slot's lip. A cartridge taller than a GBA cart
+/// centres with its foot nearer the machine, so lowered as far it would stand in the slot,
+/// its foot and the bottom of its label under the device: a Game Boy pak 44 px deep, a PICO-8
+/// cart 10. Every cartridge stops on this line instead.
+pub const LOWEST_FOOT: f32 = OUT_H as f32 - crate::slot_chrome::MOUTH_H - 14.5;
+
+/// How far a cartridge `h` tall is lowered on a row lowered by `lower`: all of it, as far as
+/// `LOWEST_FOOT`. A GBA cart goes the whole way, so it stands where it always has; a taller one
+/// stops on the GBA cart's floor. Unlowered, every cartridge is centred as `rest_y` says.
+pub fn lowered(h: f32, lower: f32) -> f32 {
+    lower.min((LOWEST_FOOT - foot_y(h)).max(0.0))
 }
 /// Critically damped, so a flick lands on a cart instead of bouncing past and returning.
 const OMEGA: f32 = 16.0;
@@ -78,7 +95,7 @@ const BOX_ART_GAP: f32 = 10.0;
 /// sides, as `(x, y, w, h)`. A Game Boy pak stands taller than a GBA cart, so it leaves less.
 pub fn box_art_space(platform: Platform, lower: f32) -> (f32, f32, f32, f32) {
     let (_, ch) = cart_box(platform);
-    let cart_top = rest_y(ch as f32) + lower;
+    let cart_top = rest_y(ch as f32) + lowered(ch as f32, lower);
     let h = (cart_top - BOX_ART_GAP - BOX_ART_MARGIN).max(1.0);
     (
         BOX_ART_SIDE,
@@ -591,7 +608,7 @@ impl Shelf {
             // travel. A caller-specific offset here read as a snap the instant the phase
             // changed - the row jumping back to its old centred rest for one frame of an
             // eject before landing back on the lowered one.
-            let y = foot_y(ch as f32) - h + y_offset;
+            let y = foot_y(ch as f32) - h + lowered(ch as f32, y_offset);
             // On the bright shelf the cart's own shape, faint and a little below it, is the shadow
             // it casts on the paper: what puts it on the ground rather than pasted over it.
             // Otherwise, black in the cart's own shape under the dimmed face. Without it the
