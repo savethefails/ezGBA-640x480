@@ -31,7 +31,7 @@ mod toast;
 pub use backdrop::{bright_backdrop_face, draw_backdrop, wallpaper_face};
 pub use barcode::{code39, CODE39_NARROW, CODE39_WIDE};
 pub use battery::{draw_gauge, BOLT_PX, GAUGE_H, GAUGE_W, WALL};
-pub use bezel::bezel_face;
+pub use bezel::{bezel_face, reflect_face, REFLECT_H, REFLECT_W};
 pub use board::{
     board_at, board_face, board_from, board_zoom, chip_face, chip_shadow_face, grown, lid_at,
     lid_from, lift_of, on_board, padded, rom_marking, rom_marking_face, shelf_cart, shelf_cart_at,

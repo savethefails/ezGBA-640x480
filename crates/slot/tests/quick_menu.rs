@@ -698,8 +698,8 @@ fn colour_depth_and_the_snes_emulator_are_kept_on_the_card() {
     slot_gfx::set_tone(slot_gfx::Tone::NEUTRAL);
 }
 
-/// PICO-8 Bezel walks Off, Quiet, Palette and Soft, stops at the ends, and writes each to the
-/// card.
+/// PICO-8 Bezel walks Off, Quiet, Palette, Soft and Reflect, stops at the ends, and writes each
+/// to the card.
 #[test]
 fn the_pico8_bezel_row_steps_and_is_kept_on_the_card() {
     let (d, mut a) = on_carousel_with_theme("");
@@ -709,19 +709,20 @@ fn the_pico8_bezel_row_steps_and_is_kept_on_the_card() {
         QuickValue::Quiet,
         QuickValue::Palette,
         QuickValue::Soft,
-        QuickValue::Soft,
+        QuickValue::Reflect,
+        QuickValue::Reflect,
     ] {
         press(&mut a, Btn::Right);
         assert_eq!(a.quick_value(QuickRow::Pico8Bezel), Some(want));
     }
     assert_eq!(
         std::fs::read_to_string(d.path().join("Config/theme.txt")).unwrap(),
-        "pico8-bezel soft\n"
+        "pico8-bezel reflect\n"
     );
     press(&mut a, Btn::Left);
     assert_eq!(
         slot_store::Theme::read(d.path()).pico8_bezel,
-        slot_store::Pico8Bezel::Palette
+        slot_store::Pico8Bezel::Soft
     );
     let (_d, a) = on_carousel_with_theme("pico8-bezel palette\n");
     assert_eq!(

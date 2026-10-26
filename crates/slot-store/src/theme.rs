@@ -57,7 +57,7 @@ pub struct Theme {
     /// `selected_core.txt` does not name. snes9x2005 is the default, being fast enough for
     /// run-ahead.
     pub snes_core: crate::Core,
-    /// `pico8-bezel off`, `quiet`, `palette` or `soft`. See `Pico8Bezel`.
+    /// `pico8-bezel off`, `quiet`, `palette`, `soft` or `reflect`. See `Pico8Bezel`.
     pub pico8_bezel: Pico8Bezel,
     /// `shelf bright` or `shelf classic`. See `ShelfLook`.
     pub shelf: ShelfLook,
@@ -90,8 +90,9 @@ pub enum ShelfLook {
     Classic,
 }
 
-/// What fills the bars either side of a PICO-8 game, which is a square on a 4:3 panel. Both are
-/// drawn in PICO-8's own 16 colours and its alternate palette, and neither names the console.
+/// What fills the bars either side of a PICO-8 game, which is a square on a 4:3 panel. Quiet,
+/// Palette and Soft are drawn in PICO-8's own 16 colours and its alternate palette; Reflect is
+/// drawn from the game itself. None names the console.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Pico8Bezel {
     /// Black bars, as every card had before this existed.
@@ -105,6 +106,10 @@ pub enum Pico8Bezel {
     /// Palette's bands alone, running straight up to the game with the game's shadow on them, so
     /// the bezel sits under the picture rather than framing it.
     Soft,
+    /// The game's own light on the glass beside it, as a CRT's bezel catches the picture: each
+    /// edge of the game mirrored outward, blurred and dimmed the further it is from the game,
+    /// and redrawn with every frame.
+    Reflect,
 }
 
 /// How much depth the game picture is given, after the image-adjustment settings RG35XXSP
@@ -202,6 +207,7 @@ impl Word for Pico8Bezel {
         (Pico8Bezel::Quiet, "quiet"),
         (Pico8Bezel::Palette, "palette"),
         (Pico8Bezel::Soft, "soft"),
+        (Pico8Bezel::Reflect, "reflect"),
     ];
 }
 
