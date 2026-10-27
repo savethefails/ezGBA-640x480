@@ -90,14 +90,15 @@ pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
 pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
-/// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, which is what the
-/// slot takes and what the shelf spaces carts for, and as tall as its picture, the title under
-/// it and its pins need.
-pub const PICO8_CART_W: u32 = 240;
+/// The faux PICO-8 cart (see `pico8_cart.svg`): as wide as the slot's opening, 14 px wider than
+/// the other carts, so it fills the slot as it drops in rather than leaving the dark of the
+/// machine showing either side; and as tall as its picture, the title under it and its pins
+/// need.
+pub const PICO8_CART_W: u32 = CART_W + 14;
 pub const PICO8_CART_H: u32 = 280;
 
 /// The picture, centred across near the top: the cart's 128 x 128 at one and a half pixels for
-/// one, as big as the width leaves room for beside it.
+/// one, with room beside it for the grips.
 pub const PICO8_LABEL_X: u32 = (PICO8_CART_W - PICO8_LABEL_W) / 2;
 pub const PICO8_LABEL_Y: u32 = 28;
 pub const PICO8_LABEL_W: u32 = 192;
@@ -775,7 +776,7 @@ const TITLE_BAND: (u32, u32) = (
 /// Screen pixels for each of PICO-8's.
 const TITLE_SCALE: u32 = 2;
 /// How wide the print may run: the picture's width and a little either side.
-const TITLE_MAX_W: u32 = PICO8_LABEL_W + 16;
+const TITLE_MAX_W: u32 = PICO8_LABEL_W + 24;
 /// How far the letters go toward PICO-8's white: most of the way, so they are printed on the
 /// plastic in its colour rather than stuck over it.
 const TITLE_INK: f32 = 0.85;

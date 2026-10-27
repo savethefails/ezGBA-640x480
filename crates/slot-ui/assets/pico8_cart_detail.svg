@@ -1,27 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 254 280">
   <!-- The faux PICO-8 cart's moulding: four short grip ridges each side of the picture, in the margin beside it, the way a
        cartridge is gripped to pull it out. Black is the shadow side of each ridge and white the
        side that catches the light; see `silhouette::rasterise_detail`. -->
   <g stroke-width="1.6" stroke-linecap="round">
     <g stroke="#000">
-      <line x1="6" y1="106" x2="18" y2="106"/>
-      <line x1="6" y1="116" x2="18" y2="116"/>
-      <line x1="6" y1="126" x2="18" y2="126"/>
-      <line x1="6" y1="136" x2="18" y2="136"/>
-      <line x1="222" y1="106" x2="234" y2="106"/>
-      <line x1="222" y1="116" x2="234" y2="116"/>
-      <line x1="222" y1="126" x2="234" y2="126"/>
-      <line x1="222" y1="136" x2="234" y2="136"/>
+      <line x1="8" y1="106" x2="24" y2="106"/>
+      <line x1="8" y1="116" x2="24" y2="116"/>
+      <line x1="8" y1="126" x2="24" y2="126"/>
+      <line x1="8" y1="136" x2="24" y2="136"/>
+      <line x1="230" y1="106" x2="246" y2="106"/>
+      <line x1="230" y1="116" x2="246" y2="116"/>
+      <line x1="230" y1="126" x2="246" y2="126"/>
+      <line x1="230" y1="136" x2="246" y2="136"/>
     </g>
     <g stroke="#fff">
-      <line x1="6" y1="108" x2="18" y2="108"/>
-      <line x1="6" y1="118" x2="18" y2="118"/>
-      <line x1="6" y1="128" x2="18" y2="128"/>
-      <line x1="6" y1="138" x2="18" y2="138"/>
-      <line x1="222" y1="108" x2="234" y2="108"/>
-      <line x1="222" y1="118" x2="234" y2="118"/>
-      <line x1="222" y1="128" x2="234" y2="128"/>
-      <line x1="222" y1="138" x2="234" y2="138"/>
+      <line x1="8" y1="108" x2="24" y2="108"/>
+      <line x1="8" y1="118" x2="24" y2="118"/>
+      <line x1="8" y1="128" x2="24" y2="128"/>
+      <line x1="8" y1="138" x2="24" y2="138"/>
+      <line x1="230" y1="108" x2="246" y2="108"/>
+      <line x1="230" y1="118" x2="246" y2="118"/>
+      <line x1="230" y1="128" x2="246" y2="128"/>
+      <line x1="230" y1="138" x2="246" y2="138"/>
     </g>
   </g>
 </svg>
