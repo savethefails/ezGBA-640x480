@@ -983,3 +983,53 @@ fn a_long_pico8_title_prints_smaller_and_breaks_between_words() {
         "{changed:?}"
     );
 }
+
+/// Gold seen through blue plastic is as dark as the board beside it, so a cool PICO-8 cart drew
+/// no pins: Bombers Run's blue one showed a flat band where red Top Speed showed its contacts.
+/// Every candy now reads its contacts at least as plainly as red does, and red is unchanged.
+#[test]
+fn every_pico8_candy_shows_its_pins() {
+    // PICO-8's red, green, dark green, blue and dark purple: red, green, teal, blue and purple
+    // carts, picked off a picture all of that colour.
+    for (name, colour) in [
+        ("red", [0xff, 0x00, 0x4d]),
+        ("green", [0x00, 0xe4, 0x36]),
+        ("teal", [0x00, 0x87, 0x51]),
+        ("blue", [0x29, 0xad, 0xff]),
+        ("purple", [0x7e, 0x25, 0x53]),
+    ] {
+        let d = tempfile::tempdir().expect("tempdir");
+        let games = d.path().join("Games/PICO8");
+        std::fs::create_dir_all(&games).expect("games");
+        let mut rgba = Vec::new();
+        for y in 0..205u32 {
+            for x in 0..160u32 {
+                let picture = (16..144).contains(&x) && (24..152).contains(&y);
+                rgba.extend(if picture { colour } else { [0x66, 0x66, 0x66] });
+                rgba.push(0xff);
+            }
+        }
+        let f = std::fs::File::create(games.join("game.p8.png")).expect("png");
+        let mut e = png::Encoder::new(std::io::BufWriter::new(f), 160, 205);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        e.write_header().unwrap().write_image_data(&rgba).unwrap();
+        let face = cart_face(&scan(d.path()).expect("scan")[0]);
+        // Across the contacts, under the picture's recess.
+        let luma: Vec<f32> = (45..195)
+            .map(|x| {
+                let at = ((175 * face.w + x) * 4) as usize;
+                let p = &face.rgba[at..at + 3];
+                0.299 * f32::from(p[0]) + 0.587 * f32::from(p[1]) + 0.114 * f32::from(p[2])
+            })
+            .collect();
+        let (lo, hi) = luma
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+        assert!(
+            hi - lo >= 18.0,
+            "the {name} cart's pins are {:.1} lighter than its board",
+            hi - lo
+        );
+    }
+}

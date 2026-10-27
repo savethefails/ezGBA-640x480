@@ -528,12 +528,27 @@ pub fn label_tags(stem: &str) -> Vec<String> {
 fn shell_face(s: &Spec, shell: &Shell) -> CartFace {
     let mut rgba = Vec::with_capacity((s.w * s.h * 4) as usize);
     let edge = rim_colour(through(shell.colour, shell.colour));
+    // Gold seen through blue plastic is as dark as the board beside it, so a cool PICO-8 cart
+    // lost its pins. They are metal and catch the light: lifted toward the plastic's own lit edge
+    // until they stand out from the board as much as they do through red.
+    let gold = if s.gloss {
+        legible(
+            through(shell.colour, GOLD),
+            through(shell.colour, BOARD),
+            edge,
+        )
+    } else {
+        through(shell.colour, GOLD)
+    };
     for (i, depth) in s.depth.iter().enumerate() {
         let (x, y) = (i as u32 % s.w, i as u32 / s.w);
         let c = match shell.finish {
             Finish::Solid => shell.colour,
             Finish::Translucent | Finish::Glitter => {
-                let body = through(shell.colour, inside(s, x, y).unwrap_or(shell.colour));
+                let body = match inside(s, x, y) {
+                    Some(GOLD) => gold,
+                    behind => through(shell.colour, behind.unwrap_or(shell.colour)),
+                };
                 let c = lerp(edge, body, (*depth as u32).min(s.rim), s.rim);
                 if shell.finish == Finish::Glitter && fleck(x, y) {
                     lerp(c, [0xff; 3], 100, 255)
@@ -570,6 +585,21 @@ fn shine(s: &Spec, c: [u8; 3], x: u32, y: u32, depth: u8) -> [u8; 3] {
     let facing = (2.0 - fx - fy).clamp(0.0, 2.0) / 2.0;
     let gleam = (near as f32 / 6.0 * facing * 150.0) as u32;
     lerp(shade, [0xff; 3], gleam.min(255), 255)
+}
+
+/// How much lighter than the board a contact has to read, in luma: what red plastic gives them
+/// (24.4), and pink, orange and yellow more.
+const PIN_CONTRAST: f32 = 24.0;
+
+/// `contact`, lifted toward `light` only as far as it takes to read `PIN_CONTRAST` lighter than
+/// `board`; unchanged where it already does.
+fn legible(contact: [u8; 3], board: [u8; 3], light: [u8; 3]) -> [u8; 3] {
+    let luma =
+        |c: [u8; 3]| 0.299 * f32::from(c[0]) + 0.587 * f32::from(c[1]) + 0.114 * f32::from(c[2]);
+    (0..=32)
+        .map(|n| lerp(contact, light, n, 32))
+        .find(|&c| luma(c) - luma(board) >= PIN_CONTRAST)
+        .unwrap_or(light)
 }
 
 /// How much of a clear shell's colour is its own surface rather than what is behind it, out of
