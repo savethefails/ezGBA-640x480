@@ -886,7 +886,9 @@ fn a_p8_png_title_is_read_off_its_rows_and_trimmed() {
 }
 
 /// The title is printed light into the band over the picture, ending 16 px in from the right,
-/// and nothing else on the face changes for it.
+/// three pixels for each of PICO-8's so it reads on the device's screen, and nothing else on
+/// the face changes for it. Eight letters are 31 px of PICO-8's font, 93 px printed, 15 px
+/// tall and centred in the band from 5 to 35.
 #[test]
 fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
     let (_d, titled) = pico8_cart(Some(8));
@@ -907,7 +909,7 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
     let right = PICO8_CART_W - 16;
     for &(x, y) in &changed {
         assert!(
-            (right - (4 * 8 - 1)..right).contains(&x) && (17..23).contains(&y),
+            (right - 3 * (4 * 8 - 1)..right).contains(&x) && (12..28).contains(&y),
             "the title touched {x},{y}, outside the corner"
         );
     }
@@ -923,7 +925,62 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
                 .sum::<u32>()
     };
     assert!(
-        lit((right - 4 * 8 + 1, 17)),
+        lit((right - 3 * (4 * 8 - 1), 12)),
         "the first letter is not lighter"
+    );
+    assert!(
+        lit((right - 3 * (4 * 8 - 1) + 2, 26)),
+        "the first letter is not three pixels to each of PICO-8's"
+    );
+}
+
+/// A title too wide for the band at three for one prints at two, broken between its words
+/// onto a second line only when it is too wide for one line at that size either.
+#[test]
+fn a_long_pico8_title_prints_smaller_and_breaks_between_words() {
+    // Twenty-six letters in one word, then a space and four more: 3x would be far too wide, and
+    // so is one line at 2x, so the four go onto a second line.
+    let face = |title: bool| {
+        let d = tempfile::tempdir().expect("tempdir");
+        let games = d.path().join("Games/PICO8");
+        std::fs::create_dir_all(&games).expect("games");
+        let mut rgba = Vec::new();
+        for y in 0..205u32 {
+            for x in 0..160u32 {
+                let col = x.wrapping_sub(18);
+                let letter = title
+                    && (167..172).contains(&y)
+                    && x >= 18
+                    && col % 4 != 3
+                    && (col < 4 * 26 || (4 * 27..4 * 31).contains(&col));
+                rgba.extend(if letter {
+                    [0xff, 0xf1, 0xe8]
+                } else {
+                    [0x66, 0x66, 0x66]
+                });
+                rgba.push(0xff);
+            }
+        }
+        let f = std::fs::File::create(games.join("long.p8.png")).expect("png");
+        let mut e = png::Encoder::new(std::io::BufWriter::new(f), 160, 205);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        e.write_header().unwrap().write_image_data(&rgba).unwrap();
+        cart_face(&scan(d.path()).expect("scan")[0])
+    };
+    let (a, b) = (face(true), face(false));
+    let changed: Vec<u32> = (0..a.h)
+        .filter(|&y| {
+            let row = (y * a.w * 4) as usize..((y + 1) * a.w * 4) as usize;
+            a.rgba[row.clone()] != b.rgba[row]
+        })
+        .collect();
+    // Two lines of 10 px with a 3 px gap, centred in the band: 8..18 and 21..31, each with its
+    // shadow a row under it.
+    assert_eq!(changed.first(), Some(&8), "{changed:?}");
+    assert_eq!(changed.last(), Some(&31), "{changed:?}");
+    assert!(
+        !changed.contains(&19) && !changed.contains(&20),
+        "{changed:?}"
     );
 }

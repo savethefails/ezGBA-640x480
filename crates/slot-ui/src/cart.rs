@@ -735,32 +735,102 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
     }
 }
 
-/// Where a PICO-8 cart's title is printed: in the band of plastic over the picture, its right
-/// end 16 px in from the cart's right edge, so it reads as the corner's small print rather than
-/// a second label. One pixel of PICO-8's font for one on the cart, which is drawn one for one.
+/// Where a PICO-8 cart's title is printed: in the band of plastic over the picture, between the
+/// cart's rim and the picture's recess, its right end 16 px in from the cart's right edge.
 const TITLE_RIGHT: u32 = PICO8_CART_W - 16;
-const TITLE_Y: u32 = 17;
+const TITLE_BAND: (u32, u32) = (5, 35);
+/// How wide the print may run: from just past the cut corner to `TITLE_RIGHT`.
+const TITLE_MAX_W: u32 = TITLE_RIGHT - 14;
 /// How far the letters go toward PICO-8's white: most of the way, so they are printed on the
 /// plastic in its colour rather than stuck over it.
 const TITLE_INK: f32 = 0.85;
-/// The plastic under each letter, a pixel down, darkened to this: what puts the print into the
-/// cart rather than on top of it.
+/// The plastic a pixel under each letter, darkened to this: what puts the print into the cart
+/// rather than on top of it.
 const TITLE_SHADE: f32 = 0.7;
 
-fn print_title(face: &mut CartFace, (mask, w, h): &(Vec<u8>, u32, u32)) {
+/// The title in PICO-8's own font, but at a size that reads on a 3.5" screen: the 5 px letters
+/// PICO-8 prints are half a millimetre tall there. Three pixels for one, as the game draws the
+/// same font at 3.75x on the same screen, when the line fits across the band; a longer title is
+/// broken between its words onto two lines at two for one, which is as large as two lines fit.
+fn print_title(face: &mut CartFace, title: &(Vec<u8>, u32, u32)) {
+    let (lines, scale) = title_layout(title);
+    let line_h = title.2 * scale;
+    let gap = scale + 1;
+    let block = line_h * lines.len() as u32 + gap * (lines.len() as u32 - 1);
+    let mut top = TITLE_BAND.0 + (TITLE_BAND.1 - TITLE_BAND.0).saturating_sub(block) / 2;
+    for (from, to) in lines {
+        let x0 = TITLE_RIGHT.saturating_sub((to - from) * scale);
+        print_line(face, title, from..to, scale, x0, top);
+        top += line_h + gap;
+    }
+}
+
+/// The title's columns broken into lines, and the scale they print at.
+fn title_layout((mask, w, h): &(Vec<u8>, u32, u32)) -> (Vec<(u32, u32)>, u32) {
+    let blank = |x: u32| (0..*h).all(|y| mask[((y * w + x) * 4 + 3) as usize] == 0);
+    // Words: letters are a column apart and a space leaves four, so a run of three or more
+    // blank columns is between words.
+    let mut words = Vec::new();
+    let mut x = 0;
+    while x < *w {
+        let start = x;
+        let mut end = x;
+        while x < *w {
+            if blank(x) {
+                let run = (x..*w).take_while(|&c| blank(c)).count() as u32;
+                if run >= 3 {
+                    x += run;
+                    break;
+                }
+                x += run;
+            } else {
+                x += 1;
+                end = x;
+            }
+        }
+        if end > start {
+            words.push((start, end));
+        }
+    }
+    if *w * 3 <= TITLE_MAX_W {
+        return (vec![(0, *w)], 3);
+    }
+    let mut lines: Vec<(u32, u32)> = Vec::new();
+    for (from, to) in words {
+        match lines.last_mut() {
+            Some(line) if (to - line.0) * 2 <= TITLE_MAX_W => line.1 = to,
+            _ => lines.push((from, to)),
+        }
+    }
+    lines.truncate(2);
+    (lines, 2)
+}
+
+fn print_line(
+    face: &mut CartFace,
+    (mask, w, h): &(Vec<u8>, u32, u32),
+    cols: std::ops::Range<u32>,
+    scale: u32,
+    x0: u32,
+    y0: u32,
+) {
     const WHITE: [f32; 3] = [255.0, 241.0, 232.0];
-    let (w, h) = (*w, *h);
-    let x0 = TITLE_RIGHT.saturating_sub(w);
-    let on = |x: u32, y: u32| x < w && y < h && mask[((y * w + x) * 4 + 3) as usize] > 0;
-    for y in 0..=h {
-        for x in 0..w {
-            let at = (((TITLE_Y + y) * face.w + x0 + x) * 4) as usize;
+    let on = |x: u32, y: u32| y < *h && x < *w && mask[((y * w + x) * 4 + 3) as usize] > 0;
+    let (lw, lh) = ((cols.end - cols.start) * scale, h * scale);
+    for y in 0..=lh {
+        for x in 0..lw {
+            let (sx, sy) = (cols.start + x / scale, y / scale);
+            let (fx, fy) = (x0 + x, y0 + y);
+            if fx >= face.w || fy >= face.h {
+                continue;
+            }
+            let at = ((fy * face.w + fx) * 4) as usize;
             let px = &mut face.rgba[at..at + 3];
-            if on(x, y) {
+            if y < lh && on(sx, sy) {
                 for (c, ink) in px.iter_mut().zip(WHITE) {
                     *c = (f32::from(*c) + (ink - f32::from(*c)) * TITLE_INK).round() as u8;
                 }
-            } else if y > 0 && on(x, y - 1) {
+            } else if y > 0 && on(cols.start + x / scale, (y - 1) / scale) {
                 for c in px.iter_mut() {
                     *c = (f32::from(*c) * TITLE_SHADE).round() as u8;
                 }
