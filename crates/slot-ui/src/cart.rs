@@ -739,6 +739,8 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
 /// cart's rim and the picture's recess, its right end 16 px in from the cart's right edge.
 const TITLE_RIGHT: u32 = PICO8_CART_W - 16;
 const TITLE_BAND: (u32, u32) = (5, 35);
+/// Screen pixels for each of PICO-8's.
+const TITLE_SCALE: u32 = 2;
 /// How wide the print may run: from just past the cut corner to `TITLE_RIGHT`.
 const TITLE_MAX_W: u32 = TITLE_RIGHT - 14;
 /// How far the letters go toward PICO-8's white: most of the way, so they are printed on the
@@ -748,10 +750,10 @@ const TITLE_INK: f32 = 0.85;
 /// rather than on top of it.
 const TITLE_SHADE: f32 = 0.7;
 
-/// The title in PICO-8's own font, but at a size that reads on a 3.5" screen: the 5 px letters
-/// PICO-8 prints are half a millimetre tall there. Three pixels for one, as the game draws the
-/// same font at 3.75x on the same screen, when the line fits across the band; a longer title is
-/// broken between its words onto two lines at two for one, which is as large as two lines fit.
+/// The title exactly as PICO-8 printed it, its own letters, at two pixels for one: the 5 px
+/// letters are half a millimetre tall on a 3.5" screen, and three for one stood out louder than
+/// small print should. A title too wide for the band at that size is broken between its words
+/// onto two lines, never re-lettered.
 fn print_title(face: &mut CartFace, title: &(Vec<u8>, u32, u32)) {
     let (lines, scale) = title_layout(title);
     let line_h = title.2 * scale;
@@ -792,18 +794,18 @@ fn title_layout((mask, w, h): &(Vec<u8>, u32, u32)) -> (Vec<(u32, u32)>, u32) {
             words.push((start, end));
         }
     }
-    if *w * 3 <= TITLE_MAX_W {
-        return (vec![(0, *w)], 3);
+    if *w * TITLE_SCALE <= TITLE_MAX_W {
+        return (vec![(0, *w)], TITLE_SCALE);
     }
     let mut lines: Vec<(u32, u32)> = Vec::new();
     for (from, to) in words {
         match lines.last_mut() {
-            Some(line) if (to - line.0) * 2 <= TITLE_MAX_W => line.1 = to,
+            Some(line) if (to - line.0) * TITLE_SCALE <= TITLE_MAX_W => line.1 = to,
             _ => lines.push((from, to)),
         }
     }
     lines.truncate(2);
-    (lines, 2)
+    (lines, TITLE_SCALE)
 }
 
 fn print_line(

@@ -886,9 +886,9 @@ fn a_p8_png_title_is_read_off_its_rows_and_trimmed() {
 }
 
 /// The title is printed light into the band over the picture, ending 16 px in from the right,
-/// three pixels for each of PICO-8's so it reads on the device's screen, and nothing else on
-/// the face changes for it. Eight letters are 31 px of PICO-8's font, 93 px printed, 15 px
-/// tall and centred in the band from 5 to 35.
+/// two pixels for each of PICO-8's so it reads on the device's screen, and nothing else on the
+/// face changes for it. Eight letters are 31 px of PICO-8's font, 62 px printed, 10 px tall
+/// and centred in the band from 5 to 35.
 #[test]
 fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
     let (_d, titled) = pico8_cart(Some(8));
@@ -909,7 +909,7 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
     let right = PICO8_CART_W - 16;
     for &(x, y) in &changed {
         assert!(
-            (right - 3 * (4 * 8 - 1)..right).contains(&x) && (12..28).contains(&y),
+            (right - 2 * (4 * 8 - 1)..right).contains(&x) && (15..26).contains(&y),
             "the title touched {x},{y}, outside the corner"
         );
     }
@@ -925,21 +925,20 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
                 .sum::<u32>()
     };
     assert!(
-        lit((right - 3 * (4 * 8 - 1), 12)),
+        lit((right - 2 * (4 * 8 - 1), 15)),
         "the first letter is not lighter"
     );
     assert!(
-        lit((right - 3 * (4 * 8 - 1) + 2, 26)),
-        "the first letter is not three pixels to each of PICO-8's"
+        lit((right - 2 * (4 * 8 - 1) + 1, 24)),
+        "the first letter is not two pixels to each of PICO-8's"
     );
 }
 
-/// A title too wide for the band at three for one prints at two, broken between its words
-/// onto a second line only when it is too wide for one line at that size either.
+/// A title too wide for the band on one line is broken between its words onto a second.
 #[test]
 fn a_long_pico8_title_prints_smaller_and_breaks_between_words() {
-    // Twenty-six letters in one word, then a space and four more: 3x would be far too wide, and
-    // so is one line at 2x, so the four go onto a second line.
+    // Twenty-six letters in one word, then a space and four more: too wide for one line at 2x,
+    // so the four go onto a second line.
     let face = |title: bool| {
         let d = tempfile::tempdir().expect("tempdir");
         let games = d.path().join("Games/PICO8");
