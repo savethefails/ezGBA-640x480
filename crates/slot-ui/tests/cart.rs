@@ -885,12 +885,12 @@ fn a_p8_png_title_is_read_off_its_rows_and_trimmed() {
     assert!(slot_ui::pico8_title(&other).is_none());
 }
 
-/// The title is printed light into the band over the picture, ending 16 px in from the right,
-/// two pixels for each of PICO-8's so it reads on the device's screen, and nothing else on the
-/// face changes for it. Eight letters are 31 px of PICO-8's font, 62 px printed, 10 px tall
-/// and centred in the band from 5 to 35.
+/// The title is printed light into the band under the picture, centred across the cart, two
+/// pixels for each of PICO-8's so it reads on the device's screen, and nothing else on the face
+/// changes for it. Eight letters are 31 px of PICO-8's font, 62 px printed, from 89 across, 10 px
+/// tall and centred in the band from 226 to 252.
 #[test]
-fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
+fn a_pico8_cart_prints_its_title_centred_under_the_picture() {
     let (_d, titled) = pico8_cart(Some(8));
     let (_e, plain) = pico8_cart(None);
     let a = cart_face(&titled);
@@ -906,11 +906,11 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
         }
     }
     assert!(!changed.is_empty(), "no title was printed");
-    let right = PICO8_CART_W - 16;
+    let left = (PICO8_CART_W - 2 * (4 * 8 - 1)) / 2;
     for &(x, y) in &changed {
         assert!(
-            (right - 2 * (4 * 8 - 1)..right).contains(&x) && (15..26).contains(&y),
-            "the title touched {x},{y}, outside the corner"
+            (left..left + 2 * (4 * 8 - 1)).contains(&x) && (234..245).contains(&y),
+            "the title touched {x},{y}, outside its place under the picture"
         );
     }
     let lit = |(x, y): (u32, u32)| {
@@ -924,12 +924,9 @@ fn a_pico8_cart_prints_its_title_in_the_top_right_corner() {
                 .map(|&v| u32::from(v))
                 .sum::<u32>()
     };
+    assert!(lit((left, 234)), "the first letter is not lighter");
     assert!(
-        lit((right - 2 * (4 * 8 - 1), 15)),
-        "the first letter is not lighter"
-    );
-    assert!(
-        lit((right - 2 * (4 * 8 - 1) + 1, 24)),
+        lit((left + 1, 243)),
         "the first letter is not two pixels to each of PICO-8's"
     );
 }
@@ -974,12 +971,12 @@ fn a_long_pico8_title_prints_smaller_and_breaks_between_words() {
             a.rgba[row.clone()] != b.rgba[row]
         })
         .collect();
-    // Two lines of 10 px with a 3 px gap, centred in the band: 8..18 and 21..31, each with its
-    // shadow a row under it.
-    assert_eq!(changed.first(), Some(&8), "{changed:?}");
-    assert_eq!(changed.last(), Some(&31), "{changed:?}");
+    // Two lines of 10 px with a 3 px gap, centred in the band from 226 to 252: 227..237 and
+    // 240..250, each with its shadow a row under it.
+    assert_eq!(changed.first(), Some(&227), "{changed:?}");
+    assert_eq!(changed.last(), Some(&250), "{changed:?}");
     assert!(
-        !changed.contains(&19) && !changed.contains(&20),
+        !changed.contains(&238) && !changed.contains(&239),
         "{changed:?}"
     );
 }
@@ -1015,10 +1012,10 @@ fn every_pico8_candy_shows_its_pins() {
         e.set_depth(png::BitDepth::Eight);
         e.write_header().unwrap().write_image_data(&rgba).unwrap();
         let face = cart_face(&scan(d.path()).expect("scan")[0]);
-        // Across the contacts, under the picture's recess.
+        // Across the contacts, at the foot of the cart.
         let luma: Vec<f32> = (45..195)
             .map(|x| {
-                let at = ((175 * face.w + x) * 4) as usize;
+                let at = ((266 * face.w + x) * 4) as usize;
                 let p = &face.rgba[at..at + 3];
                 0.299 * f32::from(p[0]) + 0.587 * f32::from(p[1]) + 0.114 * f32::from(p[2])
             })

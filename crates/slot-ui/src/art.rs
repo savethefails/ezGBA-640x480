@@ -29,20 +29,23 @@ pub fn cover(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
 
 /// The picture inside a PICO-8 cart saved as a `.p8.png`. PICO-8 draws every such cart the
 /// same 160 x 205 and puts the game's 128 x 128 picture at (16, 24), so that square is cut out
-/// and scaled to `w` by `h` by whole pixels where it can be, the way PICO-8 itself scales.
+/// and scaled to `w` by `h`.
 /// Any other picture (a label someone made) is covered like any other label.
 pub fn pico8_label(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     let (src, sw, sh) = decode(path)?;
     if (sw, sh) != (160, 205) {
         return cover(path, w, h);
     }
+    // Each pixel of the label is the average of the cart's pixels under it: at a whole number
+    // of pixels for one that is the cart's pixel itself, and between two of them, as at one and
+    // a half, the edge is shared rather than every other pixel drawn doubled.
+    let (fx, fy) = (128.0 / w as f32, 128.0 / h as f32);
     let mut out = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
-        let sy = 24 + y * 128 / h;
         for x in 0..w {
-            let sx = 16 + x * 128 / w;
-            let s = ((sy * sw + sx) * 4) as usize;
-            out[((y * w + x) * 4) as usize..][..4].copy_from_slice(&src[s..s + 4]);
+            let (x0, y0) = (16.0 + x as f32 * fx, 24.0 + y as f32 * fy);
+            let px = box_average(&src, sw, sh, x0, y0, x0 + fx, y0 + fy);
+            out[((y * w + x) * 4) as usize..][..4].copy_from_slice(&px);
         }
     }
     Some(out)

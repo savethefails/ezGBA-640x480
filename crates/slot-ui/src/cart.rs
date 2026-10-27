@@ -90,18 +90,18 @@ pub const SNES_LABEL_Y: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).1;
 pub const SNES_LABEL_W: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).2 - SNES_LABEL_X;
 pub const SNES_LABEL_H: u32 = snes_label_panel(SNES_CART_W, SNES_CART_H).3 - SNES_LABEL_Y;
 
-/// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, and tall enough
-/// that the cart's 128 x 128 picture sits in it at one pixel for one, so the pixel art stays
-/// crisp on the shelf.
+/// The faux PICO-8 cart (see `pico8_cart.svg`): the other carts' 240 across, which is what the
+/// slot takes and what the shelf spaces carts for, and as tall as its picture, the title under
+/// it and its pins need.
 pub const PICO8_CART_W: u32 = 240;
-pub const PICO8_CART_H: u32 = 184;
+pub const PICO8_CART_H: u32 = 280;
 
-/// The picture, centred across and set low, below a band of plastic like the other carts'
-/// grips.
-pub const PICO8_LABEL_X: u32 = (PICO8_CART_W - 128) / 2;
-pub const PICO8_LABEL_Y: u32 = 38;
-pub const PICO8_LABEL_W: u32 = 128;
-pub const PICO8_LABEL_H: u32 = 128;
+/// The picture, centred across near the top: the cart's 128 x 128 at one and a half pixels for
+/// one, as big as the width leaves room for beside it.
+pub const PICO8_LABEL_X: u32 = (PICO8_CART_W - PICO8_LABEL_W) / 2;
+pub const PICO8_LABEL_Y: u32 = 28;
+pub const PICO8_LABEL_W: u32 = 192;
+pub const PICO8_LABEL_H: u32 = 192;
 
 const PAD: u32 = 10;
 const MAX_LINES: usize = 3;
@@ -286,7 +286,8 @@ fn spec(shape: Mould) -> Spec {
                 top: PICO8_LABEL_Y as f32 / PICO8_CART_H as f32,
                 pins: (0.17, 0.84),
                 contacts_from: 0.9,
-                traces_from: 0.85,
+                // Below the title, so the traces do not run behind its letters.
+                traces_from: 0.88,
             },
             wraps: false,
             gloss: true,
@@ -765,14 +766,16 @@ fn recess_label(s: &Spec, face: &mut CartFace, shell: &Shell) {
     }
 }
 
-/// Where a PICO-8 cart's title is printed: in the band of plastic over the picture, between the
-/// cart's rim and the picture's recess, its right end 16 px in from the cart's right edge.
-const TITLE_RIGHT: u32 = PICO8_CART_W - 16;
-const TITLE_BAND: (u32, u32) = (5, 35);
+/// Where a PICO-8 cart's title is printed: centred under the picture, as PICO-8 prints it on a
+/// `.p8.png`, in the band of plastic between the picture's recess and the pins.
+const TITLE_BAND: (u32, u32) = (
+    PICO8_LABEL_Y + PICO8_LABEL_H + 6,
+    PICO8_LABEL_Y + PICO8_LABEL_H + 32,
+);
 /// Screen pixels for each of PICO-8's.
 const TITLE_SCALE: u32 = 2;
-/// How wide the print may run: from just past the cut corner to `TITLE_RIGHT`.
-const TITLE_MAX_W: u32 = TITLE_RIGHT - 14;
+/// How wide the print may run: the picture's width and a little either side.
+const TITLE_MAX_W: u32 = PICO8_LABEL_W + 16;
 /// How far the letters go toward PICO-8's white: most of the way, so they are printed on the
 /// plastic in its colour rather than stuck over it.
 const TITLE_INK: f32 = 0.85;
@@ -791,7 +794,7 @@ fn print_title(face: &mut CartFace, title: &(Vec<u8>, u32, u32)) {
     let block = line_h * lines.len() as u32 + gap * (lines.len() as u32 - 1);
     let mut top = TITLE_BAND.0 + (TITLE_BAND.1 - TITLE_BAND.0).saturating_sub(block) / 2;
     for (from, to) in lines {
-        let x0 = TITLE_RIGHT.saturating_sub((to - from) * scale);
+        let x0 = (PICO8_CART_W - (to - from) * scale) / 2;
         print_line(face, title, from..to, scale, x0, top);
         top += line_h + gap;
     }
