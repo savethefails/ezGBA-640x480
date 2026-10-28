@@ -15,6 +15,9 @@ use crate::slot_chrome::draw_empty_slot;
 /// of a 168 px neighbour. The 720 row's 0.78 would have left a 6 px sliver at the edge.
 const PITCH: f32 = 220.0;
 const SIDE_SCALE: f32 = 0.70;
+/// A PICO-8 cart is the slot's full 254 across, so at `SIDE_SCALE` its neighbours stood 4 px off
+/// it. Shrunk further, they stand 23 px off, a little more than a GBA cart's 16.
+const PICO8_SIDE_SCALE: f32 = 0.55;
 const SIDE_ALPHA: f32 = 0.55;
 /// How far below a cart its shadow on the bright shelf falls, at full size, and how dark it is.
 const DROP: f32 = 8.0;
@@ -517,7 +520,7 @@ impl Shelf {
             .get(self.index)
             .map_or(CART_W, |c| cart_box(c.platform).0) as f32;
         let offset = self.scroll_target() - self.scroll;
-        let scale = shrink(offset);
+        let scale = shrink(offset, self.carts.get(self.index).map(|c| c.platform));
         (OUT_W as f32 / 2.0 + offset * PITCH - w * scale / 2.0, scale)
     }
 
@@ -586,7 +589,7 @@ impl Shelf {
             // where on the row it stands: every row is centred on the cart it has selected.
             let offset = target + slot as f32 - self.scroll;
             let t = offset.abs().min(1.0);
-            let scale = shrink(offset);
+            let scale = shrink(offset, Some(cart.platform));
             let bright = self.bright;
             let side = if bright { 1.0 } else { SIDE_ALPHA };
             let alpha = (1.0 + (side - 1.0) * t) * (1.0 - recede);
@@ -679,10 +682,16 @@ impl Shelf {
 }
 
 /// How big a cart `offset` pitches from the selection is drawn, against its own size. Full at
-/// the selection and `SIDE_SCALE` from a pitch out, and one function for `draw_row` and
-/// `selected_at`, which have to agree about the selected cart on every frame of the spring.
-fn shrink(offset: f32) -> f32 {
-    1.0 + (SIDE_SCALE - 1.0) * offset.abs().min(1.0)
+/// the selection and `SIDE_SCALE` from a pitch out (`PICO8_SIDE_SCALE` for a PICO-8 cart), and
+/// one function for `draw_row` and `selected_at`, which have to agree about the selected cart on
+/// every frame of the spring.
+fn shrink(offset: f32, platform: Option<Platform>) -> f32 {
+    let side = if platform == Some(Platform::Pico8) {
+        PICO8_SIDE_SCALE
+    } else {
+        SIDE_SCALE
+    };
+    1.0 + (side - 1.0) * offset.abs().min(1.0)
 }
 
 /// How solid the shadow under a dimmed cart is. It carries the whole of the cart's opacity
