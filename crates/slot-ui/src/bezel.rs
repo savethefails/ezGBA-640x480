@@ -3,6 +3,8 @@
 //! panel's size, in PICO-8's own 16 colours and its alternate palette, in blocks of 4 px: close
 //! to the game's own pixel, 3.75 px, so the bars read as part of the same picture. Neither design
 //! names the console or carries a light.
+//!
+//! Reflect is the exception: it is drawn from the game, a frame at a time, by `reflect_face`.
 
 use slot_store::Pico8Bezel;
 
@@ -60,12 +62,13 @@ const BAR: u32 = (OUT_W - OUT_H) / 2;
 const BAR_BLOCKS: u32 = BAR / BLOCK;
 
 /// The bezel as an RGBA picture the size of the panel, with the game's square left black for
-/// the game to be drawn over. `None` for `Off`, which draws nothing.
+/// the game to be drawn over. `None` for `Off`, which draws nothing, and for `Reflect`, which
+/// `reflect_face` draws from the game instead.
 pub fn bezel_face(bezel: Pico8Bezel) -> Option<Vec<u8>> {
     let mut face = Face(vec![0; (OUT_W * OUT_H * 4) as usize]);
     face.fill(0, 0, OUT_W, OUT_H, BLACK);
     match bezel {
-        Pico8Bezel::Off => return None,
+        Pico8Bezel::Off | Pico8Bezel::Reflect => return None,
         Pico8Bezel::Quiet => quiet(&mut face),
         Pico8Bezel::Palette => palette(&mut face),
         Pico8Bezel::Soft => soft(&mut face),
@@ -182,6 +185,89 @@ fn sparkle(face: &mut Face, cx: u32, cy: u32) {
     }
     for &((dx, dy), colour) in &points {
         face.block(at(dx, cx), at(dy, cy), colour);
+    }
+}
+
+/// Reflect's picture: a texel for each block of the panel, so 160 x 120, drawn over the whole
+/// panel with nearest filtering. Small enough to redraw from every frame and upload whole.
+pub const REFLECT_W: u32 = OUT_W / BLOCK;
+pub const REFLECT_H: u32 = OUT_H / BLOCK;
+
+/// How bright the glass is beside the game, as a share of the picture's own light.
+const GLASS: f32 = 0.38;
+/// Blocks out from the game for the reflection to fall to about a third.
+const FALLOFF: f32 = 5.0;
+/// How much wider the blur grows with each game pixel the glass is from the game.
+const SPREAD: f32 = 0.6;
+/// The bezel slopes away from the screen, so it mirrors more of the picture than its own width:
+/// each block out reaches this many blocks into the game.
+const SQUEEZE: f32 = 1.6;
+/// How much of the picture's colour the glass keeps.
+const SATURATION: f32 = 0.8;
+
+/// Reflect's bars from one frame of the game, `xrgb` being `size` pixels of XRGB8888 as the core
+/// draws them, into `out` as `REFLECT_W` x `REFLECT_H` RGBA. Each bar mirrors the game's edge
+/// beside it, as the glass round a CRT does: blurred wider and dimmed the further out it is, a
+/// little short of the picture's colour, and black for the block touching the game, so the
+/// picture keeps its edge. The game's square is left black; a frame that is no picture leaves
+/// all of it black.
+pub fn reflect_face(xrgb: &[u8], (w, h): (u32, u32), out: &mut Vec<u8>) {
+    out.clear();
+    out.extend([0, 0, 0, 0xff].repeat((REFLECT_W * REFLECT_H) as usize));
+    let (fw, fh) = (w as usize, h as usize);
+    if fw == 0 || fh == 0 || xrgb.len() < fw * fh * 4 {
+        return;
+    }
+    // Light adds in linear terms, not in the bytes' gamma, or the blur goes muddy.
+    let decode: [f32; 256] = std::array::from_fn(|v| (v as f32 / 255.0).powf(2.2));
+    // Each pixel's sum with everything above and left of it, so any box's mean is four reads.
+    let stride = fw + 1;
+    let mut sum = vec![[0f32; 3]; stride * (fh + 1)];
+    for y in 0..fh {
+        let mut row = [0f32; 3];
+        for x in 0..fw {
+            let p = &xrgb[(y * fw + x) * 4..];
+            // Bytes in memory are B, G, R, X.
+            for (c, byte) in [p[2], p[1], p[0]].into_iter().enumerate() {
+                row[c] += decode[byte as usize];
+                sum[(y + 1) * stride + x + 1][c] = sum[y * stride + x + 1][c] + row[c];
+            }
+        }
+    }
+    let mean = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        let cx = |v: f32| (v.max(0.0) as usize).min(fw);
+        let cy = |v: f32| (v.max(0.0) as usize).min(fh);
+        let (x0, x1, y0, y1) = (cx(x0.floor()), cx(x1.ceil()), cy(y0.floor()), cy(y1.ceil()));
+        let n = ((x1 - x0) * (y1 - y0)).max(1) as f32;
+        std::array::from_fn::<f32, 3, _>(|c| {
+            (sum[y1 * stride + x1][c] - sum[y0 * stride + x1][c] - sum[y1 * stride + x0][c]
+                + sum[y0 * stride + x0][c])
+                / n
+        })
+    };
+    // The game is drawn OUT_H square, whatever its own size.
+    let (across, down) = (fw as f32 / OUT_H as f32, fh as f32 / OUT_H as f32);
+    for (x0, left) in [(0, true), (REFLECT_W - BAR_BLOCKS, false)] {
+        for bx in 0..BAR_BLOCKS {
+            let d = if left { BAR_BLOCKS - 1 - bx } else { bx };
+            if d == 0 {
+                continue;
+            }
+            let into = d as f32 * (BLOCK as f32 * across) * SQUEEZE;
+            let reach = 0.6 + SPREAD * into;
+            let cx = if left { into } else { fw as f32 - into };
+            let glass = GLASS * (-(d as f32) / FALLOFF).exp();
+            for by in 0..REFLECT_H {
+                let cy = (by * BLOCK) as f32 * down + BLOCK as f32 * down / 2.0;
+                let c = mean(cx - reach, cy - reach, cx + reach, cy + reach);
+                let grey = (c[0] + c[1] + c[2]) / 3.0;
+                let at = ((by * REFLECT_W + x0 + bx) * 4) as usize;
+                for (ch, v) in c.into_iter().enumerate() {
+                    let v = (grey + (v - grey) * SATURATION) * glass;
+                    out[at + ch] = (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                }
+            }
+        }
     }
 }
 

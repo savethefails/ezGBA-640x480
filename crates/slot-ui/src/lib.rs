@@ -1,5 +1,5 @@
 mod art;
-pub use art::{contain, cover};
+pub use art::{contain, cover, pico8_title, PICO8_TITLE_MAX};
 mod backdrop;
 mod barcode;
 mod battery;
@@ -31,7 +31,7 @@ mod toast;
 pub use backdrop::{bright_backdrop_face, draw_backdrop, wallpaper_face};
 pub use barcode::{code39, CODE39_NARROW, CODE39_WIDE};
 pub use battery::{draw_gauge, BOLT_PX, GAUGE_H, GAUGE_W, WALL};
-pub use bezel::bezel_face;
+pub use bezel::{bezel_face, reflect_face, REFLECT_H, REFLECT_W};
 pub use board::{
     board_at, board_face, board_from, board_zoom, chip_face, chip_shadow_face, grown, lid_at,
     lid_from, lift_of, on_board, padded, rom_marking, rom_marking_face, shelf_cart, shelf_cart_at,
@@ -42,10 +42,11 @@ pub use board::{
 pub use cart::{
     cart_box, cart_face, cart_face_with, cart_shadow, clean_label, gb_cart_shadow, gb_label_panel,
     gb_shell_of, label_colour, label_panel, label_size, label_tags, label_text, mould_of,
-    pico8_cart_shadow, scale_label, snes_cart_shadow, CartFace, Mould, CART_H, CART_W, GB_CART_H,
-    GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
-    PICO8_CART_H, PICO8_CART_W, PICO8_LABEL_H, PICO8_LABEL_W, PICO8_LABEL_X, PICO8_LABEL_Y,
-    SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W, SNES_LABEL_X, SNES_LABEL_Y,
+    pico8_cart_shadow, scale_label, snes_cart_shadow, title_art, CartFace, Mould, CART_H, CART_W,
+    GB_CART_H, GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W,
+    LABEL_X, LABEL_Y, PICO8_CART_H, PICO8_CART_W, PICO8_LABEL_H, PICO8_LABEL_W, PICO8_LABEL_X,
+    PICO8_LABEL_Y, SNES_CART_H, SNES_CART_W, SNES_LABEL_H, SNES_LABEL_W, SNES_LABEL_X,
+    SNES_LABEL_Y,
 };
 pub use clock::{clock_label, date_time_text, hhmm, set_clock_hint_face, ClockPicker, Field};
 pub use draw::{Draw, TexId, OUT_H, OUT_W};
@@ -74,11 +75,11 @@ pub use quick_menu::{
     QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 pub use refusal::Refusal;
-pub use shelf::{box_art_at, box_art_space, foot_y, rest_y, BoxArt, Shelf};
+pub use shelf::{box_art_at, box_art_space, foot_y, lowered, rest_y, BoxArt, Shelf, LOWEST_FOOT};
 pub use shell::{
-    gb_table_shells, gba_shell_for, lookup_order_is_exact_then_family_then_default, shell_for,
-    table_keys, Finish, Shell, DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, GB_CLEAR_SHELL,
-    SNES_SHELL,
+    gb_table_shells, gba_shell_for, lookup_order_is_exact_then_family_then_default,
+    pico8_art_shell, pico8_candy_of, pico8_shell_for, shell_for, table_keys, Finish, Shell,
+    DEFAULT_SHELL, DMG_SHELL, DUAL_MODE_SHELL, GB_CLEAR_SHELL, PICO8_CANDY, SNES_SHELL,
 };
 pub use silhouette::{gb_silhouette, silhouette, GbShell};
 pub use slot_chrome::{

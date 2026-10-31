@@ -1,9 +1,9 @@
 use slot_store::scan;
 use slot_ui::{
     cart_face, clean_label, foot_y, gb_label_panel, gb_silhouette, label_colour, label_panel,
-    label_text, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
+    label_text, lowered, rest_y, shell_for, silhouette, Finish, GbShell, CART_H, CART_W, GB_CART_H,
     GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
-    MOUTH_H, OUT_H, OUT_W, PLATE_H,
+    MOUTH_H, OUT_H, OUT_W, PICO8_CART_H, PICO8_CART_W, PLATE_H, SNES_CART_H,
 };
 use tempfile::TempDir;
 
@@ -551,6 +551,33 @@ fn every_cartridge_is_centred_on_the_row_and_clears_both_the_plate_and_the_slot(
     );
 }
 
+/// The shelf lowers its row 100 px to leave the top of the screen to box art. Lowered that far,
+/// a cartridge taller than a GBA cart, centred, would stand in the slot: a Game Boy pak's foot
+/// at 466.5 and a PICO-8 cart's at 432, against a lip at 422, with the bottom of each label
+/// under the device. A GBA cart still goes the whole way; every taller one stops on its floor,
+/// with the same 14.5 px of ground between it and the machine.
+#[test]
+fn on_the_lowered_row_every_cartridge_stands_clear_of_the_slot() {
+    let lip = OUT_H as f32 - MOUTH_H;
+    let lower = 100.0;
+    assert_eq!(lowered(CART_H as f32, lower), lower, "the GBA cart moved");
+    for (name, h) in [
+        ("the GBA cart", CART_H),
+        ("the SNES cart", SNES_CART_H),
+        ("the PICO-8 cart", PICO8_CART_H),
+        ("the Game Boy pak", GB_CART_H),
+    ] {
+        let foot = foot_y(h as f32) + lowered(h as f32, lower);
+        assert_eq!(foot, lip - 14.5, "{name}'s foot is at {foot}");
+        assert!(
+            rest_y(h as f32) + lowered(h as f32, lower) > PLATE_H,
+            "{name} is under the HUD plate"
+        );
+    }
+    // Unlowered, nothing changes: every cartridge is centred as it always was.
+    assert_eq!(lowered(GB_CART_H as f32, 0.0), 0.0);
+}
+
 /// A Game Boy cart carries no four character game code, so the shell table has nothing to key
 /// on. The CGB flag is what the header does say about the plastic, and it says three things,
 /// not two: 0x00 is grey, 0x80 is **black**, 0xc0 is clear. slot used to draw 0x80 translucent
@@ -793,4 +820,213 @@ fn each_game_boy_shell_gets_a_black_shadow_of_its_own_exact_outline() {
         "the two shells now differ by {} px, so the shared backing was harmless after all",
         bare / 255
     );
+}
+
+/// A `.p8.png` as PICO-8 saves one, 160 x 205 on its dark grey, with a picture and, when `title`
+/// is set, white letters on the title's rows: here, `n` 3 px letters a pixel apart.
+fn p8_png_with_title(path: &std::path::Path, title: Option<u32>) {
+    let (w, h) = (160u32, 205u32);
+    let mut rgba = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let in_picture = (16..144).contains(&x) && (24..152).contains(&y);
+            let letter = title.is_some_and(|n| {
+                (167..172).contains(&y) && (18..18 + 4 * n).contains(&x) && (x - 18) % 4 != 3
+            });
+            let c = if letter {
+                [0xff, 0xf1, 0xe8]
+            } else if in_picture {
+                [0x29, 0xad, 0xff]
+            } else {
+                [0x66, 0x66, 0x66]
+            };
+            rgba.extend(c);
+            rgba.push(0xff);
+        }
+    }
+    let f = std::fs::File::create(path).expect("png");
+    let mut e = png::Encoder::new(std::io::BufWriter::new(f), w, h);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    e.write_header().unwrap().write_image_data(&rgba).unwrap();
+}
+
+fn pico8_cart(title: Option<u32>) -> (TempDir, slot_store::Cart) {
+    let d = tempfile::tempdir().expect("tempdir");
+    let games = d.path().join("Games/PICO8");
+    std::fs::create_dir_all(&games).expect("games");
+    p8_png_with_title(&games.join("game.p8.png"), title);
+    let cart = scan(d.path()).expect("scan").remove(0);
+    (d, cart)
+}
+
+/// The title is the letters on PICO-8's title rows, trimmed to them; a picture of any other
+/// size, or a cart with no title, has none.
+#[test]
+fn a_p8_png_title_is_read_off_its_rows_and_trimmed() {
+    let (_d, cart) = pico8_cart(Some(5));
+    let (mask, w, h) = slot_ui::pico8_title(&cart.rom).expect("a title");
+    assert_eq!((w, h), (4 * 5 - 1, 5));
+    assert_eq!(mask.len(), (w * h * 4) as usize);
+    assert_eq!(mask[3], 0xff, "the first letter's first column is lit");
+    assert_eq!(mask[(3 * 4 + 3) as usize], 0, "the gap after it is clear");
+    let (_d, untitled) = pico8_cart(None);
+    assert!(slot_ui::pico8_title(&untitled.rom).is_none());
+    let d = tempfile::tempdir().expect("tempdir");
+    let other = d.path().join("other.png");
+    let f = std::fs::File::create(&other).expect("png");
+    let mut e = png::Encoder::new(std::io::BufWriter::new(f), 128, 128);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    e.write_header()
+        .unwrap()
+        .write_image_data(&[0xff; 128 * 128 * 4])
+        .unwrap();
+    assert!(slot_ui::pico8_title(&other).is_none());
+}
+
+/// The title is printed light into the band under the picture, centred across the cart, two
+/// pixels for each of PICO-8's so it reads on the device's screen, and nothing else on the face
+/// changes for it. Eight letters are 31 px of PICO-8's font, 62 px printed, from 89 across, 10 px
+/// tall and centred in the band from 226 to 252.
+#[test]
+fn a_pico8_cart_prints_its_title_centred_under_the_picture() {
+    let (_d, titled) = pico8_cart(Some(8));
+    let (_e, plain) = pico8_cart(None);
+    let a = cart_face(&titled);
+    let b = cart_face(&plain);
+    assert_eq!((a.w, a.h), (b.w, b.h));
+    let mut changed = Vec::new();
+    for y in 0..a.h {
+        for x in 0..a.w {
+            let at = ((y * a.w + x) * 4) as usize;
+            if a.rgba[at..at + 4] != b.rgba[at..at + 4] {
+                changed.push((x, y));
+            }
+        }
+    }
+    assert!(!changed.is_empty(), "no title was printed");
+    let left = (PICO8_CART_W - 2 * (4 * 8 - 1)) / 2;
+    for &(x, y) in &changed {
+        assert!(
+            (left..left + 2 * (4 * 8 - 1)).contains(&x) && (234..245).contains(&y),
+            "the title touched {x},{y}, outside its place under the picture"
+        );
+    }
+    let lit = |(x, y): (u32, u32)| {
+        let at = ((y * a.w + x) * 4) as usize;
+        a.rgba[at..at + 3]
+            .iter()
+            .map(|&v| u32::from(v))
+            .sum::<u32>()
+            > b.rgba[at..at + 3]
+                .iter()
+                .map(|&v| u32::from(v))
+                .sum::<u32>()
+    };
+    assert!(lit((left, 234)), "the first letter is not lighter");
+    assert!(
+        lit((left + 1, 243)),
+        "the first letter is not two pixels to each of PICO-8's"
+    );
+}
+
+/// A title too wide for the band on one line is broken between its words onto a second.
+#[test]
+fn a_long_pico8_title_prints_smaller_and_breaks_between_words() {
+    // Twenty-six letters in one word, then a space and four more: too wide for one line at 2x,
+    // so the four go onto a second line.
+    let face = |title: bool| {
+        let d = tempfile::tempdir().expect("tempdir");
+        let games = d.path().join("Games/PICO8");
+        std::fs::create_dir_all(&games).expect("games");
+        let mut rgba = Vec::new();
+        for y in 0..205u32 {
+            for x in 0..160u32 {
+                let col = x.wrapping_sub(18);
+                let letter = title
+                    && (167..172).contains(&y)
+                    && x >= 18
+                    && col % 4 != 3
+                    && (col < 4 * 26 || (4 * 27..4 * 31).contains(&col));
+                rgba.extend(if letter {
+                    [0xff, 0xf1, 0xe8]
+                } else {
+                    [0x66, 0x66, 0x66]
+                });
+                rgba.push(0xff);
+            }
+        }
+        let f = std::fs::File::create(games.join("long.p8.png")).expect("png");
+        let mut e = png::Encoder::new(std::io::BufWriter::new(f), 160, 205);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        e.write_header().unwrap().write_image_data(&rgba).unwrap();
+        cart_face(&scan(d.path()).expect("scan")[0])
+    };
+    let (a, b) = (face(true), face(false));
+    let changed: Vec<u32> = (0..a.h)
+        .filter(|&y| {
+            let row = (y * a.w * 4) as usize..((y + 1) * a.w * 4) as usize;
+            a.rgba[row.clone()] != b.rgba[row]
+        })
+        .collect();
+    // Two lines of 10 px with a 3 px gap, centred in the band from 226 to 252: 227..237 and
+    // 240..250, each with its shadow a row under it.
+    assert_eq!(changed.first(), Some(&227), "{changed:?}");
+    assert_eq!(changed.last(), Some(&250), "{changed:?}");
+    assert!(
+        !changed.contains(&238) && !changed.contains(&239),
+        "{changed:?}"
+    );
+}
+
+/// Gold seen through blue plastic is as dark as the board beside it, so a cool PICO-8 cart drew
+/// no pins: Bombers Run's blue one showed a flat band where red Top Speed showed its contacts.
+/// Every candy now reads its contacts at least as plainly as red does, and red is unchanged.
+#[test]
+fn every_pico8_candy_shows_its_pins() {
+    // PICO-8's red, green, dark green, blue and dark purple: red, green, teal, blue and purple
+    // carts, picked off a picture all of that colour.
+    for (name, colour) in [
+        ("red", [0xff, 0x00, 0x4d]),
+        ("green", [0x00, 0xe4, 0x36]),
+        ("teal", [0x00, 0x87, 0x51]),
+        ("blue", [0x29, 0xad, 0xff]),
+        ("purple", [0x7e, 0x25, 0x53]),
+    ] {
+        let d = tempfile::tempdir().expect("tempdir");
+        let games = d.path().join("Games/PICO8");
+        std::fs::create_dir_all(&games).expect("games");
+        let mut rgba = Vec::new();
+        for y in 0..205u32 {
+            for x in 0..160u32 {
+                let picture = (16..144).contains(&x) && (24..152).contains(&y);
+                rgba.extend(if picture { colour } else { [0x66, 0x66, 0x66] });
+                rgba.push(0xff);
+            }
+        }
+        let f = std::fs::File::create(games.join("game.p8.png")).expect("png");
+        let mut e = png::Encoder::new(std::io::BufWriter::new(f), 160, 205);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        e.write_header().unwrap().write_image_data(&rgba).unwrap();
+        let face = cart_face(&scan(d.path()).expect("scan")[0]);
+        // Across the contacts, at the foot of the cart.
+        let luma: Vec<f32> = (45..195)
+            .map(|x| {
+                let at = ((266 * face.w + x) * 4) as usize;
+                let p = &face.rgba[at..at + 3];
+                0.299 * f32::from(p[0]) + 0.587 * f32::from(p[1]) + 0.114 * f32::from(p[2])
+            })
+            .collect();
+        let (lo, hi) = luma
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+        assert!(
+            hi - lo >= 18.0,
+            "the {name} cart's pins are {:.1} lighter than its board",
+            hi - lo
+        );
+    }
 }

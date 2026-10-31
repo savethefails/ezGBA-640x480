@@ -7,7 +7,7 @@ use slot_store::Theme;
 use crate::cart::{cart_box, label_colour, label_text, CART_W};
 use crate::fantasy::{draw_confetti, draw_trim, glow, pose, Case, Whimsy};
 use crate::icon::icon_box;
-use crate::shelf::{foot_y, rest_y};
+use crate::shelf::{foot_y, lowered, rest_y};
 
 /// Big enough to read as a symbol on a 240 px cart rather than as a mark on its label.
 pub const ALERT_PX: f32 = 44.0;
@@ -148,6 +148,7 @@ fn seated_x(w: f32) -> f32 {
 /// Rendered and looked at, that is the right way round: the pak is a bigger object sitting
 /// closer to the slot, and a heavy thing that has not far to drop should not be flung at it.
 fn catch_at(h: f32, lower: f32) -> f32 {
+    let lower = lowered(h, lower);
     (LIP_Y - foot_y(h) - lower) / (SEATED_Y - rest_y(h) - lower)
 }
 
@@ -295,7 +296,7 @@ impl SlotChrome<'_> {
         // measured back from the foot. Both the drop and the growth are on the one progress.
         let scale = self.scale.clamp(0.0, 1.0);
         let (w0, h0) = (cw * scale, ch * scale);
-        let stands = foot_y(ch) - h0 + self.lower;
+        let stands = foot_y(ch) - h0 + lowered(ch, self.lower);
         let travel = travel(seat, ch, self.lower);
         let x = self.rest + (seated_x(cw) - self.rest) * travel;
         let y = stands + (SEATED_Y - stands) * travel;

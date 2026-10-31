@@ -156,6 +156,7 @@ fn the_values_read_as_the_menu_prints_them() {
             "Quiet",
             "Palette",
             "Soft",
+            "Reflect",
             "RGB",
             "BGR",
             "RGB Vertical",

@@ -624,6 +624,9 @@ pub struct App {
     /// The PICO-8 bezels, Quiet, Palette and Soft, drawn at boot and shown behind a PICO-8 game
     /// as `Look::pico8_bezel` says.
     bezel_faces: Option<[TexId; 3]>,
+    /// Reflect's bars, which the frontend redraws from each frame of the game while
+    /// `reflects` says so.
+    reflection: Option<TexId>,
     /// The bright shelf's ground, drawn at boot: what the shelf stands on when the card carries
     /// no wallpaper and the theme has it bright.
     bright_ground: Option<TexId>,
@@ -800,6 +803,7 @@ impl App {
             about_a_down: None,
             wallpaper: None,
             bezel_faces: None,
+            reflection: None,
             bright_ground: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
@@ -1127,6 +1131,7 @@ impl App {
                 Pico8Bezel::Quiet => QuickValue::Quiet,
                 Pico8Bezel::Palette => QuickValue::Palette,
                 Pico8Bezel::Soft => QuickValue::Soft,
+                Pico8Bezel::Reflect => QuickValue::Reflect,
             }),
             QuickRow::SnesPicture => Some(match self.look.snes_picture {
                 SnesPicture::Sharp => QuickValue::SnesSharp,
@@ -1224,6 +1229,17 @@ impl App {
     /// Quiet, Palette, then Soft: see `bezel_faces`.
     pub fn set_bezel_faces(&mut self, faces: [TexId; 3]) {
         self.bezel_faces = Some(faces);
+    }
+
+    /// The texture Reflect's bars are drawn into: see `reflection`.
+    pub fn set_reflection(&mut self, face: TexId) {
+        self.reflection = Some(face);
+    }
+
+    /// Whether the game's frames should be reflected into the bezel: a PICO-8 game with Reflect
+    /// chosen. Asked a frame at a time, so the work stops the moment either is not so.
+    pub fn reflects(&self) -> bool {
+        self.core == Core::Pico8 && self.look.pico8_bezel == Pico8Bezel::Reflect
     }
 
     /// The bright ground, while the shelf is dressed bright.
@@ -3415,16 +3431,17 @@ impl App {
     /// The bars beside a PICO-8 game, under it: the game's square is drawn over the bezel's
     /// black middle. On a square panel the game fills it and covers the bezel whole.
     fn push_bezel(&self, alpha: f32, out: &mut Vec<Draw>) {
-        let at = match self.look.pico8_bezel {
-            Pico8Bezel::Off => return,
-            Pico8Bezel::Quiet => 0,
-            Pico8Bezel::Palette => 1,
-            Pico8Bezel::Soft => 2,
+        if self.core != Core::Pico8 || !self.game_lit {
+            return;
+        }
+        let tex = match self.look.pico8_bezel {
+            Pico8Bezel::Off => None,
+            Pico8Bezel::Quiet => self.bezel_faces.map(|f| f[0]),
+            Pico8Bezel::Palette => self.bezel_faces.map(|f| f[1]),
+            Pico8Bezel::Soft => self.bezel_faces.map(|f| f[2]),
+            Pico8Bezel::Reflect => self.reflection,
         };
-        let Some(faces) = self
-            .bezel_faces
-            .filter(|_| self.core == Core::Pico8 && self.game_lit)
-        else {
+        let Some(tex) = tex else {
             return;
         };
         out.push(Draw::Tex {
@@ -3432,7 +3449,7 @@ impl App {
             y: 0.0,
             w: OUT_W as f32,
             h: OUT_H as f32,
-            tex: faces[at],
+            tex,
             alpha,
         });
     }

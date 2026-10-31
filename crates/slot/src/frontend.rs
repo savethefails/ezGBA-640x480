@@ -21,7 +21,7 @@ use slot_ui::{
 };
 
 use crate::app::{App, LinkRow, Phase};
-use crate::art_cache::label_art;
+use crate::art_cache::{label_art, title_art};
 use crate::box_art::BoxArtLoader;
 use crate::build_info::Build;
 use crate::face_builder::FaceBuilder;
@@ -85,6 +85,9 @@ pub struct Frontend {
     about: AboutFace,
     quick_clock: QuickClock,
     greeting: GreetingFace,
+    /// Reflect's bars on the GPU, and the buffer each frame's are drawn into before they go up.
+    reflection: Option<TexId>,
+    reflected: Vec<u8>,
 }
 
 /// The greeting's picture, and which frame is in it.
@@ -173,6 +176,8 @@ impl Frontend {
             about: AboutFace::default(),
             quick_clock: QuickClock::default(),
             greeting: GreetingFace::default(),
+            reflection: None,
+            reflected: Vec::new(),
             scene: None,
             covered: false,
             composed: false,
@@ -301,6 +306,15 @@ impl Frontend {
             compositor.create_texture_nearest(OUT_W, OUT_H, &rgba)
         });
         self.session.app_mut().set_bezel_faces(bezels);
+        // Reflect's, black until a PICO-8 frame is reflected into it. Nearest, so each texel is
+        // one of the bezel's 4 px blocks.
+        let reflection = compositor.create_texture_nearest(
+            slot_ui::REFLECT_W,
+            slot_ui::REFLECT_H,
+            &[0, 0, 0, 0xff].repeat((slot_ui::REFLECT_W * slot_ui::REFLECT_H) as usize),
+        );
+        self.session.app_mut().set_reflection(reflection);
+        self.reflection = Some(reflection);
         // The bright shelf's ground, drawn whenever the card carries no wallpaper of its own.
         let ground = bright_backdrop_face();
         let ground = compositor.create_texture(OUT_W, OUT_H, &ground);
@@ -438,6 +452,17 @@ impl Frontend {
                 self.session.app_mut().mark_game_lit();
             }
             compositor.upload_game(&frame, frame.size());
+            // Only on a new frame: the glass shows what the picture shows, so it changes no
+            // more often than the picture does.
+            if let Some(tex) = self.reflection.filter(|_| self.session.app().reflects()) {
+                slot_ui::reflect_face(&frame, frame.size(), &mut self.reflected);
+                compositor.update_texture(
+                    tex,
+                    slot_ui::REFLECT_W,
+                    slot_ui::REFLECT_H,
+                    &self.reflected,
+                );
+            }
             crate::latency::drawn();
         }
         self.box_art.sync(self.session.app_mut(), compositor);
@@ -567,7 +592,7 @@ fn build_cart_faces(
     carts: &[&slot_store::Cart],
 ) -> Vec<slot_ui::CartFace> {
     let face = |c: &slot_store::Cart| match root {
-        Some(root) => cart_face_with(c, label_art(root, c)),
+        Some(root) => cart_face_with(c, label_art(root, c), title_art(root, c)),
         None => cart_face(c),
     };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());

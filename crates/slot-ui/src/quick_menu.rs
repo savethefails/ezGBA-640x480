@@ -134,6 +134,7 @@ pub enum QuickValue {
     Quiet,
     Palette,
     Soft,
+    Reflect,
     SubRgb,
     SubBgr,
     SubVerticalRgb,
@@ -141,7 +142,7 @@ pub enum QuickValue {
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 42] = [
+    pub const ALL: [QuickValue; 43] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -180,6 +181,7 @@ impl QuickValue {
         QuickValue::Quiet,
         QuickValue::Palette,
         QuickValue::Soft,
+        QuickValue::Reflect,
         QuickValue::SubRgb,
         QuickValue::SubBgr,
         QuickValue::SubVerticalRgb,
@@ -237,6 +239,7 @@ impl QuickValue {
             QuickValue::Quiet => "Quiet",
             QuickValue::Palette => "Palette",
             QuickValue::Soft => "Soft",
+            QuickValue::Reflect => "Reflect",
             QuickValue::SubRgb => "RGB",
             QuickValue::SubBgr => "BGR",
             QuickValue::SubVerticalRgb => "RGB Vertical",

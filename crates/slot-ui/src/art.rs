@@ -29,23 +29,60 @@ pub fn cover(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
 
 /// The picture inside a PICO-8 cart saved as a `.p8.png`. PICO-8 draws every such cart the
 /// same 160 x 205 and puts the game's 128 x 128 picture at (16, 24), so that square is cut out
-/// and scaled to `w` by `h` by whole pixels where it can be, the way PICO-8 itself scales.
+/// and scaled to `w` by `h`.
 /// Any other picture (a label someone made) is covered like any other label.
 pub fn pico8_label(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     let (src, sw, sh) = decode(path)?;
     if (sw, sh) != (160, 205) {
         return cover(path, w, h);
     }
+    // Each pixel of the label is the average of the cart's pixels under it: at a whole number
+    // of pixels for one that is the cart's pixel itself, and between two of them, as at one and
+    // a half, the edge is shared rather than every other pixel drawn doubled.
+    let (fx, fy) = (128.0 / w as f32, 128.0 / h as f32);
     let mut out = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
-        let sy = 24 + y * 128 / h;
         for x in 0..w {
-            let sx = 16 + x * 128 / w;
-            let s = ((sy * sw + sx) * 4) as usize;
-            out[((y * w + x) * 4) as usize..][..4].copy_from_slice(&src[s..s + 4]);
+            let (x0, y0) = (16.0 + x as f32 * fx, 24.0 + y as f32 * fy);
+            let px = box_average(&src, sw, sh, x0, y0, x0 + fx, y0 + fy);
+            out[((y * w + x) * 4) as usize..][..4].copy_from_slice(&px);
         }
     }
     Some(out)
+}
+
+/// The most a `.p8.png`'s title can be: PICO-8 prints it in its 4 px font, one line of up to
+/// 32 characters, 5 px tall.
+pub const PICO8_TITLE_MAX: (u32, u32) = (128, 5);
+
+/// The title PICO-8 printed under the picture of a cart saved as a `.p8.png`: the first of the
+/// two lines it takes from the comments at the top of the cart's code, in its own font. As RGBA,
+/// opaque white where a letter is and clear between, trimmed to the letters' width. `None` for
+/// any other picture, or a cart whose code names no title.
+pub fn pico8_title(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+    let (src, sw, sh) = decode(path)?;
+    if (sw, sh) != (160, 205) {
+        return None;
+    }
+    // Rows 167 to 171 from x 16, white on the cart's dark grey. The low bits of every pixel
+    // carry the cart's data, so a letter is anything well clear of the grey, not one value.
+    let (x0, y0, (w, h)) = (16, 167, PICO8_TITLE_MAX);
+    let lit = |x: u32, y: u32| {
+        let at = (((y0 + y) * sw + x0 + x) * 4) as usize;
+        src[at..at + 3].iter().map(|&v| u32::from(v)).sum::<u32>() > 480
+    };
+    let cols: Vec<u32> = (0..w).filter(|&x| (0..h).any(|y| lit(x, y))).collect();
+    let (&first, &last) = (cols.first()?, cols.last()?);
+    let tw = last - first + 1;
+    let mut out = vec![0u8; (tw * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..tw {
+            if lit(first + x, y) {
+                out[((y * tw + x) * 4) as usize..][..4].copy_from_slice(&[0xff; 4]);
+            }
+        }
+    }
+    Some((out, tw, h))
 }
 
 /// Decodes `path` and returns RGBA scaled to fit inside `max_w` by `max_h` with its own shape
