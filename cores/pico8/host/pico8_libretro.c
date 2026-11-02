@@ -256,11 +256,21 @@ static int spawn(void)
 		snprintf(wrap, sizeof wrap, "%s", w);
 		for (char *t = strtok(wrap, " "); t && ac < 8; t = strtok(NULL, " ")) argv[ac++] = t;
 	}
+	/* The cart's own folder is PICO-8's root, where a cart's load("name.p8.png") looks: a
+	 * multicart made to play offline (tools/p8multicart.py) loads its parts from beside it. */
+	static char root[PATH_MAX];
+	snprintf(root, sizeof root, "%s", cart);
+	char *slash = strrchr(root, '/');
+	if (slash && slash != root) *slash = 0;
 	argv[ac++] = bin;
 	argv[ac++] = "-run";
 	argv[ac++] = cart;
 	argv[ac++] = "-home";
 	argv[ac++] = home;
+	if (slash && slash != root) {
+		argv[ac++] = "-root_path";
+		argv[ac++] = root;
+	}
 	argv[ac] = NULL;
 
 	pid_t parent = getpid();
