@@ -15,7 +15,8 @@ Parts are looked for first on disk: in --parts folders, beside the cart, and in 
 PICO-8 keeps what it downloads, so a game played once in PICO-8 on this computer needs no
 download at all. There, the revision is the one PICO-8 itself chose, read from its .nfo file.
 
-The copies go in a new folder beside the cart, <name>-offline/; your cart is not changed.
+The copies go in a new folder beside the cart, <name>-offline/, each named for the file it was
+made from with _patched on the end (libryinth-10_patched.p8.png); your cart is not changed.
 Copy that folder's files into Games/PICO8 on the card. Needs Python 3 and nothing else.
 
 Downloads, when needed, ask lexaloffle.com for the part's current revision (cpost_lister3.php)
@@ -473,11 +474,12 @@ def main():
         (i.lower() for i in root.ids() if plain(i) in (plain(stem), plain(unrevised))),
         stem.lower(),
     )
-    # A download keeps PICO-8's name with its revision; its copy is named for the id instead.
-    root_file = a.cart.name
-    if unrevised != stem and plain(root_id) == plain(unrevised):
-        root_file = root_id + (".p8.png" if root.png else ".p8")
-    out = a.out or a.cart.parent / f"{unrevised}-offline"
+    # Each copy is named for the file it was made from, revision and all, with _patched on the
+    # end: libryinth-10.p8.png becomes libryinth-10_patched.p8.png, so a patched cart is told
+    # from the one it came from at a glance.
+    patched = lambda stem, cart: f"{stem}_patched" + (".p8.png" if cart.png else ".p8")
+    root_file = patched(stem, root)
+    out = a.out or a.cart.parent / f"{stem}-offline"
     folders = [p for p in a.parts] + [a.cart.parent]
     deep = [] if a.no_pico8_downloads else pico8_downloads()
     if deep:
@@ -488,7 +490,10 @@ def main():
     carts, files, todo = {root_id: root}, {root_id: root_file}, list(root.ids())
     print(f"{a.cart.name} loads: " + (", ".join("#" + i for i in todo) or "nothing"))
     if a.list or not todo:
-        if not todo:
+        local = re.findall(rb"""["']([A-Za-z0-9_\-]+_patched\.p8(?:\.png)?)["']""", root.code)
+        if not todo and local:
+            print("It has been patched already: it loads " + ", ".join(sorted({l.decode() for l in local})))
+        elif not todo:
             print("It is not a multicart, or it names its parts some other way.")
         return 0
     failed = []
@@ -500,19 +505,20 @@ def main():
         try:
             if found:
                 print(f"  #{part}: {found}")
-                data = found.read_bytes()
+                data, source = found.read_bytes(), stem_of(found)
             elif a.offline:
                 raise OSError(f"not in {', '.join(map(str, folders))}")
             else:
                 lid, data = download_part(part, a.bbs)
                 print(f"  #{part}: downloaded {lid}")
+                source = lid
             cart = Cart(Path(part), data)
         except (OSError, ValueError) as e:
             print(f"  #{part}: {e}")
             failed.append(part)
             continue
         carts[part.lower()] = cart
-        files[part.lower()] = part + (".p8.png" if cart.png else ".p8")
+        files[part.lower()] = patched(source, cart)
         new = [i for i in cart.ids() if i.lower() not in carts and i not in todo]
         if new:
             print(f"    which loads: " + ", ".join("#" + i for i in new))
