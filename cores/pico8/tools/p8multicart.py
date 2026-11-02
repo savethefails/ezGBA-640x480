@@ -463,14 +463,21 @@ def main():
     a = ap.parse_args()
 
     root = Cart(a.cart, a.cart.read_bytes())
-    # The cart given is the part whose id is its file name, give or take case, "-", "_" and
-    # spaces: Pico-Ball.p8.png is #pico_ball.
+    # The cart given is the part whose id is its file name, give or take case, "-", "_",
+    # spaces, and the revision PICO-8 puts on a download: Pico-Ball.p8.png and pico_ball-5.p8.png
+    # are both #pico_ball.
     plain = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
+    stem = stem_of(a.cart)
+    unrevised = re.sub(r"-\d+$", "", stem)
     root_id = next(
-        (i.lower() for i in root.ids() if plain(i) == plain(stem_of(a.cart))),
-        stem_of(a.cart).lower(),
+        (i.lower() for i in root.ids() if plain(i) in (plain(stem), plain(unrevised))),
+        stem.lower(),
     )
-    out = a.out or a.cart.parent / f"{stem_of(a.cart)}-offline"
+    # A download keeps PICO-8's name with its revision; its copy is named for the id instead.
+    root_file = a.cart.name
+    if unrevised != stem and plain(root_id) == plain(unrevised):
+        root_file = root_id + (".p8.png" if root.png else ".p8")
+    out = a.out or a.cart.parent / f"{unrevised}-offline"
     folders = [p for p in a.parts] + [a.cart.parent]
     deep = [] if a.no_pico8_downloads else pico8_downloads()
     if deep:
@@ -478,7 +485,7 @@ def main():
 
     # Every cart in the game: the one given, then each part as a part names it, until every
     # part's own parts are found too. A part that loads the cart it came from is the cart.
-    carts, files, todo = {root_id: root}, {root_id: a.cart.name}, list(root.ids())
+    carts, files, todo = {root_id: root}, {root_id: root_file}, list(root.ids())
     print(f"{a.cart.name} loads: " + (", ".join("#" + i for i in todo) or "nothing"))
     if a.list or not todo:
         if not todo:
