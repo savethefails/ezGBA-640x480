@@ -11,6 +11,10 @@ it from next to the cart instead.
     python3 p8multicart.py Libryinth.p8.png --list        # only say what it loads
     python3 p8multicart.py game.p8.png --parts ~/Downloads   # parts already downloaded
 
+Parts are looked for first on disk: in --parts folders, beside the cart, and in the folder where
+PICO-8 keeps what it downloads, so a game played once in PICO-8 on this computer needs no
+download at all. There, the revision is the one PICO-8 itself chose, read from its .nfo file.
+
 The copies go in a new folder beside the cart, <name>-offline/; your cart is not changed.
 Copy that folder's files into Games/PICO8 on the card. Needs Python 3 and nothing else.
 
@@ -343,16 +347,51 @@ ID = re.compile(rb"""(["'])#([A-Za-z0-9_\-]+)\1""")
 # ---- Getting a part ------------------------------------------------------------------------
 
 
-def local_part(part_id, folders):
-    """A part already on disk: <id>.p8.png or <id>.p8, or a download named with a revision,
-    <id>-<n>.p8.png, the newest revision when there are several."""
-    for folder in folders:
+def pico8_downloads():
+    """Where PICO-8 keeps the carts it has downloaded, on this computer, if anywhere."""
+    home = Path.home()
+    found = []
+    for d in (
+        home / "Library/Application Support/pico-8/bbs",  # macOS
+        home / ".lexaloffle/pico-8/bbs",  # Linux
+        home / "AppData/Roaming/pico-8/bbs",  # Windows
+    ):
+        if d.is_dir():
+            found.append(d)
+    return found
+
+
+def local_part(part_id, folders, deep=()):
+    """A part already on disk. In each folder, in order: <id>.p8.png or <id>.p8; then the cart
+    an <id>.nfo names, which is how PICO-8 keeps a download, the .nfo holding the revision it
+    chose (lid:libryinth_2-7) beside <lid>.p8.png; then <id>-<n>.p8.png, the highest n. The
+    `deep` folders, PICO-8's own downloads, are looked through with their subfolders."""
+    def files_in(folder, sub):
+        try:
+            return [f for f in (folder.rglob("*") if sub else folder.iterdir()) if f.is_file()]
+        except OSError:
+            return []
+
+    for folder, sub in [(f, False) for f in folders] + [(f, True) for f in deep]:
+        files = files_in(folder, sub)
+        by_name = {}
+        for f in files:
+            by_name.setdefault(f.name.lower(), f)
         for name in (f"{part_id}.p8.png", f"{part_id}.p8"):
-            for f in folder.iterdir():
-                if f.name.lower() == name.lower():
-                    return f
+            if name.lower() in by_name:
+                return by_name[name.lower()]
+        nfo = by_name.get(f"{part_id}.nfo".lower())
+        if nfo:
+            m = re.search(r"^lid:([A-Za-z0-9_\-]+)", nfo.read_text("utf-8", "replace"), re.M)
+            if m:
+                for name in (f"{m.group(1)}.p8.png", f"{m.group(1)}.p8"):
+                    cart = nfo.parent / name
+                    if cart.is_file():
+                        return cart
+                    if name.lower() in by_name:
+                        return by_name[name.lower()]
         revs = []
-        for f in folder.iterdir():
+        for f in files:
             m = re.fullmatch(re.escape(part_id) + r"-(\d+)\.p8(\.png)?", f.name, re.I)
             if m:
                 revs.append((int(m.group(1)), f))
@@ -415,7 +454,11 @@ def main():
         help="a folder of parts already downloaded (the cart's own folder is always looked in)",
     )
     ap.add_argument("--out", type=Path, help="where the copies go (default: <name>-offline/)")
-    ap.add_argument("--offline", action="store_true", help="never download; use --parts only")
+    ap.add_argument("--offline", action="store_true", help="never download; use files on disk only")
+    ap.add_argument(
+        "--no-pico8-downloads", action="store_true",
+        help="do not look in the folder where PICO-8 keeps the carts it downloads",
+    )
     ap.add_argument("--bbs", default=BBS, help=argparse.SUPPRESS)
     a = ap.parse_args()
 
@@ -429,6 +472,9 @@ def main():
     )
     out = a.out or a.cart.parent / f"{stem_of(a.cart)}-offline"
     folders = [p for p in a.parts] + [a.cart.parent]
+    deep = [] if a.no_pico8_downloads else pico8_downloads()
+    if deep:
+        print("Looking in PICO-8's own downloads too: " + ", ".join(map(str, deep)))
 
     # Every cart in the game: the one given, then each part as a part names it, until every
     # part's own parts are found too. A part that loads the cart it came from is the cart.
@@ -443,7 +489,7 @@ def main():
         part = todo.pop(0)
         if part.lower() in carts:
             continue
-        found = local_part(part, folders)
+        found = local_part(part, folders, deep)
         try:
             if found:
                 print(f"  #{part}: {found}")

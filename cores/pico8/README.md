@@ -27,5 +27,12 @@ python3 tools/p8multicart.py Libryinth.p8.png --list     # what it loads, nothin
 python3 tools/p8multicart.py game.p8.png --parts ~/Downloads --offline
 ```
 
-Run it on a computer, which needs the network only for parts it has to download, and copy the
-folder it writes into `Games/PICO8`. Python 3 and nothing else.
+Run it on a computer and copy the folder it writes into `Games/PICO8`. Python 3 and nothing
+else. Parts are looked for on disk first: in `--parts` folders, beside the cart, and in the
+folder where PICO-8 keeps what it downloads (`~/Library/Application Support/pico-8/bbs` on a
+Mac), taking the revision PICO-8 chose from its `.nfo` file there. So once a game has been
+played in PICO-8 on that computer, nothing needs downloading. Otherwise it asks the forum the
+way PICO-8 does.
+
+The core starts PICO-8 with the cart's own folder as its root (`-root_path`), which is where a
+`load("name.p8.png")` looks, so the parts are found beside the cart.
