@@ -420,7 +420,13 @@ def main():
     a = ap.parse_args()
 
     root = Cart(a.cart, a.cart.read_bytes())
-    root_id = stem_of(a.cart).lower()
+    # The cart given is the part whose id is its file name, give or take case, "-", "_" and
+    # spaces: Pico-Ball.p8.png is #pico_ball.
+    plain = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
+    root_id = next(
+        (i.lower() for i in root.ids() if plain(i) == plain(stem_of(a.cart))),
+        stem_of(a.cart).lower(),
+    )
     out = a.out or a.cart.parent / f"{stem_of(a.cart)}-offline"
     folders = [p for p in a.parts] + [a.cart.parent]
 
@@ -468,21 +474,50 @@ def main():
             print(f"  {a.bbs}/get_cart.php?cat=7&play_src=0&lid=<the lid it gave>")
         return 1
 
-    names = {i: files[i.lower()] for c in carts.values() for i in c.ids() if i.lower() in files}
+    # Each part's file is named for its id, and the links say so. A longer name makes the code
+    # longer, and a .p8.png only holds so much code once packed; if any cart will not fit, every
+    # file a link names gets a one-letter name.
+    written = None
+    for short in (False, True):
+        if short:
+            files = short_names(carts, files)
+            print("\nWith the full names a cart's code would not fit in its .p8.png, so the files")
+            print("get one-letter names instead:")
+        names = {i: files[i.lower()] for c in carts.values() for i in c.ids() if i.lower() in files}
+        try:
+            written = {key: cart.patched(names) for key, cart in carts.items()}
+            break
+        except ValueError as e:
+            too_big = e
+    if written is None:
+        print(f"\nA cart's code does not fit in a .p8.png even so: {too_big}.")
+        print("Its code is packed tighter on the forum than PICO-8 or this script packs it. Save that")
+        print("part as a .p8 instead, which has no such limit: in PICO-8, load #<id> then")
+        print("save <id>.p8, and run this again with --parts <the folder it saved to>.")
+        return 1
     out.mkdir(parents=True, exist_ok=True)
     print(f"\nWriting to {out}/")
     for key, cart in carts.items():
-        try:
-            data = cart.patched(names)
-        except ValueError as e:
-            print(f"  {files[key]}: {e}")
-            return 1
-        (out / files[key]).write_bytes(data)
+        (out / files[key]).write_bytes(written[key])
         changed = [i for i in cart.ids() if i in names]
         print(f"  {files[key]}" + (f"  ({', '.join('#' + i for i in changed)} -> local files)" if changed else ""))
     print(f"\nCopy every file in {out.name}/ into Games/PICO8 on the card, keeping these names,")
     print(f"and start the game from {files[root_id]}.")
     return 0
+
+
+def short_names(carts, files):
+    """A one-letter file name for each part a link names, a.p8.png, b.p8.png and so on: the
+    extension is what makes a link longer, and a name the same length as the "#id" does not keep
+    the code the same size, since the id it replaces often packs against the same word elsewhere
+    in the code. A cart no link names keeps its name, which no link has to fit."""
+    linked = {i.lower() for c in carts.values() for i in c.ids()}
+    out = dict(files)
+    letters = iter("abcdefghijklmnopqrstuvwxyz")
+    for key in files:
+        if key in linked:
+            out[key] = next(letters) + (".p8.png" if carts[key].png else ".p8")
+    return out
 
 
 if __name__ == "__main__":
