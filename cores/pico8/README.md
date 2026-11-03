@@ -19,9 +19,15 @@ Some carts are several carts that load one another from the PICO-8 forum with
 `load("#part_id")`. With no network the load stalls. `tools/p8multicart.py` makes such a game
 play offline: it finds every part the cart loads, gets each one from a folder you name or by
 downloading it the way PICO-8 does, and writes copies of the cart and its parts with each
-`#part_id` changed to the part's file name. Each copy is named for the file it came from with
-`_patched` on the end (`libryinth-10.p8.png` becomes `libryinth-10_patched.p8.png`). Your cart is
-left as it was.
+link changed to the part's file. The cart is written as `<name>_patched.p8.png`
+(`libryinth-10.p8.png` becomes `libryinth-10_patched.p8.png`), and its parts go in a folder
+beside it, `libryinth-10_parts/`, which the shelf does not look in, so only the cart shows; copy
+both into `Games/PICO8`. Your cart is left as it was.
+
+A link is a `#part_id` in a string, alone or in a comma-separated list (`split"#game,#game_2"`),
+or one of the file names a cart loads its parts by when it runs from a file rather than the
+forum (`game_2.p8`). PICO-8 looks for a cart named in a `load` from its root, the cart's own
+folder, so a part in the folder is named with the folder's name in front.
 
 ```
 python3 tools/p8multicart.py libryinth-10.p8.png         # copies in libryinth-10-offline/

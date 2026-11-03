@@ -15,8 +15,10 @@ Parts are looked for first on disk: in --parts folders, beside the cart, and in 
 PICO-8 keeps what it downloads, so a game played once in PICO-8 on this computer needs no
 download at all. There, the revision is the one PICO-8 itself chose, read from its .nfo file.
 
-The copies go in a new folder beside the cart, <name>-offline/, each named for the file it was
-made from with _patched on the end (libryinth-10_patched.p8.png); your cart is not changed.
+The copies go in a new folder beside the cart, <name>-offline/: the cart as <name>_patched.p8.png,
+and its parts in a folder <name>_parts/ beside it, which the ezGBA shelf does not look in, so only
+the cart shows. Copy both into Games/PICO8. Your cart is not changed. --flat puts the parts
+beside the cart instead.
 Copy that folder's files into Games/PICO8 on the card. Needs Python 3 and nothing else.
 
 Downloads, when needed, ask lexaloffle.com for the part's current revision (cpost_lister3.php)
@@ -315,20 +317,31 @@ class Cart:
             raise ValueError("neither a .p8.png nor a .p8")
 
     def ids(self):
-        """Every "#bbs_id" string in the code, in the order they first appear."""
+        """Every "#bbs_id" the code names, in the order they first appear: a string that is one,
+        or an item of a comma-separated list in a string, as split"#game,#game_2" holds them."""
         out = []
-        for m in ID.finditer(self.code):
-            if m.group(2).decode() not in out:
-                out.append(m.group(2).decode())
+        for m in STRING.finditer(self.code):
+            for item in m.group(2).split(b","):
+                if ID.fullmatch(item) and item[1:].decode() not in out:
+                    out.append(item[1:].decode())
         return out
 
-    def patched(self, names):
-        code = ID.sub(
-            lambda m: m.group(1) + names[m.group(2).decode()].encode() + m.group(1)
-            if m.group(2).decode() in names
-            else m.group(0),
-            self.code,
-        )
+    def patched(self, paths):
+        """The cart with every link to a cart of the game changed to that cart's new path:
+        "#id", and the local names a cart may name its parts by when it is not on the forum
+        ("game_2.p8", "game_2.p8.png"), alone in a string or in a list. `paths` is by id."""
+        paths = {k.lower(): v for k, v in paths.items()}
+
+        def link(item):
+            m = ID.fullmatch(item) or LOCAL.fullmatch(item)
+            key = m and m.group(1).decode().lower()
+            return paths[key].encode() if key in paths else item
+
+        def string(m):
+            items = m.group(2).split(b",")
+            return m.group(1) + b",".join(link(i) for i in items) + m.group(1)
+
+        code = STRING.sub(string, self.code)
         if not self.png:
             return self.data.replace(self.code, code, 1)
         packed = pxa_encode(code)
@@ -350,7 +363,11 @@ class Cart:
         return out
 
 
-ID = re.compile(rb"""(["'])#([A-Za-z0-9_\-]+)\1""")
+# A string in the code, and the two kinds of link to a cart one may hold: a forum id, and the
+# file name a cart loads a part by when it runs from a file rather than the forum.
+STRING = re.compile(rb"""(["'])([^"'\n]*)\1""")
+ID = re.compile(rb"#([A-Za-z0-9_\-]+)")
+LOCAL = re.compile(rb"([A-Za-z0-9_\-]+)\.p8(?:\.png)?", re.I)
 
 # ---- Getting a part ------------------------------------------------------------------------
 
@@ -467,6 +484,10 @@ def main():
         "--no-pico8-downloads", action="store_true",
         help="do not look in the folder where PICO-8 keeps the carts it downloads",
     )
+    ap.add_argument(
+        "--flat", action="store_true",
+        help="put the parts beside the cart, not in a folder (the shelf then shows them too)",
+    )
     ap.add_argument("--bbs", default=BBS, help=argparse.SUPPRESS)
     a = ap.parse_args()
 
@@ -481,11 +502,20 @@ def main():
         (i.lower() for i in root.ids() if plain(i) in (plain(stem), plain(unrevised))),
         stem.lower(),
     )
-    # Each copy is named for the file it was made from, revision and all, with _patched on the
+    # The cart is named for the file it was made from, revision and all, with _patched on the
     # end: libryinth-10.p8.png becomes libryinth-10_patched.p8.png, so a patched cart is told
-    # from the one it came from at a glance.
-    patched = lambda stem, cart: f"{stem}_patched" + (".p8.png" if cart.png else ".p8")
-    root_file = patched(stem, root)
+    # from the one it came from at a glance. Its parts go in a folder beside it, which the
+    # shelf does not look in, named for the files they came from; with --flat, beside it as
+    # <name>_patched too. PICO-8 finds a part in the folder by the folder's name and the
+    # part's, from the card's PICO-8 folder, which is what every link is changed to.
+    ext = lambda cart: ".p8.png" if cart.png else ".p8"
+    root_file = f"{stem}_patched{ext(root)}"
+    parts_dir = f"{stem}_parts"
+    part_file = (
+        (lambda source, cart: f"{source}_patched{ext(cart)}")
+        if a.flat
+        else (lambda source, cart: f"{parts_dir}/{source}{ext(cart)}")
+    )
     out = a.out or a.cart.parent / f"{stem}-offline"
     folders = [p for p in a.parts] + [a.cart.parent]
     deep = [] if a.no_pico8_downloads else pico8_downloads()
@@ -497,7 +527,7 @@ def main():
     carts, files, todo = {root_id: root}, {root_id: root_file}, list(root.ids())
     print(f"{a.cart.name} loads: " + (", ".join("#" + i for i in todo) or "nothing"))
     if a.list or not todo:
-        local = re.findall(rb"""["']([A-Za-z0-9_\-]+_patched\.p8(?:\.png)?)["']""", root.code)
+        local = re.findall(rb"""([A-Za-z0-9_\-]+_(?:patched|parts)[/A-Za-z0-9_\-]*\.p8(?:\.png)?)""", root.code)
         if not todo and local:
             print("It has been patched already: it loads " + ", ".join(sorted({l.decode() for l in local})))
         elif not todo:
@@ -525,7 +555,7 @@ def main():
             failed.append(part)
             continue
         carts[part.lower()] = cart
-        files[part.lower()] = patched(source, cart)
+        files[part.lower()] = part_file(source, cart)
         new = [i for i in cart.ids() if i.lower() not in carts and i not in todo]
         if new:
             print(f"    which loads: " + ", ".join("#" + i for i in new))
@@ -540,21 +570,23 @@ def main():
             print(f"  {a.bbs}/get_cart.php?cat=7&play_src=0&lid=<the lid it gave>")
         return 1
 
-    # Each part's file is named for its id, and the links say so. A longer name makes the code
-    # longer, and a .p8.png only holds so much code once packed; if any cart will not fit, every
-    # file a link names gets a one-letter name.
-    written = None
-    for short in (False, True):
-        if short:
-            files = short_names(carts, files)
-            print("\nWith the full names a cart's code would not fit in its .p8.png, so the files")
-            print("get one-letter names instead:")
-        names = {i: files[i.lower()] for c in carts.values() for i in c.ids() if i.lower() in files}
+    # A longer name makes the code longer, and a .p8.png only holds so much code once packed; if
+    # any cart will not fit, the parts get one-letter names, and then a shorter folder.
+    written, full = None, dict(files)
+    short_dir = re.sub(r"[^a-z0-9]", "", root_id)[:4] + "_p"
+    for n, scheme in enumerate((None, parts_dir, short_dir)):
+        if scheme is not None:
+            files = short_names(carts, full, root_id, None if a.flat else scheme)
+            if n == 1:
+                print("\nWith the full names a cart's code would not fit in its .p8.png, so the parts")
+                print("get shorter names:")
         try:
-            written = {key: cart.patched(names) for key, cart in carts.items()}
+            written = {key: cart.patched(files) for key, cart in carts.items()}
             break
         except ValueError as e:
             too_big = e
+        if a.flat and n == 1:
+            break
     if written is None:
         print(f"\nA cart's code does not fit in a .p8.png even so: {too_big}.")
         print("Its code is packed tighter on the forum than PICO-8 or this script packs it. Save that")
@@ -564,25 +596,26 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     print(f"\nWriting to {out}/")
     for key, cart in carts.items():
+        (out / files[key]).parent.mkdir(parents=True, exist_ok=True)
         (out / files[key]).write_bytes(written[key])
-        changed = [i for i in cart.ids() if i in names]
-        print(f"  {files[key]}" + (f"  ({', '.join('#' + i for i in changed)} -> local files)" if changed else ""))
-    print(f"\nCopy every file in {out.name}/ into Games/PICO8 on the card, keeping these names,")
-    print(f"and start the game from {files[root_id]}.")
+        print(f"  {files[key]}")
+    top = sorted({f.split("/")[0] + ("/" if "/" in f else "") for f in files.values()})
+    print(f"\nCopy everything in {out.name}/ ({', '.join(top)}) into Games/PICO8 on the card, as it")
+    print(f"is, and start the game from {files[root_id]}.")
     return 0
 
 
-def short_names(carts, files):
-    """A one-letter file name for each part a link names, a.p8.png, b.p8.png and so on: the
-    extension is what makes a link longer, and a name the same length as the "#id" does not keep
-    the code the same size, since the id it replaces often packs against the same word elsewhere
-    in the code. A cart no link names keeps its name, which no link has to fit."""
-    linked = {i.lower() for c in carts.values() for i in c.ids()}
+def short_names(carts, files, root_id, folder):
+    """Every part a one-letter name, a.p8.png, b.p8.png and so on, in `folder` if there is one:
+    the extension is what makes a link longer, and a name the same length as the "#id" does not
+    keep the code the same size, since the id it replaces often packs against the same word
+    elsewhere in the code. The cart started from keeps its name, being the one on the shelf."""
     out = dict(files)
-    letters = iter("abcdefghijklmnopqrstuvwxyz")
+    letters = iter("abcdefghijklmnopqrstuvwxyz0123456789")
     for key in files:
-        if key in linked:
-            out[key] = next(letters) + (".p8.png" if carts[key].png else ".p8")
+        if key != root_id:
+            name = next(letters) + (".p8.png" if carts[key].png else ".p8")
+            out[key] = f"{folder}/{name}" if folder else name
     return out
 
 
