@@ -23,6 +23,7 @@ Downloads, when needed, ask lexaloffle.com for the part's current revision (cpos
 and then fetch that revision (get_cart.php, or the cposts/ file), which is what PICO-8 does.
 """
 import argparse
+import hashlib
 import re
 import struct
 import sys
@@ -32,6 +33,9 @@ from pathlib import Path
 
 BBS = "https://www.lexaloffle.com/bbs"
 CODE, ROM = 0x4300, 0x8000
+# After the cart, PICO-8 0.2 keeps the SHA-1 of its 32 KB, and calls a cart whose bytes do not
+# hash to it corrupted and will not load it.
+HASH = slice(ROM + 6, ROM + 26)
 CODE_MAX = ROM - CODE  # what PICO-8 will load back out of a .p8.png
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
@@ -334,7 +338,10 @@ class Cart:
                 f"({len(packed)} of {CODE_MAX} bytes)"
             )
         rom = bytearray(self.rom)
+        hashed = hashlib.sha1(bytes(rom[:ROM])).digest() == bytes(rom[HASH])
         rom[CODE:ROM] = packed + bytes(CODE_MAX - len(packed))
+        if hashed:
+            rom[HASH] = hashlib.sha1(bytes(rom[:ROM])).digest()
         px = bytearray(self.px)
         rom_into(px, rom[: len(px) // 4])
         out = png_write(self.w, self.h, px)
