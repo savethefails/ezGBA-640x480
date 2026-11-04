@@ -787,8 +787,9 @@ fn the_bezel_is_drawn_under_a_pico8_game_and_only_there() {
     assert_eq!(bezel_under_game("pico8-bezel palette\n", Core::Mgba), None);
 }
 
-/// Subpixels walks off and the four stripe orders, writes each to the card, and hands the
-/// renderer where the red stripe is.
+/// Subpixels walks off and the four stripe orders and writes each to the card. Read back off the
+/// row and the card, not off the renderer's setting: that is the process's, and another test
+/// booting an app beside this one sets it back to the card's.
 #[test]
 fn the_subpixel_row_steps_through_the_stripe_orders_and_is_kept_on_the_card() {
     let (d, mut a) = on_carousel_with_theme("");
@@ -808,10 +809,12 @@ fn the_subpixel_row_steps_through_the_stripe_orders_and_is_kept_on_the_card() {
             format!("subpixel {word}\n")
         );
     }
-    assert_eq!(slot_gfx::subpixel(), slot_gfx::Subpixel::VerticalBgr);
     for _ in 0..4 {
         press(&mut a, Btn::Left);
     }
     assert_eq!(a.quick_value(QuickRow::Subpixels), Some(QuickValue::Off));
-    assert_eq!(slot_gfx::subpixel(), slot_gfx::Subpixel::Off);
+    assert_eq!(
+        slot_store::Theme::read(d.path()).subpixel,
+        slot_store::SubpixelOrder::Off
+    );
 }

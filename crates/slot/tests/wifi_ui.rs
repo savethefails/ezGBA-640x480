@@ -265,3 +265,72 @@ fn a_doze_powers_the_radio_down_and_a_wake_brings_it_back() {
     );
     assert!(!radio.blocked.load(Ordering::SeqCst));
 }
+
+/// Wi-Fi stays up while a game plays, which is what a PICO-8 multicart downloading its other
+/// carts needs; a link starting takes the radio from it, letting it go rather than powering it
+/// down, since the link needs the radio; and once the link is over it comes back.
+#[test]
+fn a_game_keeps_wi_fi_and_a_link_borrows_the_radio() {
+    use slot::link_net::{Cancel, TcpLink};
+    use slot::link_radio::LinkRole;
+    use slot::link_start::LinkStarter;
+    let _g = serial();
+    let d = tmp_root_with_carts(&["Emerald", "Zzz"]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            wifi_on: true,
+            ..SlotState::default()
+        },
+    )
+    .unwrap();
+    let mut a = common::boot(d.path());
+    let f = Fake::demo();
+    let (running, blocked, log) = (f.running.clone(), f.blocked.clone(), f.log.clone());
+    a.set_wifi(Wifi::inline(Box::new(f)));
+    a.apply(Action::Insert);
+    a.on_core_ready();
+    settle(&mut a);
+    assert!(matches!(a.phase(), Phase::Playing { .. }), "never seated");
+    assert!(
+        running.load(Ordering::SeqCst),
+        "Wi-Fi did not stay up with a game in"
+    );
+
+    // A link that never finds anyone, after a moment.
+    a.apply(Action::GameMenu);
+    let starter = LinkStarter::spawn_with(
+        Box::new(|_, _| Ok(())),
+        Box::new(|| {}),
+        LinkRole::Host,
+        0,
+        Box::new(|_: u16, _: &Cancel| -> std::io::Result<TcpLink> {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "nobody"))
+        }),
+    );
+    log.lock().unwrap().clear();
+    a.start_link(starter, 0);
+    // One frame to send it, the next for the worker to act on it.
+    a.update(0.1);
+    a.update(0.1);
+    assert!(
+        !running.load(Ordering::SeqCst),
+        "the link left Wi-Fi on the radio"
+    );
+    assert!(
+        !blocked.load(Ordering::SeqCst),
+        "the link's radio was powered down under it"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !running.load(Ordering::SeqCst) {
+        a.update(0.1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Wi-Fi never came back after the link: {:?}",
+            log.lock().unwrap()
+        );
+    }
+}
