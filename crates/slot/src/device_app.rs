@@ -20,6 +20,17 @@ const EMU_WAIT: Duration = Duration::from_millis(14);
 
 pub fn run() {
     slot::boot_time::mark("start");
+    // Before any thread exists, since changing the environment under a running thread is not
+    // safe: PICO-8's downloads run `wget` from `PATH`, and the one BaseOS has cannot do HTTPS
+    // the way PICO-8 asks. See `pico8_net`.
+    let bin = std::path::Path::new(slot::pico8_net::BIN);
+    match slot::pico8_net::install_wget(bin) {
+        Ok(_) => std::env::set_var(
+            "PATH",
+            slot::pico8_net::path_with(bin, std::env::var_os("PATH")),
+        ),
+        Err(e) => eprintln!("slot: pico8: no wget of our own: {e}"),
+    }
     // Off the boot path, while the panel and the GPU come up: parsing the fonts, and opening
     // the audio device, which BaseOS's own startup sound can keep busy. From slot 8a52c5d.
     let _ = std::thread::Builder::new()

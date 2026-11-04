@@ -135,6 +135,12 @@ fn open_named(
 ) -> Option<Box<dyn RetroCore>> {
     let bios = root::bios_dir(root);
     let saves = root::saves_dir(root);
+    // Before PICO-8 starts and reads it.
+    if core == Core::Pico8 {
+        if let Err(e) = crate::pico8_net::prefer_wget(&crate::pico8_net::home(root)) {
+            eprintln!("slot: pico8: config.txt: {e}");
+        }
+    }
     for path in paths {
         if !path.exists() {
             continue;
