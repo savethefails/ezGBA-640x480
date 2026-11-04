@@ -69,6 +69,12 @@ pub fn run() {
     };
     slot::boot_time::mark("audio");
     let mut frontend = Frontend::boot_with(Box::new(platform), sink);
+    // The worker starts with the radio left as it is: it is only brought up if the player has
+    // Wi-Fi on. Through the card's slotlink.sh, as a link brings up its own network.
+    frontend.set_wifi(slot::wifi::Wifi::spawn(Box::new(slot::wifi::sp::Wpa::new(
+        slot::wifi::sp::System,
+        root.clone(),
+    ))));
     slot::boot_time::mark("frontend");
     frontend.upload_boot_faces(&mut compositor);
     slot::boot_time::mark("faces");

@@ -27,6 +27,7 @@ use crate::link_kind::{link_carried, link_kind, serial_option, LinkKind};
 use crate::link_radio::{radio_jobs, LinkRole, RadioJob, RadioJobs};
 use crate::link_screen::LinkSprites;
 use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep};
+use crate::network_page::{self, NetPage, NetRow};
 use crate::persist::{self, Snapshot};
 use crate::video_mode::{self, VideoMode};
 
@@ -376,6 +377,12 @@ pub enum Phase {
     QuickMenu {
         row: QuickRow,
     },
+    /// The quick menu's Wi-Fi page, or the networks a scan found, with the row in hand. Opened
+    /// off the quick menu's Wi-Fi row, and back to it on B.
+    Network {
+        page: NetPage,
+        row: usize,
+    },
     Inserting {
         cart: String,
         t: f32,
@@ -611,6 +618,24 @@ pub struct App {
     sticker_face: Option<TexId>,
     /// Frames in `System/greeting/frames`; 0 means the card has no greeting.
     greeting_frames: usize,
+    /// The Wi-Fi worker, with the moment the app's clock read zero on its, so the worker's
+    /// `Instant`s can be had from the app's milliseconds. `None` where there is no radio.
+    wifi: Option<(crate::wifi::Wifi, std::time::Instant, Millis)>,
+    /// Hold has been sent and not let go.
+    wifi_held: bool,
+    /// When a Hold that did not take may be tried again.
+    wifi_retry_at: Millis,
+    /// Whether the worker has been told to keep scanning.
+    wifi_scanning: bool,
+    /// The password being typed, and the network it is for.
+    keyboard: Option<(String, slot_ui::Keyboard)>,
+    /// Words on the Wi-Fi pages, grey and lit, made by the binary as they first appear: the names
+    /// of networks are not known until a scan finds them.
+    words: std::collections::HashMap<String, [(TexId, u32, u32); 2]>,
+    /// The Wi-Fi pages' legend and the keyboard's keys, made at boot.
+    net_faces: Option<NetFaces>,
+    /// The keyboard's title and the text either side of its cursor, made as they change.
+    keyboard_text: slot_ui::KeyboardText,
     /// How far into the greeting, by the frame clock.
     greeting_ms: f64,
     /// How far into the greeting by the audio actually played, when there is audio.
@@ -797,6 +822,18 @@ impl App {
             quick_clock_faces: None,
             sticker_face: None,
             greeting_frames: 0,
+            wifi: None,
+            wifi_held: false,
+            wifi_retry_at: 0,
+            wifi_scanning: false,
+            keyboard: None,
+            words: std::collections::HashMap::new(),
+            net_faces: None,
+            keyboard_text: slot_ui::KeyboardText {
+                title: None,
+                before: None,
+                after: None,
+            },
             greeting_ms: 0.0,
             greeting_audio_ms: None,
             greeting_face: None,
@@ -1166,6 +1203,7 @@ impl App {
                 Core::Snes9x2005 => QuickValue::Snes9x2005,
                 c => unreachable!("SNES emulator {c:?}"),
             }),
+            QuickRow::Wifi => Some(QuickValue::flag(self.state.wifi_on)),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -2217,6 +2255,7 @@ impl App {
                 }
             }
             Phase::QuickMenu { row } => self.quick_menu_input(row, action),
+            Phase::Network { page, row } => self.network_input(page, row, action),
             _ => {}
         }
     }
@@ -2330,7 +2369,7 @@ impl App {
                 ));
                 ("snes-core", word.to_string())
             }
-            QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
+            QuickRow::DateTime | QuickRow::Wifi | QuickRow::About | QuickRow::Brightness => return,
         };
         self.look.apply();
         if let Some(root) = &self.root {
@@ -2351,6 +2390,12 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
+            QuickRow::Wifi => {
+                self.phase = Phase::Network {
+                    page: NetPage::Main,
+                    row: 0,
+                }
+            }
             QuickRow::Picture
             | QuickRow::Grid
             | QuickRow::GridDepth
@@ -2625,6 +2670,7 @@ impl App {
     pub fn update(&mut self, dt: f32) {
         self.clock += dt as f64 * 1000.0;
         self.timers();
+        self.steer_wifi();
         self.update_greeting(dt);
         // A queue poll rather than a syscall, so the frame loop can afford it every frame —
         // which is the whole reason the slow parts of starting a link are on a thread of
@@ -3185,6 +3231,7 @@ impl App {
                 faces: self.quick_menu_faces.as_ref(),
             }
             .draw(out),
+            Phase::Network { page, row } => self.draw_network(*page, *row, out),
             Phase::Shelf => {
                 draw_backdrop(self.wallpaper, self.ground(), out);
                 // Out of the way of the lid, which lifts into the same space.
@@ -5449,5 +5496,315 @@ impl Look {
             saturation,
             contrast,
         });
+    }
+}
+
+/// How long a Hold that did not take waits before it is tried again: a radio still coming up, or
+/// one the link has only just let go of.
+const WIFI_RETRY_MS: Millis = 5000;
+
+/// The Wi-Fi pages' faces that never change: the legend's hints, and the keyboard's keys.
+pub struct NetFaces {
+    /// B BACK, the arrows' CHANGE, A OPEN, A CONNECT, X FORGET and A JOIN, with their widths.
+    pub legend: [(TexId, u32); 6],
+    /// B DELETE, Y CANCEL and START DONE, under the keyboard.
+    pub keyboard_legend: [(TexId, u32); 3],
+    pub keyboard: slot_ui::KeyboardFaces,
+}
+
+/// The quick menu's Wi-Fi page. Wi-Fi is the player's to turn on and off: it stays up while it is
+/// on, in a game as on the shelf, because a PICO-8 multicart downloads its other carts while it
+/// runs. It goes down for a link, which needs the radio for itself, and for a doze or a power
+/// off; a link or a doze ended brings it back if it was on.
+impl App {
+    pub fn set_wifi(&mut self, wifi: crate::wifi::Wifi) {
+        self.wifi = Some((wifi, std::time::Instant::now(), self.now()));
+    }
+
+    pub fn wifi_snapshot(&self) -> &crate::wifi::Snapshot {
+        static NONE: std::sync::OnceLock<crate::wifi::Snapshot> = std::sync::OnceLock::new();
+        match &self.wifi {
+            Some((w, _, _)) => w.snapshot(),
+            None => NONE.get_or_init(crate::wifi::Snapshot::default),
+        }
+    }
+
+    pub fn wifi_on(&self) -> bool {
+        self.state.wifi_on
+    }
+
+    fn wifi_send(&mut self, cmd: crate::wifi::Cmd) {
+        if let Some((w, _, _)) = &mut self.wifi {
+            w.send(cmd);
+        }
+    }
+
+    /// Whether the radio should be up this frame.
+    fn wifi_wanted(&self) -> bool {
+        self.state.wifi_on
+            && !self.radio_linked()
+            && !self.shutting_down()
+            && !matches!(self.phase, Phase::Doze { .. })
+    }
+
+    /// A link has the radio, or is getting it.
+    fn radio_linked(&self) -> bool {
+        self.link_active() || self.starting.is_some()
+    }
+
+    /// Once a frame: the worker's news in, and the radio held or let go as `wifi_wanted` says.
+    fn steer_wifi(&mut self) {
+        let now = self.now();
+        let wanted = self.wifi_wanted();
+        let scan = self.state.wifi_on
+            && self.keyboard.is_none()
+            && matches!(
+                self.phase,
+                Phase::Network {
+                    page: NetPage::Scan,
+                    ..
+                }
+            );
+        let linked = self.radio_linked();
+        let Some((w, at, from)) = &mut self.wifi else {
+            return;
+        };
+        w.poll(*at + std::time::Duration::from_millis(now.saturating_sub(*from)));
+        if scan != self.wifi_scanning {
+            self.wifi_scanning = scan;
+            w.want_scans(scan);
+        }
+        if wanted {
+            // A Hold the worker could not make good: the radio would not start.
+            if self.wifi_held && !w.busy() && !w.snapshot().held {
+                self.wifi_held = false;
+                self.wifi_retry_at = now + WIFI_RETRY_MS;
+            }
+            if !self.wifi_held && now >= self.wifi_retry_at {
+                self.wifi_held = true;
+                w.send(crate::wifi::Cmd::Hold);
+            }
+        } else if std::mem::take(&mut self.wifi_held) {
+            // A link takes the radio as it is, so it is only let go of; anything else powers it
+            // off, which is what saves the battery.
+            w.send(if linked {
+                crate::wifi::Cmd::Release
+            } else {
+                crate::wifi::Cmd::PowerOff
+            });
+        }
+    }
+
+    fn set_wifi_on(&mut self, on: bool) {
+        if self.state.wifi_on == on {
+            return;
+        }
+        self.state.wifi_on = on;
+        self.wifi_retry_at = 0;
+        self.persist();
+    }
+
+    fn network_rows(&self, page: NetPage) -> Vec<NetRow> {
+        network_page::rows(page, self.wifi_snapshot(), self.state.wifi_on)
+    }
+
+    /// Up and Down move the bar; Left, Right and A turn Wi-Fi over on its row; A joins a network,
+    /// or opens the scan; X forgets a saved network; B goes back a page, and from the first page
+    /// to the quick menu's Wi-Fi row. The keyboard, while it is up, has every button.
+    fn network_input(&mut self, page: NetPage, row: usize, action: Action) {
+        if self.keyboard.is_some() {
+            return self.keyboard_input(action);
+        }
+        let rows = self.network_rows(page);
+        let last = rows.len().saturating_sub(1);
+        let mut row = row.min(last);
+        let here = rows.get(row).cloned();
+        let mut page = page;
+        match (action, here) {
+            (Action::GbaDown(Btn::Up), _) => row = row.saturating_sub(1),
+            (Action::GbaDown(Btn::Down), _) => row = (row + 1).min(last),
+            (
+                Action::GbaDown(Btn::Left | Btn::Right | Btn::A)
+                | Action::ShelfLeft
+                | Action::ShelfRight,
+                Some(NetRow::Power),
+            ) => {
+                let on = !self.state.wifi_on;
+                self.set_wifi_on(on);
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Saved { id, .. })) => {
+                self.wifi_send(crate::wifi::Cmd::Connect(id))
+            }
+            (Action::GbaDown(Btn::X), Some(NetRow::Saved { id, .. })) => {
+                self.wifi_send(crate::wifi::Cmd::Forget(id))
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Scan)) => {
+                page = NetPage::Scan;
+                row = 0;
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Found { ssid, secured })) => {
+                if secured {
+                    let title = format!("Password for {ssid}");
+                    self.keyboard = Some((ssid, slot_ui::Keyboard::new(&title, "")));
+                } else {
+                    self.join_network(ssid, String::new());
+                    page = NetPage::Main;
+                    row = 0;
+                }
+            }
+            (Action::GbaDown(Btn::B) | Action::QuickMenu | Action::Eject, _) => match page {
+                NetPage::Main => {
+                    self.phase = Phase::QuickMenu {
+                        row: QuickRow::Wifi,
+                    };
+                    return;
+                }
+                NetPage::Scan => {
+                    page = NetPage::Main;
+                    let main = self.network_rows(NetPage::Main);
+                    row = main.iter().position(|r| *r == NetRow::Scan).unwrap_or(0);
+                }
+            },
+            _ => {}
+        }
+        self.phase = Phase::Network { page, row };
+    }
+
+    fn join_network(&mut self, ssid: String, password: String) {
+        self.wifi_send(crate::wifi::Cmd::Join {
+            ssid,
+            password,
+            hidden: false,
+        });
+    }
+
+    /// B deletes and Y gives up, so MENU is the one more way out; the shoulders move the cursor.
+    fn keyboard_input(&mut self, action: Action) {
+        let btn = match action {
+            Action::GbaDown(b) => b,
+            Action::ShelfLeft => Btn::L1,
+            Action::ShelfRight => Btn::R1,
+            Action::QuickMenu | Action::Eject => Btn::Y,
+            _ => return,
+        };
+        let Some((ssid, kb)) = &mut self.keyboard else {
+            return;
+        };
+        match kb.press(btn) {
+            slot_ui::Typed::Done(password) => {
+                let ssid = ssid.clone();
+                self.keyboard = None;
+                self.join_network(ssid, password);
+                self.phase = Phase::Network {
+                    page: NetPage::Main,
+                    row: 0,
+                };
+            }
+            slot_ui::Typed::Cancelled => self.keyboard = None,
+            _ => {}
+        }
+    }
+
+    /// What the keyboard needs made this frame: its title, and the text either side of its
+    /// cursor. `None` while it is not up.
+    pub fn keyboard_words(&self) -> Option<(String, String, String)> {
+        let (_, kb) = self.keyboard.as_ref()?;
+        let (before, after) = kb.split();
+        Some((kb.title().to_string(), before, after))
+    }
+
+    pub fn set_keyboard_text(&mut self, text: slot_ui::KeyboardText) {
+        self.keyboard_text = text;
+    }
+
+    /// Every word the Wi-Fi page on screen says, for the binary to make the ones it has not yet.
+    pub fn network_words(&self) -> Vec<String> {
+        let Phase::Network { page, .. } = self.phase else {
+            return Vec::new();
+        };
+        let (snap, on) = (self.wifi_snapshot(), self.state.wifi_on);
+        self.network_rows(page)
+            .iter()
+            .flat_map(|r| {
+                let (label, value) = network_page::words(r, snap, on);
+                std::iter::once(label).chain(value)
+            })
+            .collect()
+    }
+
+    pub fn has_word(&self, text: &str) -> bool {
+        self.words.contains_key(text)
+    }
+
+    /// A word's faces, grey then lit.
+    pub fn set_word(&mut self, text: String, faces: [(TexId, u32, u32); 2]) {
+        self.words.insert(text, faces);
+    }
+
+    /// The Wi-Fi pages are up, so their faces are wanted.
+    pub fn on_network_page(&self) -> bool {
+        matches!(self.phase, Phase::Network { .. })
+    }
+
+    pub fn has_net_faces(&self) -> bool {
+        self.net_faces.is_some()
+    }
+
+    pub fn set_net_faces(&mut self, faces: NetFaces) {
+        self.net_faces = Some(faces);
+    }
+
+    fn draw_network(&self, page: NetPage, row: usize, out: &mut Vec<Draw>) {
+        if let Some((_, kb)) = &self.keyboard {
+            let Some(faces) = &self.net_faces else {
+                return;
+            };
+            slot_ui::draw_keyboard(kb, &faces.keyboard, &self.keyboard_text, out);
+            let hints = slot_ui::centred_hints(&faces.keyboard_legend, slot_ui::LEGEND_GAP);
+            for (tex, w, x) in hints {
+                out.push(Draw::Tex {
+                    x: x.round(),
+                    y: 427.0,
+                    w: w as f32,
+                    h: HINT_H as f32,
+                    tex,
+                    alpha: 1.0,
+                });
+            }
+            return;
+        }
+        let (snap, on) = (self.wifi_snapshot(), self.state.wifi_on);
+        let rows = self.network_rows(page);
+        let list: Vec<slot_ui::ListRow> = rows
+            .iter()
+            .map(|r| {
+                let (label, value) = network_page::words(r, snap, on);
+                slot_ui::ListRow {
+                    label: self.words.get(&label).copied(),
+                    value: value.and_then(|v| self.words.get(&v).copied()),
+                    arrows: *r == NetRow::Power,
+                }
+            })
+            .collect();
+        let legend: Vec<(TexId, u32)> = match &self.net_faces {
+            Some(f) => {
+                let [back, change, open, connect, forget, join] = f.legend;
+                match rows.get(row) {
+                    Some(NetRow::Power) => vec![back, change],
+                    Some(NetRow::Saved { .. }) => vec![back, connect, forget],
+                    Some(NetRow::Scan) => vec![back, open],
+                    Some(NetRow::Found { .. }) => vec![back, join],
+                    _ => vec![back],
+                }
+            }
+            None => Vec::new(),
+        };
+        slot_ui::ListMenu {
+            rows: &list,
+            selected: row.min(rows.len().saturating_sub(1)),
+            carets: self.quick_menu_faces.as_ref().map(|f| f.carets),
+            legend: &legend,
+        }
+        .draw(out);
     }
 }

@@ -21,6 +21,7 @@ pub enum QuickRow {
     ColourDepth,
     RunAhead,
     SnesCore,
+    Wifi,
     About,
     Brightness,
 }
@@ -31,7 +32,7 @@ impl QuickRow {
     /// `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 14] = [
+    pub const ALL: [QuickRow; 15] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::SnesPicture,
@@ -44,6 +45,7 @@ impl QuickRow {
         QuickRow::ColourDepth,
         QuickRow::RunAhead,
         QuickRow::SnesCore,
+        QuickRow::Wifi,
         QuickRow::About,
         QuickRow::Brightness,
     ];
@@ -67,6 +69,7 @@ impl QuickRow {
             QuickRow::ColourDepth => "Colour Depth",
             QuickRow::RunAhead => "Run-Ahead",
             QuickRow::SnesCore => "SNES Emulator",
+            QuickRow::Wifi => "Wi-Fi",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
         }
@@ -74,7 +77,7 @@ impl QuickRow {
 
     /// A row A opens, rather than one the arrows change.
     pub fn opens(self) -> bool {
-        matches!(self, QuickRow::DateTime | QuickRow::About)
+        matches!(self, QuickRow::DateTime | QuickRow::Wifi | QuickRow::About)
     }
 
     /// The row above, stopping at the top: the bar does not wrap, as no menu here does.
@@ -286,7 +289,7 @@ impl QuickValue {
 
 /// A size up from the power menu's rows: 30 px type on rows as tall as the space above the
 /// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34,
-/// thirteen at 32, fourteen at 29.
+/// thirteen at 32, fourteen at 29, fifteen at 27.
 /// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar
 /// at either.
 pub const QUICK_PITCH: f32 = {
@@ -331,6 +334,11 @@ pub fn quick_value_face(text: &str, lit: bool) -> UndoFace {
     quick_text_face(text, if lit { MENU_INK } else { DIM_INK })
 }
 
+/// The same, keeping the text's own case: a network's name, or a password's letters.
+pub fn quick_word_face(text: &str, lit: bool) -> UndoFace {
+    quick_text_face_with(text, if lit { MENU_INK } else { DIM_INK }, true)
+}
+
 /// A line of the menu's type, sized to the type as it is actually set, tracking and all, so it
 /// sits exactly `MENU_PAD` in from both sides of its face and lands where it is placed.
 ///
@@ -338,6 +346,28 @@ pub fn quick_value_face(text: &str, lit: bool) -> UndoFace {
 /// it, but here that put every label a different distance off the 32 px edge, and shrank the
 /// longest one to fit a face too narrow for it.
 fn quick_text_face(label: &str, colour: [u8; 3]) -> UndoFace {
+    quick_text_face_with(label, colour, false)
+}
+
+fn quick_text_face_with(label: &str, colour: [u8; 3], as_written: bool) -> UndoFace {
+    sized_text_face(label, colour, as_written, OUT_W as f32, MENU_PX, MENU_PX)
+}
+
+/// A word in the menu's type, lit, shrunk until it is no wider than `max_w`, from the menu's
+/// size down to two thirds of it: a key on the keyboard with a word on it, which the menu's own
+/// size overflows.
+pub fn key_word_face(label: &str, max_w: f32) -> UndoFace {
+    sized_text_face(label, MENU_INK, false, max_w, MENU_PX * 0.8, MENU_PX * 0.55)
+}
+
+fn sized_text_face(
+    label: &str,
+    colour: [u8; 3],
+    as_written: bool,
+    max_w: f32,
+    max_px: f32,
+    min_px: f32,
+) -> UndoFace {
     let Some(font) = text::label_font() else {
         return UndoFace {
             rgba: Vec::new(),
@@ -345,9 +375,13 @@ fn quick_text_face(label: &str, colour: [u8; 3]) -> UndoFace {
             h: 0,
         };
     };
-    // Laid out at the menu's size and no smaller, as wide as the panel: nothing on the menu comes
-    // near that, so nothing is ever shrunk or broken.
-    let layout = text::fit(font, label, OUT_W as f32, 1, MENU_PX, MENU_PX);
+    // The menu's own lines are laid out at its size and no smaller, as wide as the panel: nothing
+    // on the menu comes near that, so nothing is ever shrunk or broken.
+    let layout = if as_written {
+        text::fit_as_written(font, label, max_w, 1, max_px, min_px)
+    } else {
+        text::fit(font, label, max_w, 1, max_px, min_px)
+    };
     let set = layout
         .lines
         .iter()

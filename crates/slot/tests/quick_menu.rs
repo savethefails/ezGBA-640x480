@@ -126,6 +126,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::ColourDepth,
         QuickRow::RunAhead,
         QuickRow::SnesCore,
+        QuickRow::Wifi,
         QuickRow::About,
         QuickRow::About,
     ] {
@@ -302,7 +303,7 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 }
 
 /// Every row the bar can land on, top to bottom.
-const SELECTABLE: [QuickRow; 13] = [
+const SELECTABLE: [QuickRow; 14] = [
     QuickRow::DateTime,
     QuickRow::Picture,
     QuickRow::SnesPicture,
@@ -315,6 +316,7 @@ const SELECTABLE: [QuickRow; 13] = [
     QuickRow::ColourDepth,
     QuickRow::RunAhead,
     QuickRow::SnesCore,
+    QuickRow::Wifi,
     QuickRow::About,
 ];
 
