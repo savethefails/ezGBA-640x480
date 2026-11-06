@@ -19,6 +19,107 @@ pub const WGET: &str = include_str!("pico8_wget.sh");
 /// tmpfs mounted without `noexec`, so a file written there can be run.
 pub const BIN: &str = "/run/ezgba/bin";
 
+/// The variable that tells the wrapper where to log, and the log's name in the card's `Logs/`.
+pub const LOG_VAR: &str = "EZGBA_WGET_LOG";
+pub const LOG_NAME: &str = "pico8-wget.log";
+
+/// A line in the download log, when there is one: the device sets it, nothing else does.
+pub fn note(line: &str) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os(LOG_VAR) else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{} {line}", uptime());
+    }
+}
+
+fn uptime() -> String {
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().map(str::to_owned))
+        .unwrap_or_else(|| "-".into())
+}
+
+/// Before PICO-8 starts: which `wget` it will find, and what its config says about using it.
+pub fn note_launch(home: &Path) {
+    if std::env::var_os(LOG_VAR).is_none() {
+        return;
+    }
+    let wget = std::env::var_os("PATH")
+        .map(|p| {
+            std::env::split_paths(&p)
+                .map(|d| d.join("wget"))
+                .find(|w| w.exists())
+                .map_or("none".to_string(), |w| w.display().to_string())
+        })
+        .unwrap_or_else(|| "no PATH".into());
+    let config = std::fs::read_to_string(home.join("config.txt")).unwrap_or_default();
+    let line = config
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some("use_wget"))
+        .map(|l| l.split("//").next().unwrap_or(l).trim().to_string())
+        .unwrap_or_else(|| "no use_wget line".into());
+    note(&format!(
+        "slot: PICO-8 starting: wget is {wget}; config says {line}"
+    ));
+}
+
+/// Once Wi-Fi is up: whether the BBS can be reached at all, through the same wrapper PICO-8
+/// uses, on a thread of its own so the frame loop never waits on the network. Its result is the
+/// wrapper's own lines in the log, after what the network looks like.
+pub fn check_bbs(ssid: &str) {
+    if std::env::var_os(LOG_VAR).is_none() {
+        return;
+    }
+    let ssid = ssid.to_string();
+    let _ = std::thread::Builder::new()
+        .name("slot-bbs-check".into())
+        .spawn(move || {
+            let dns = std::fs::read_to_string("/etc/resolv.conf")
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.starts_with("nameserver"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let now = std::process::Command::new("date")
+                .arg("-u")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            note(&format!(
+                "slot: Wi-Fi connected to {ssid}; DNS: {}; clock: {now}; checking the BBS",
+                if dns.is_empty() { "none" } else { &dns }
+            ));
+            // The two hosts PICO-8 fetches from: the BBS's lookups, and the carts themselves. A
+            // refusal of the bare address (curl exit 22) still means the host was reached.
+            let out = std::env::temp_dir().join("ezgba-bbs-check");
+            for url in [
+                "https://www.lexaloffle.com/bbs/",
+                "https://carts.lexaloffle.com/",
+            ] {
+                let ran = std::process::Command::new("wget")
+                    .arg(url)
+                    .arg("-q")
+                    .arg("-O")
+                    .arg(&out)
+                    .status();
+                if let Err(e) = ran {
+                    note(&format!("slot: could not run wget: {e}"));
+                }
+            }
+            let _ = std::fs::remove_file(&out);
+        });
+}
+
 /// Writes the wrapper into `dir` as `wget`, executable.
 pub fn install_wget(dir: &Path) -> io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;

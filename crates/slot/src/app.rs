@@ -627,6 +627,8 @@ pub struct App {
     wifi_retry_at: Millis,
     /// Whether the worker has been told to keep scanning.
     wifi_scanning: bool,
+    /// Whether Wi-Fi was up with an address last frame, so the moment it comes up is seen once.
+    wifi_was_up: bool,
     /// The password being typed, and the network it is for.
     keyboard: Option<(String, slot_ui::Keyboard)>,
     /// Words on the Wi-Fi pages, grey and lit, made by the binary as they first appear: the names
@@ -826,6 +828,7 @@ impl App {
             wifi_held: false,
             wifi_retry_at: 0,
             wifi_scanning: false,
+            wifi_was_up: false,
             keyboard: None,
             words: std::collections::HashMap::new(),
             net_faces: None,
@@ -5570,6 +5573,13 @@ impl App {
             return;
         };
         w.poll(*at + std::time::Duration::from_millis(now.saturating_sub(*from)));
+        // Each time Wi-Fi comes up, whether PICO-8 could reach the BBS over it goes in the log.
+        let status = &w.snapshot().status;
+        let up = status.state == crate::wifi::State::Completed && status.ip.is_some();
+        if up && !self.wifi_was_up {
+            crate::pico8_net::check_bbs(status.ssid.as_deref().unwrap_or("?"));
+        }
+        self.wifi_was_up = up;
         if scan != self.wifi_scanning {
             self.wifi_scanning = scan;
             w.want_scans(scan);

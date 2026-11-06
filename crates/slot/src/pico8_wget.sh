@@ -4,11 +4,25 @@
 # and BaseOS's wget is BusyBox's, whose HTTPS refuses every address unless told not to check the
 # certificate. BaseOS's curl checks it against the system's roots, so this hands the fetch to curl.
 # Anything it does not understand still reaches the real wget unchanged.
+#
+# With EZGBA_WGET_LOG set, every call is written to that file with curl's exit code and what curl
+# said, since a download that fails inside PICO-8 shows nothing but a spinning cart.
 
 CURL=/usr/bin/curl
 ROOTS=/etc/ssl/certs/ca-certificates.crt
 
-[ -x "$CURL" ] || exec /usr/bin/wget "$@"
+log() {
+	[ -n "$EZGBA_WGET_LOG" ] || return 0
+	echo "$(cut -d' ' -f1 /proc/uptime 2>/dev/null) $*" >> "$EZGBA_WGET_LOG" 2>/dev/null
+	return 0
+}
+
+log "wget $*"
+
+if [ ! -x "$CURL" ]; then
+	log "  no $CURL: BusyBox's wget"
+	exec /usr/bin/wget "$@"
+fi
 
 url=
 out=
@@ -25,14 +39,30 @@ for a in "$@"; do
 	--output-document=*) out=${a#--output-document=} ;;
 	--post-file) want=post ;;
 	--post-file=*) post=${a#--post-file=} ;;
-	-*) exec /usr/bin/wget "$@" ;;
+	-*) log "  $a is not ours: BusyBox's wget" ; exec /usr/bin/wget "$@" ;;
 	*) url=$a ;;
 	esac
 done
-[ -n "$url" ] || exec /usr/bin/wget "$@"
+if [ -z "$url" ]; then
+	log "  no address: BusyBox's wget"
+	exec /usr/bin/wget "$@"
+fi
 
-set -- -fsL --connect-timeout 15 --max-time 120
+set -- -fsSL --connect-timeout 15 --max-time 120
 [ -f "$ROOTS" ] && set -- "$@" --cacert "$ROOTS"
 [ -n "$out" ] && set -- "$@" -o "$out"
 [ -n "$post" ] && set -- "$@" --data-binary "@$post"
-exec "$CURL" "$@" "$url"
+
+if [ -z "$EZGBA_WGET_LOG" ]; then
+	exec "$CURL" "$@" "$url" 2>/dev/null
+fi
+# What curl says goes through a file, so what it fetches can still go to standard output.
+err=/tmp/ezgba-wget.$$
+"$CURL" "$@" "$url" 2>"$err"
+code=$?
+said=$(cat "$err" 2>/dev/null)
+rm -f "$err"
+size=
+[ -n "$out" ] && [ -f "$out" ] && size=" ($(wc -c < "$out" 2>/dev/null | tr -d ' ') bytes)"
+log "  curl exit $code$size${said:+: $said}"
+exit $code

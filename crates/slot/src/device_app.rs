@@ -24,12 +24,23 @@ pub fn run() {
     // safe: PICO-8's downloads run `wget` from `PATH`, and the one BaseOS has cannot do HTTPS
     // the way PICO-8 asks. See `pico8_net`.
     let bin = std::path::Path::new(slot::pico8_net::BIN);
+    let card = std::env::var_os("SLOT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(CARD));
+    // Every download PICO-8 asks for, and how it went, on the card where it can be read after.
+    std::env::set_var(
+        slot::pico8_net::LOG_VAR,
+        slot::root::logs_dir(&card).join(slot::pico8_net::LOG_NAME),
+    );
     match slot::pico8_net::install_wget(bin) {
         Ok(_) => std::env::set_var(
             "PATH",
             slot::pico8_net::path_with(bin, std::env::var_os("PATH")),
         ),
-        Err(e) => eprintln!("slot: pico8: no wget of our own: {e}"),
+        Err(e) => {
+            eprintln!("slot: pico8: no wget of our own: {e}");
+            slot::pico8_net::note(&format!("slot: could not write {}: {e}", bin.display()));
+        }
     }
     // Off the boot path, while the panel and the GPU come up: parsing the fonts, and opening
     // the audio device, which BaseOS's own startup sound can keep busy. From slot 8a52c5d.
