@@ -133,23 +133,56 @@ EXPORT void SDL_Delay(Uint32 ms)
 }
 
 /* ---- threads ---- */
-struct thread { pthread_t t; int (*fn)(void *); void *data; };
+/* PICO-8 downloads from the BBS on a thread, keeps the handle, and detaches
+ * it when the next download starts. A handle is ours, not PICO-8's: it is
+ * not in the memory a save state keeps. So a state loaded in another run
+ * holds a handle this process never made, and detaching through it would
+ * read freed or unmapped memory. Only handles made here, and not yet
+ * detached, are acted on; any other is a thread that no longer exists. */
+struct thread { pthread_t t; struct thread *next; };
+struct thread_start { int (*fn)(void *); void *data; };
+static struct thread *threads;
+static pthread_mutex_t threads_lock = PTHREAD_MUTEX_INITIALIZER;
 static void *thread_main(void *p)
 {
-	struct thread *t = p;
-	return (void *)(intptr_t)t->fn(t->data);
+	struct thread_start s = *(struct thread_start *)p;
+	free(p);
+	return (void *)(intptr_t)s.fn(s.data);
 }
 EXPORT void *SDL_CreateThread(int (*fn)(void *), const char *name, void *data)
 {
 	(void)name;
 	struct thread *t = calloc(1, sizeof *t);
-	if (!t) return NULL;
-	t->fn = fn;
-	t->data = data;
-	if (pthread_create(&t->t, NULL, thread_main, t) != 0) { free(t); return NULL; }
+	struct thread_start *s = malloc(sizeof *s);
+	if (!t || !s) { free(t); free(s); return NULL; }
+	s->fn = fn;
+	s->data = data;
+	pthread_mutex_lock(&threads_lock);
+	if (pthread_create(&t->t, NULL, thread_main, s) != 0) {
+		pthread_mutex_unlock(&threads_lock);
+		free(t);
+		free(s);
+		return NULL;
+	}
+	t->next = threads;
+	threads = t;
+	pthread_mutex_unlock(&threads_lock);
 	return t;
 }
-EXPORT void SDL_DetachThread(void *p) { if (p) pthread_detach(((struct thread *)p)->t); }
+EXPORT void SDL_DetachThread(void *p)
+{
+	if (!p) return;
+	pthread_mutex_lock(&threads_lock);
+	for (struct thread **at = &threads; *at; at = &(*at)->next) {
+		if (*at != p) continue;
+		struct thread *t = *at;
+		*at = t->next;
+		pthread_detach(t->t);
+		free(t);
+		break;
+	}
+	pthread_mutex_unlock(&threads_lock);
+}
 
 /* ---- displays and video drivers ---- */
 #define SCREEN_W 640

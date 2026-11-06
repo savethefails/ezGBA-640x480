@@ -568,12 +568,30 @@ static int self_text_cb(struct dl_phdr_info *info, size_t size, void *data)
 	return 0;
 }
 
-/* A state holds return addresses into PICO-8 and into this library, so it
- * only loads into the same build of both. */
+/* SDL's code too: a state is saved inside SDL_PollEvent, so it holds
+ * return addresses into SDL, and the core's stand-in for it changes with
+ * the core. */
+static int sdl_text_cb(struct dl_phdr_info *info, size_t size, void *data)
+{
+	(void)size;
+	uint64_t *h = data;
+	if (!info->dlpi_name || !strstr(info->dlpi_name, "libSDL2")) return 0;
+	for (int i = 0; i < info->dlpi_phnum; i++) {
+		const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+		uintptr_t lo = info->dlpi_addr + ph->p_vaddr;
+		if (ph->p_type == PT_LOAD && (ph->p_flags & PF_X))
+			*h = fnv(*h, (void *)lo, (void *)(lo + ph->p_memsz));
+	}
+	return 1;
+}
+
+/* A state holds return addresses into PICO-8, this library and SDL, so it
+ * only loads into the same build of all three. */
 static uint64_t exe_hash(void)
 {
 	uint64_t h = fnv(1469598103934665603ULL, (void *)text_lo, (void *)text_hi);
 	dl_iterate_phdr(self_text_cb, &h);
+	dl_iterate_phdr(sdl_text_cb, &h);
 	return h;
 }
 
