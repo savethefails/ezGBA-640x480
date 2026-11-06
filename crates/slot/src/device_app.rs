@@ -32,6 +32,18 @@ pub fn run() {
         slot::pico8_net::LOG_VAR,
         slot::root::logs_dir(&card).join(slot::pico8_net::LOG_NAME),
     );
+    // PICO-8 itself through a script that keeps its output on the card. The core starts it
+    // through whatever P8CORE_WRAPPER names.
+    match slot::pico8_net::install_run(bin) {
+        Ok(run) => {
+            std::env::set_var(
+                slot::pico8_net::RUN_LOG_VAR,
+                slot::root::logs_dir(&card).join(slot::pico8_net::RUN_LOG_NAME),
+            );
+            std::env::set_var("P8CORE_WRAPPER", run);
+        }
+        Err(e) => slot::pico8_net::note(&format!("slot: could not write the PICO-8 runner: {e}")),
+    }
     match slot::pico8_net::install_wget(bin) {
         Ok(_) => std::env::set_var(
             "PATH",

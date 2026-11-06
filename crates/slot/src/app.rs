@@ -4925,6 +4925,12 @@ impl App {
         else {
             return;
         };
+        // PICO-8 kept mid-download comes back waiting on a download that no longer exists, and
+        // spins for good. The last state is kept instead, from before the download.
+        if self.core == Core::Pico8 && crate::pico8_net::downloading() {
+            crate::pico8_net::note("slot: PICO-8 is downloading, so its state is not kept");
+            return;
+        }
         let Some(state) = snapshot.state() else {
             eprintln!("slot: flush: the core gave up no state");
             return;

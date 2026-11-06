@@ -19,6 +19,13 @@ log() {
 
 log "wget $*"
 
+# While this runs, a file named for it says a download is in flight: a state of PICO-8 kept now
+# would come back waiting on a download that no longer exists. Named for this process, so one
+# left behind by a killed download is told apart by the process being gone.
+DOWNLOADS=${EZGBA_DOWNLOADS:-/run/ezgba/downloads}
+mkdir -p "$DOWNLOADS" 2>/dev/null && : > "$DOWNLOADS/$$" 2>/dev/null
+trap 'rm -f "$DOWNLOADS/$$"' EXIT
+
 if [ ! -x "$CURL" ]; then
 	log "  no $CURL: BusyBox's wget"
 	exec /usr/bin/wget "$@"

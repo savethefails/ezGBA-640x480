@@ -19,6 +19,31 @@ pub const WGET: &str = include_str!("pico8_wget.sh");
 /// tmpfs mounted without `noexec`, so a file written there can be run.
 pub const BIN: &str = "/run/ezgba/bin";
 
+/// The script PICO-8 is started through, so its own output reaches the card. See the script.
+pub const RUN: &str = include_str!("pico8_run.sh");
+/// The variable that tells it where, and that file's name in the card's `Logs/`.
+pub const RUN_LOG_VAR: &str = "EZGBA_PICO8_LOG";
+pub const RUN_LOG_NAME: &str = "pico8.log";
+/// Where the wrapper marks a download in flight, one file per download, named for its process.
+pub const DOWNLOADS: &str = "/run/ezgba/downloads";
+
+/// Whether PICO-8 has a download in flight: a marker whose process is still running. One whose
+/// process is gone was left by a download that was killed, and says nothing.
+pub fn downloading() -> bool {
+    downloading_in(Path::new(DOWNLOADS), Path::new("/proc"))
+}
+
+fn downloading_in(dir: &Path, proc: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name()
+            .to_str()
+            .is_some_and(|pid| proc.join(pid).exists())
+    })
+}
+
 /// The variable that tells the wrapper where to log, and the log's name in the card's `Logs/`.
 pub const LOG_VAR: &str = "EZGBA_WGET_LOG";
 pub const LOG_NAME: &str = "pico8-wget.log";
@@ -122,10 +147,19 @@ pub fn check_bbs(ssid: &str) {
 
 /// Writes the wrapper into `dir` as `wget`, executable.
 pub fn install_wget(dir: &Path) -> io::Result<PathBuf> {
+    install(dir, "wget", WGET)
+}
+
+/// Writes the script PICO-8 is started through into `dir`, executable.
+pub fn install_run(dir: &Path) -> io::Result<PathBuf> {
+    install(dir, "pico8-run", RUN)
+}
+
+fn install(dir: &Path, name: &str, script: &str) -> io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir)?;
-    let path = dir.join("wget");
-    std::fs::write(&path, WGET)?;
+    let path = dir.join(name);
+    std::fs::write(&path, script)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
     Ok(path)
 }
@@ -233,6 +267,23 @@ mod tests {
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             before
         );
+    }
+
+    /// A marker counts while its process runs, and not once it is gone.
+    #[test]
+    fn a_download_counts_only_while_its_process_runs() {
+        let d = tempfile::tempdir().unwrap();
+        let (dir, proc) = (d.path().join("downloads"), d.path().join("proc"));
+        assert!(!downloading_in(&dir, &proc), "no folder is no download");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(proc.join("41")).unwrap();
+        std::fs::write(dir.join("40"), "").unwrap();
+        assert!(
+            !downloading_in(&dir, &proc),
+            "a killed download's marker counted"
+        );
+        std::fs::write(dir.join("41"), "").unwrap();
+        assert!(downloading_in(&dir, &proc));
     }
 
     #[test]
