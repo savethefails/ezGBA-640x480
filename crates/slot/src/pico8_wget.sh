@@ -55,6 +55,12 @@ if [ -z "$url" ]; then
 	exec /usr/bin/wget "$@"
 fi
 
+# As wget does, the file PICO-8 named is made before anything is fetched, and left empty when the
+# fetch fails. PICO-8 reads a missing one as no connection at all and gives up, where an empty
+# one sends it to the copy it already keeps: without this, a cart it has downloaded once would
+# not load again with Wi-Fi off.
+[ -n "$out" ] && [ "$out" != "-" ] && : > "$out"
+
 set -- -fsSL --connect-timeout 15 --max-time 120
 [ -f "$ROOTS" ] && set -- "$@" --cacert "$ROOTS"
 [ -n "$out" ] && set -- "$@" -o "$out"
