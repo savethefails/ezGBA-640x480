@@ -22,6 +22,7 @@ pub enum QuickRow {
     RunAhead,
     SnesCore,
     Wifi,
+    Patcher,
     About,
     Brightness,
 }
@@ -32,7 +33,7 @@ impl QuickRow {
     /// `System/theme.txt` holds too. Rumble and colour correction stay at their defaults,
     /// and fast forward cannot start with R2 as brightness.
     /// Brightness is last and only says which buttons do it; the bar never lands on it.
-    pub const ALL: [QuickRow; 15] = [
+    pub const ALL: [QuickRow; 16] = [
         QuickRow::DateTime,
         QuickRow::Picture,
         QuickRow::SnesPicture,
@@ -46,6 +47,7 @@ impl QuickRow {
         QuickRow::RunAhead,
         QuickRow::SnesCore,
         QuickRow::Wifi,
+        QuickRow::Patcher,
         QuickRow::About,
         QuickRow::Brightness,
     ];
@@ -70,6 +72,7 @@ impl QuickRow {
             QuickRow::RunAhead => "Run-Ahead",
             QuickRow::SnesCore => "SNES Emulator",
             QuickRow::Wifi => "Wi-Fi",
+            QuickRow::Patcher => "Patcher",
             QuickRow::About => "About",
             QuickRow::Brightness => "Brightness",
         }
@@ -77,7 +80,10 @@ impl QuickRow {
 
     /// A row A opens, rather than one the arrows change.
     pub fn opens(self) -> bool {
-        matches!(self, QuickRow::DateTime | QuickRow::Wifi | QuickRow::About)
+        matches!(
+            self,
+            QuickRow::DateTime | QuickRow::Wifi | QuickRow::Patcher | QuickRow::About
+        )
     }
 
     /// The row above, stopping at the top: the bar does not wrap, as no menu here does.
@@ -289,7 +295,7 @@ impl QuickValue {
 
 /// A size up from the power menu's rows: 30 px type on rows as tall as the space above the
 /// legend allows, up to 40. They were 52 when the menu had three; ten fit at 40, twelve at 34,
-/// thirteen at 32, fourteen at 29, fifteen at 27.
+/// thirteen at 32, fourteen at 29, fifteen at 27, sixteen at 26.
 /// The type's face is 40 px of which the capitals are about 22, so they sit clear of the bar
 /// at either.
 pub const QUICK_PITCH: f32 = {

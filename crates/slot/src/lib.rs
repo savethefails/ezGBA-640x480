@@ -28,6 +28,7 @@ pub mod network_page;
 pub mod pacer;
 pub mod persist;
 pub mod pico8_net;
+pub mod pico8_patch;
 pub mod prefetch;
 pub mod resample;
 pub mod rewind;

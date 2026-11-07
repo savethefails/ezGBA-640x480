@@ -383,6 +383,11 @@ pub enum Phase {
         page: NetPage,
         row: usize,
     },
+    /// The quick menu's Patcher: every PICO-8 cart on the card, with the row in hand. Opened off
+    /// the quick menu's Patcher row, and back to it on B.
+    Patcher {
+        row: usize,
+    },
     Inserting {
         cart: String,
         t: f32,
@@ -638,6 +643,10 @@ pub struct App {
     net_faces: Option<NetFaces>,
     /// The keyboard's title and the text either side of its cursor, made as they change.
     keyboard_text: slot_ui::KeyboardText,
+    /// The PICO-8 carts the Patcher lists, read when it opens and after each patch.
+    patcher: Vec<crate::pico8_patch::Cart>,
+    /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
+    patcher_legend: Option<[(TexId, u32); 3]>,
     /// How far into the greeting, by the frame clock.
     greeting_ms: f64,
     /// How far into the greeting by the audio actually played, when there is audio.
@@ -832,6 +841,8 @@ impl App {
             keyboard: None,
             words: std::collections::HashMap::new(),
             net_faces: None,
+            patcher: Vec::new(),
+            patcher_legend: None,
             keyboard_text: slot_ui::KeyboardText {
                 title: None,
                 before: None,
@@ -1207,7 +1218,7 @@ impl App {
                 c => unreachable!("SNES emulator {c:?}"),
             }),
             QuickRow::Wifi => Some(QuickValue::flag(self.state.wifi_on)),
-            QuickRow::DateTime | QuickRow::About => None,
+            QuickRow::DateTime | QuickRow::Patcher | QuickRow::About => None,
         }
     }
 
@@ -2259,6 +2270,7 @@ impl App {
             }
             Phase::QuickMenu { row } => self.quick_menu_input(row, action),
             Phase::Network { page, row } => self.network_input(page, row, action),
+            Phase::Patcher { row } => self.patcher_input(row, action),
             _ => {}
         }
     }
@@ -2372,7 +2384,11 @@ impl App {
                 ));
                 ("snes-core", word.to_string())
             }
-            QuickRow::DateTime | QuickRow::Wifi | QuickRow::About | QuickRow::Brightness => return,
+            QuickRow::DateTime
+            | QuickRow::Wifi
+            | QuickRow::Patcher
+            | QuickRow::About
+            | QuickRow::Brightness => return,
         };
         self.look.apply();
         if let Some(root) = &self.root {
@@ -2398,6 +2414,10 @@ impl App {
                     page: NetPage::Main,
                     row: 0,
                 }
+            }
+            QuickRow::Patcher => {
+                self.rescan_patcher();
+                self.phase = Phase::Patcher { row: 0 };
             }
             QuickRow::Picture
             | QuickRow::Grid
@@ -3235,6 +3255,7 @@ impl App {
             }
             .draw(out),
             Phase::Network { page, row } => self.draw_network(*page, *row, out),
+            Phase::Patcher { row } => self.draw_patcher(*row, out),
             Phase::Shelf => {
                 draw_backdrop(self.wallpaper, self.ground(), out);
                 // Out of the way of the lid, which lifts into the same space.
@@ -5819,6 +5840,182 @@ impl App {
             rows: &list,
             selected: row.min(rows.len().saturating_sub(1)),
             carets: self.quick_menu_faces.as_ref().map(|f| f.carets),
+            legend: &legend,
+        }
+        .draw(out);
+    }
+}
+
+/// What the Patcher says a cart is, on the right of its row. A cart that runs from a file as it
+/// is says nothing.
+fn patcher_value(status: &crate::pico8_patch::Status) -> Option<&'static str> {
+    use crate::pico8_patch::Status;
+    match status {
+        Status::Fine => None,
+        Status::Multicart { .. } => Some("Needs Patch"),
+        Status::NoId => Some("No BBS ID"),
+        Status::Patched => Some("Patched"),
+        Status::Unreadable => Some("Unreadable"),
+    }
+}
+
+/// Every value the Patcher can show, made once with the page's other faces.
+pub const PATCHER_VALUES: [&str; 4] = ["Needs Patch", "No BBS ID", "Patched", "Unreadable"];
+
+/// What the Patcher shows when the card has no PICO-8 carts.
+pub const PATCHER_EMPTY: &str = "No PICO-8 carts";
+
+/// The longest name a row shows, so it never runs under its value.
+const PATCHER_NAME_MAX: usize = 22;
+
+fn patcher_name(name: &str) -> String {
+    if name.chars().count() <= PATCHER_NAME_MAX {
+        return name.to_string();
+    }
+    let short: String = name.chars().take(PATCHER_NAME_MAX - 2).collect();
+    format!("{short}..")
+}
+
+/// The quick menu's Patcher, which makes a PICO-8 multicart that only finds its parts as a BBS
+/// cart run from the card: see `pico8_patch`. A patches a cart that needs it and restores one
+/// that was patched; anything else is refused.
+impl App {
+    fn rescan_patcher(&mut self) {
+        self.patcher = match &self.root {
+            Some(root) => crate::pico8_patch::scan(root),
+            None => Vec::new(),
+        };
+    }
+
+    /// The carts the Patcher lists, for a test to read.
+    pub fn patcher_carts(&self) -> &[crate::pico8_patch::Cart] {
+        &self.patcher
+    }
+
+    fn patcher_input(&mut self, row: usize, action: Action) {
+        let last = self.patcher.len().saturating_sub(1);
+        let mut row = row.min(last);
+        match action {
+            Action::GbaDown(Btn::Up) => row = row.saturating_sub(1),
+            Action::GbaDown(Btn::Down) => row = (row + 1).min(last),
+            Action::GbaDown(Btn::A) => self.patch_row(row),
+            Action::GbaDown(Btn::B) | Action::QuickMenu | Action::Eject => {
+                self.phase = Phase::QuickMenu {
+                    row: QuickRow::Patcher,
+                };
+                return;
+            }
+            _ => {}
+        }
+        self.phase = Phase::Patcher { row };
+    }
+
+    fn patch_row(&mut self, row: usize) {
+        use crate::pico8_patch::Status;
+        let (Some(root), Some(cart)) = (self.root.clone(), self.patcher.get(row).cloned()) else {
+            return self.refuse();
+        };
+        let done = match cart.status {
+            Status::Multicart { .. } => crate::pico8_patch::patch(&root, &cart.path),
+            Status::Patched => crate::pico8_patch::restore(&root, &cart.path),
+            _ => return self.refuse(),
+        };
+        let what = if cart.status == Status::Patched {
+            "restored"
+        } else {
+            "patched"
+        };
+        match done {
+            Ok(()) => {
+                crate::latency::note(&format!("patcher: {} {what}", cart.name));
+                // A state of the cart as it was holds its old code running: resumed into the new
+                // one, it would carry on as the old. Moved aside, as a refused one is.
+                if let Some(stem) = cart.path.file_stem().and_then(|s| s.to_str()) {
+                    let ring = slot_store::StateRing::new(
+                        &root,
+                        slot_store::Platform::Pico8,
+                        Core::Pico8,
+                        stem,
+                    );
+                    if let Err(e) = ring.retire_resume(&format_stamp(self.wall_secs())) {
+                        eprintln!("slot: patcher: {stem}: resume: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("slot: patcher: {}: {e}", cart.name);
+                self.refuse();
+            }
+        }
+        self.rescan_patcher();
+    }
+
+    /// Every word the Patcher on screen says, for the binary to make the ones it has not yet.
+    pub fn patcher_words(&self) -> Vec<String> {
+        if !self.on_patcher_page() {
+            return Vec::new();
+        }
+        if self.patcher.is_empty() {
+            return vec![PATCHER_EMPTY.to_string()];
+        }
+        self.patcher.iter().map(|c| patcher_name(&c.name)).collect()
+    }
+
+    /// Every row's label and value, as the page shows them.
+    pub fn patcher_rows(&self) -> Vec<(String, Option<String>)> {
+        self.patcher
+            .iter()
+            .map(|c| {
+                (
+                    patcher_name(&c.name),
+                    patcher_value(&c.status).map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    pub fn on_patcher_page(&self) -> bool {
+        matches!(self.phase, Phase::Patcher { .. })
+    }
+
+    pub fn has_patcher_legend(&self) -> bool {
+        self.patcher_legend.is_some()
+    }
+
+    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 3]) {
+        self.patcher_legend = Some(legend);
+    }
+
+    fn draw_patcher(&self, row: usize, out: &mut Vec<Draw>) {
+        use crate::pico8_patch::Status;
+        let list: Vec<slot_ui::ListRow> = if self.patcher.is_empty() {
+            vec![slot_ui::ListRow {
+                label: self.words.get(PATCHER_EMPTY).copied(),
+                value: None,
+                arrows: false,
+            }]
+        } else {
+            self.patcher_rows()
+                .into_iter()
+                .map(|(label, value)| slot_ui::ListRow {
+                    label: self.words.get(&label).copied(),
+                    value: value.and_then(|v| self.words.get(&v).copied()),
+                    arrows: false,
+                })
+                .collect()
+        };
+        let legend: Vec<(TexId, u32)> = match self.patcher_legend {
+            Some([back, patch, restore]) => match self.patcher.get(row).map(|c| &c.status) {
+                Some(Status::Multicart { .. }) => vec![back, patch],
+                Some(Status::Patched) => vec![back, restore],
+                _ => vec![back],
+            },
+            None => Vec::new(),
+        };
+        slot_ui::ListMenu {
+            rows: &list,
+            selected: row.min(list.len().saturating_sub(1)),
+            carets: None,
             legend: &legend,
         }
         .draw(out);

@@ -106,12 +106,21 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Run-Ahead",
             "SNES Emulator",
             "Wi-Fi",
+            "Patcher",
             "About",
             "Brightness"
         ]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
-    assert_eq!(opens, [QuickRow::DateTime, QuickRow::Wifi, QuickRow::About]);
+    assert_eq!(
+        opens,
+        [
+            QuickRow::DateTime,
+            QuickRow::Wifi,
+            QuickRow::Patcher,
+            QuickRow::About
+        ]
+    );
 }
 
 #[test]

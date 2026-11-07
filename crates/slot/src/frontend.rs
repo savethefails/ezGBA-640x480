@@ -488,6 +488,7 @@ impl Frontend {
         sync_greeting(self.session.app_mut(), compositor, &mut self.greeting);
         sync_quick_clock(self.session.app_mut(), compositor, &mut self.quick_clock);
         sync_network(self.session.app_mut(), compositor, &mut self.keyboard_text);
+        sync_patcher(self.session.app_mut(), compositor);
         sync_core_picker(
             self.session.app_mut(),
             compositor,
@@ -769,6 +770,41 @@ fn sync_quick_clock(app: &mut App, compositor: &mut Compositor, state: &mut Quic
 /// The Wi-Fi pages' faces, made the first time the page opens rather than at boot, since most
 /// sessions never open it; then each network name as a scan first finds it; then the keyboard's
 /// words whenever they change.
+/// The Patcher's faces: its legend and fixed words once, and each cart's name as it first shows.
+fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
+    if !app.on_patcher_page() {
+        return;
+    }
+    let mut line = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);
+    if !app.has_patcher_legend() {
+        let mut hint = |f: UndoFace| {
+            let (tex, w, _) = line(f);
+            (tex, w)
+        };
+        app.set_patcher_legend([
+            hint(hint_face("B", "Back")),
+            hint(hint_face("A", "Patch")),
+            hint(hint_face("A", "Restore")),
+        ]);
+        for w in crate::app::PATCHER_VALUES {
+            let faces = [
+                line(quick_value_face(w, false)),
+                line(quick_value_face(w, true)),
+            ];
+            app.set_word(w.to_string(), faces);
+        }
+    }
+    for w in app.patcher_words() {
+        if !app.has_word(&w) {
+            let faces = [
+                line(quick_word_face(&w, false)),
+                line(quick_word_face(&w, true)),
+            ];
+            app.set_word(w, faces);
+        }
+    }
+}
+
 fn sync_network(app: &mut App, compositor: &mut Compositor, kb: &mut KeyboardTextFaces) {
     if !app.on_network_page() {
         kb.shown = None;
