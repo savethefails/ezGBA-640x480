@@ -100,7 +100,8 @@ pub fn note_launch(home: &Path) {
 
 /// Once Wi-Fi is up: whether the BBS can be reached at all, through the same wrapper PICO-8
 /// uses, on a thread of its own so the frame loop never waits on the network. Its result is the
-/// wrapper's own lines in the log, after what the network looks like.
+/// wrapper's own lines in the log, after whether a name server was given and the clock (the
+/// certificates need it). The log may be shared, so it holds no addresses.
 pub fn check_bbs(ssid: &str) {
     if std::env::var_os(LOG_VAR).is_none() {
         return;
@@ -109,20 +110,18 @@ pub fn check_bbs(ssid: &str) {
     let _ = std::thread::Builder::new()
         .name("slot-bbs-check".into())
         .spawn(move || {
-            let dns = std::fs::read_to_string("/etc/resolv.conf")
+            let servers = std::fs::read_to_string("/etc/resolv.conf")
                 .unwrap_or_default()
                 .lines()
                 .filter(|l| l.starts_with("nameserver"))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .count();
             let now = std::process::Command::new("date")
                 .arg("-u")
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_default();
             note(&format!(
-                "slot: Wi-Fi connected to {ssid}; DNS: {}; clock: {now}; checking the BBS",
-                if dns.is_empty() { "none" } else { &dns }
+                "slot: Wi-Fi connected to {ssid}; name servers: {servers}; clock: {now}; checking the BBS"
             ));
             // The two hosts PICO-8 fetches from: the BBS's lookups, and the carts themselves. A
             // refusal of the bare address (curl exit 22) still means the host was reached.
