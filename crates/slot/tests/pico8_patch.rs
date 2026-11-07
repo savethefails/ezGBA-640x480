@@ -93,6 +93,31 @@ fn a_renamed_multicart_has_no_id_and_is_left_alone() {
 }
 
 #[test]
+fn carts_with_something_to_do_are_listed_first_each_group_by_name() {
+    let (d, games) = card(&[]);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pico8");
+    let text = "pico-8 cartridge\nversion 43\n__lua__\nprint(\"hi\")\n";
+    std::fs::write(games.join("apple-1.p8"), text).unwrap();
+    std::fs::write(games.join("zebra-1.p8"), text).unwrap();
+    std::fs::copy(
+        fixture.join("multi_demo-2.p8.png"),
+        games.join("multi_demo-2.p8.png"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture.join("multi_demo-2.p8.png"),
+        games.join("bravo-3.p8.png"),
+    )
+    .unwrap();
+    pico8_patch::patch(d.path(), &games.join("multi_demo-2.p8.png")).unwrap();
+    let names: Vec<_> = pico8_patch::scan(d.path())
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert_eq!(names, ["bravo-3", "multi_demo-2", "apple-1", "zebra-1"]);
+}
+
+#[test]
 fn a_cart_that_runs_from_a_file_is_fine_and_other_files_are_not_listed() {
     let (d, games) = card(&[]);
     std::fs::write(

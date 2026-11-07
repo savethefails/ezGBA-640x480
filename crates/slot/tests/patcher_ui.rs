@@ -72,18 +72,19 @@ fn a_multicart_is_patched_and_restored_from_the_menu() {
     assert_eq!(
         a.patcher_rows(),
         [
-            ("hello-1".to_string(), None),
             ("multi_demo-2".to_string(), Some("Needs Patch".to_string())),
+            ("hello-1".to_string(), None),
         ]
     );
 
     // A cart that runs as it is: nothing to do.
-    press(&mut a, Btn::A);
-    assert_eq!(a.patcher_carts()[0].status, Status::Fine);
-
     press(&mut a, Btn::Down);
     press(&mut a, Btn::A);
-    assert_eq!(a.patcher_carts()[1].status, Status::Patched);
+    assert_eq!(a.patcher_carts()[1].status, Status::Fine);
+
+    press(&mut a, Btn::Up);
+    press(&mut a, Btn::A);
+    assert_eq!(a.patcher_carts()[0].status, Status::Patched);
     assert_eq!(
         ring.read_resume().unwrap(),
         None,
@@ -92,7 +93,7 @@ fn a_multicart_is_patched_and_restored_from_the_menu() {
 
     press(&mut a, Btn::A);
     assert_eq!(
-        a.patcher_carts()[1].status,
+        a.patcher_carts()[0].status,
         Status::Multicart {
             id: "multi_demo".into()
         }

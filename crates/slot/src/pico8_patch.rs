@@ -35,6 +35,13 @@ pub enum Status {
     Unreadable,
 }
 
+impl Status {
+    /// A press of A does something: a multicart is patched and a launcher is undone.
+    pub fn actionable(&self) -> bool {
+        matches!(self, Status::Multicart { .. } | Status::Patched)
+    }
+}
+
 /// One cart in the folder.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cart {
@@ -69,7 +76,9 @@ pub fn scan(root: &Path) -> Vec<Cart> {
             path,
         })
         .collect();
-    carts.sort_by_key(|c| slot_store::sort_key(&c.name));
+    // The carts the Patcher has something to do for come first: those that need it and those
+    // it has done, together, so patching or restoring one leaves it where it was.
+    carts.sort_by_key(|c| (!c.status.actionable(), slot_store::sort_key(&c.name)));
     carts
 }
 
