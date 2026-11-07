@@ -343,6 +343,27 @@ fn a_join_while_the_service_is_off_is_written_to_the_file() {
 }
 
 #[test]
+fn power_saving_is_turned_off_once_per_association() {
+    let (mut w, calls, _d) = wpa(TWO, TWO_CONF);
+    w.status();
+    w.status();
+    let ps = |calls: &Calls| {
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.ends_with(&strs(&["set", "ps", "0"])))
+            .count()
+    };
+    assert_eq!(ps(&calls), 1);
+    w.runner_mut().status = "wpa_state=SCANNING\n".into();
+    w.status();
+    w.runner_mut().status = "wpa_state=COMPLETED\nid=1\nssid=Cabin\nip_address=10.0.0.2\n".into();
+    w.status();
+    assert_eq!(ps(&calls), 2);
+}
+
+#[test]
 fn dhcp_runs_in_the_background_on_every_association() {
     let (mut w, calls, _d) = wpa(TWO, TWO_CONF);
     w.status();

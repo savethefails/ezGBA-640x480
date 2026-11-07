@@ -66,13 +66,20 @@ set -- -fsSL --connect-timeout 15 --max-time 120
 [ -n "$out" ] && set -- "$@" -o "$out"
 [ -n "$post" ] && set -- "$@" --data-binary "@$post"
 
-if [ -z "$EZGBA_WGET_LOG" ]; then
-	exec "$CURL" "$@" "$url" 2>/dev/null
-fi
-# What curl says goes through a file, so what it fetches can still go to standard output.
+# A radio that has dozed through a quiet minute can drop the first answer it is sent, so a
+# name that will not resolve (curl 6) or a host that will not answer (7) is asked again, a
+# second apart, before PICO-8 is told there is no connection.
 err=/tmp/ezgba-wget.$$
-"$CURL" "$@" "$url" 2>"$err"
-code=$?
+try=1
+while :; do
+	"$CURL" "$@" "$url" 2>"$err"
+	code=$?
+	case "$code" in 6 | 7) ;; *) break ;; esac
+	[ "$try" -ge 3 ] && break
+	log "  curl exit $code: again"
+	sleep 1
+	try=$((try + 1))
+done
 said=$(cat "$err" 2>/dev/null)
 rm -f "$err"
 size=

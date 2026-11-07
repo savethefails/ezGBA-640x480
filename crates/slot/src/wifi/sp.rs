@@ -221,6 +221,11 @@ impl<R: Run> Backend for Wpa<R> {
         let s = parse_status(&text);
         if s.state == State::Completed {
             if !self.renewed {
+                // A dozing radio drops the first answers after a quiet minute, and a PICO-8
+                // cart that reaches for the BBS then is told there is no connection: the link
+                // turns it off for its own reasons, and Wi-Fi the player turned on wants the
+                // same. A driver that refuses is simply left as it is.
+                self.cli(&["set", "ps", "0"]);
                 match self.dhcp_running() {
                     Some(pid) => {
                         self.runner.run("kill", &["-USR1", &pid]);
