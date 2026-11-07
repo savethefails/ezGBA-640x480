@@ -20,9 +20,18 @@ fn press(a: &mut App, btn: Btn) {
 
 fn open_patcher(a: &mut App) {
     a.apply(Action::QuickMenu);
-    while a.quick_menu() != Some(QuickRow::Patcher) {
+    for _ in 0..QuickRow::ALL.len() {
+        if a.quick_menu() == Some(QuickRow::Patcher) {
+            break;
+        }
         press(a, Btn::Down);
     }
+    assert_eq!(
+        a.quick_menu(),
+        Some(QuickRow::Patcher),
+        "no Patcher row in {:?}",
+        a.phase()
+    );
     press(a, Btn::A);
     assert!(
         matches!(a.phase(), Phase::Patcher { row: 0 }),
@@ -95,7 +104,16 @@ fn a_multicart_is_patched_and_restored_from_the_menu() {
 
 #[test]
 fn a_card_with_no_pico8_carts_says_so() {
-    let d = tmp_root_with_carts(&["Emerald"]);
+    // Two carts, so the boot stops on the carousel rather than seating the only one.
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..SlotState::default()
+        },
+    )
+    .unwrap();
     let (mut a, _) = app_booting_at(d.path(), CLOCK_IS_SET);
     open_patcher(&mut a);
     assert!(a.patcher_carts().is_empty());
