@@ -99,3 +99,49 @@ fn render_patcher() {
     run(&mut f, &mut input, 10);
     shot(&mut f, &mut c, &dir, "patched");
 }
+
+#[test]
+fn render_shelf_patch_hint() {
+    let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") else {
+        return;
+    };
+    let Ok(surface) = HeadlessSurface::new() else {
+        return;
+    };
+    let Ok(mut c) = Compositor::new(&surface) else {
+        return;
+    };
+    let d = tmp_root_with_carts(&[]);
+    clocked(d.path());
+    let games = slot::pico8_patch::games(d.path());
+    std::fs::create_dir_all(&games).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pico8");
+    std::fs::copy(
+        fixture.join("multi_demo-2.p8.png"),
+        games.join("multi_demo-2.p8.png"),
+    )
+    .unwrap();
+    std::fs::write(
+        games.join("celeste-1.p8"),
+        "pico-8 cartridge\nversion 43\n__lua__\nprint(\"hi\")\n",
+    )
+    .unwrap();
+    let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+    f.upload_faces(&mut c);
+    let mut input = Script(VecDeque::new());
+    run(&mut f, &mut input, 20);
+    shot(&mut f, &mut c, &dir, "shelf-fine");
+    tap(&mut f, &mut input, Btn::Right);
+    run(&mut f, &mut input, 40);
+    shot(&mut f, &mut c, &dir, "shelf-needs-patch");
+    input.0.push_back(vec![RawEvent::Down(Btn::Select)]);
+    run(&mut f, &mut input, 3);
+    tap(&mut f, &mut input, Btn::Start);
+    input.0.push_back(vec![RawEvent::Up(Btn::Select)]);
+    run(&mut f, &mut input, 20);
+    shot(&mut f, &mut c, &dir, "shelf-patched");
+    assert_eq!(
+        slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
+        slot::pico8_patch::Status::Patched
+    );
+}

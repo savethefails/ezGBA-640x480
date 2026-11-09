@@ -772,6 +772,15 @@ fn sync_quick_clock(app: &mut App, compositor: &mut Compositor, state: &mut Quic
 /// words whenever they change.
 /// The Patcher's faces: its legend and fixed words once, and each cart's name as it first shows.
 fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
+    // Made the first time the shelf has a cart to show it over, and kept.
+    if app.shows_patch_hint() && !app.has_patch_hint() {
+        let mut up = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w);
+        let faces = [
+            up(hint_face("SELECT", "+")),
+            up(hint_face("START", "Patch for Wi-Fi")),
+        ];
+        app.set_patch_hint(faces);
+    }
     if !app.on_patcher_page() {
         return;
     }

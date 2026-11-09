@@ -647,6 +647,14 @@ pub struct App {
     patcher: Vec<crate::pico8_patch::Cart>,
     /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
     patcher_legend: Option<[(TexId, u32); 3]>,
+    /// Whether each PICO-8 cart looked at on the shelf still needs the patch, read the first
+    /// time it is selected rather than for the whole card at boot: deciding means unpacking
+    /// the cart's code, which is too slow to do for every cart at once.
+    patch_needed: HashMap<PathBuf, bool>,
+    /// SELECT+START PATCH, which the shelf shows over a cart that needs it.
+    patch_hint: Option<[(TexId, u32); 2]>,
+    /// SELECT is physically down, so the shelf can tell SELECT+START from a bare START.
+    select_held: bool,
     /// How far into the greeting, by the frame clock.
     greeting_ms: f64,
     /// How far into the greeting by the audio actually played, when there is audio.
@@ -843,6 +851,9 @@ impl App {
             net_faces: None,
             patcher: Vec::new(),
             patcher_legend: None,
+            patch_needed: HashMap::new(),
+            patch_hint: None,
+            select_held: false,
             keyboard_text: slot_ui::KeyboardText {
                 title: None,
                 before: None,
@@ -2103,6 +2114,11 @@ impl App {
     /// take them; while the game is playing they are the game's and the app sees only the
     /// gestures that are never the game's.
     pub fn apply(&mut self, action: Action) {
+        match action {
+            Action::GbaDown(Btn::Select) => self.select_held = true,
+            Action::GbaUp(Btn::Select) => self.select_held = false,
+            _ => {}
+        }
         // The lid, the light and the sound belong to the device rather than to whatever is
         // on screen, so they are taken before the phase gets a look at the action.
         match action {
@@ -2183,6 +2199,11 @@ impl App {
                 // every one of those chords; waiting out the 600 ms window instead would put
                 // that delay in front of the menu. START is bound to nothing here and reaches
                 // no core from the shelf, so it costs neither.
+                // SELECT+START patches a PICO-8 multicart that would otherwise fail to find its
+                // parts. Only here: in a game the pair is the console's own, and many reset on it.
+                Action::GbaDown(Btn::Start) if self.core_picker.is_none() && self.select_held => {
+                    self.patch_selected()
+                }
                 Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
                     self.open_core_picker()
                 }
@@ -2765,6 +2786,9 @@ impl App {
             }
             _ => None,
         };
+        if self.on_shelf() {
+            self.check_selected_patch();
+        }
         // One clip for the whole movement, and the only thing done to it is when it starts.
         if touched {
             self.sfx = Some(match self.phase {
@@ -3306,6 +3330,7 @@ impl App {
                             self.slot_letter_alpha(),
                             out,
                         );
+                        self.draw_patch_hint(out);
                     }
                 }
                 draw_footer(
@@ -5912,25 +5937,37 @@ impl App {
 
     fn patch_row(&mut self, row: usize) {
         use crate::pico8_patch::Status;
-        let (Some(root), Some(cart)) = (self.root.clone(), self.patcher.get(row).cloned()) else {
+        let Some(cart) = self.patcher.get(row).cloned() else {
             return self.refuse();
         };
-        let done = match cart.status {
-            Status::Multicart { .. } => crate::pico8_patch::patch(&root, &cart.path),
-            Status::Patched => crate::pico8_patch::restore(&root, &cart.path),
-            _ => return self.refuse(),
+        match cart.status {
+            Status::Multicart { .. } => self.apply_patch(&cart.path, false),
+            Status::Patched => self.apply_patch(&cart.path, true),
+            _ => self.refuse(),
+        }
+        self.rescan_patcher();
+    }
+
+    /// Patches the cart at `path`, or with `restore` puts its original back. A refusal shakes.
+    fn apply_patch(&mut self, path: &Path, restore: bool) {
+        let Some(root) = self.root.clone() else {
+            return self.refuse();
         };
-        let what = if cart.status == Status::Patched {
-            "restored"
+        let done = if restore {
+            crate::pico8_patch::restore(&root, path)
         } else {
-            "patched"
+            crate::pico8_patch::patch(&root, path)
         };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = name.unwrap_or_default();
+        self.patch_needed.clear();
         match done {
             Ok(()) => {
-                crate::latency::note(&format!("patcher: {} {what}", cart.name));
+                let what = if restore { "restored" } else { "patched" };
+                crate::latency::note(&format!("patcher: {name} {what}"));
                 // A state of the cart as it was holds its old code running: resumed into the new
                 // one, it would carry on as the old. Moved aside, as a refused one is.
-                if let Some(stem) = cart.path.file_stem().and_then(|s| s.to_str()) {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     let ring = slot_store::StateRing::new(
                         &root,
                         slot_store::Platform::Pico8,
@@ -5943,11 +5980,94 @@ impl App {
                 }
             }
             Err(e) => {
-                eprintln!("slot: patcher: {}: {e}", cart.name);
+                eprintln!("slot: patcher: {name}: {e}");
                 self.refuse();
             }
         }
-        self.rescan_patcher();
+    }
+
+    /// The selected cart on the shelf, when it is a PICO-8 cart that still needs the patch.
+    fn selected_needs_patch(&self) -> Option<&Path> {
+        let cart = self.shelf().carts.get(self.shelf().index)?;
+        (cart.platform == slot_store::Platform::Pico8
+            && self.patch_needed.get(&cart.rom) == Some(&true))
+        .then_some(cart.rom.as_path())
+    }
+
+    /// Reads whether the selected PICO-8 cart needs the patch, once per cart.
+    fn check_selected_patch(&mut self) {
+        let Some(cart) = self.shelf().carts.get(self.shelf().index) else {
+            return;
+        };
+        if cart.platform != slot_store::Platform::Pico8 || self.patch_needed.contains_key(&cart.rom)
+        {
+            return;
+        }
+        let rom = cart.rom.clone();
+        let needed = matches!(
+            crate::pico8_patch::status(&rom),
+            crate::pico8_patch::Status::Multicart { .. }
+        );
+        self.patch_needed.insert(rom, needed);
+    }
+
+    /// SELECT+START on the shelf: the selected cart is patched if it needs it, and anything
+    /// else is refused, so the chord never falls through to the core picker.
+    fn patch_selected(&mut self) {
+        self.check_selected_patch();
+        match self.selected_needs_patch().map(Path::to_path_buf) {
+            Some(rom) => self.apply_patch(&rom, false),
+            None => self.refuse(),
+        }
+    }
+
+    /// Whether the shelf is showing SELECT+START PATCH over the selected cart.
+    pub fn shows_patch_hint(&self) -> bool {
+        self.on_shelf() && self.core_picker.is_none() && self.selected_needs_patch().is_some()
+    }
+
+    pub fn has_patch_hint(&self) -> bool {
+        self.patch_hint.is_some()
+    }
+
+    /// SELECT + and START PATCH FOR WI-FI, as two hints so each key gets a whole cap.
+    pub fn set_patch_hint(&mut self, faces: [(TexId, u32); 2]) {
+        self.patch_hint = Some(faces);
+    }
+
+    /// Over the selected cart, on a dark pill so it reads on any wallpaper. Only once the row
+    /// has settled on it, so it does not slide about with a cart passing through the middle.
+    fn draw_patch_hint(&self, out: &mut Vec<Draw>) {
+        if !self.shows_patch_hint() {
+            return;
+        }
+        let shelf = self.shelf();
+        if (shelf.scroll_target() - shelf.scroll).abs() > 0.05 {
+            return;
+        }
+        let (_, ch) = slot_ui::cart_box(slot_store::Platform::Pico8);
+        let top =
+            slot_ui::foot_y(ch as f32) - ch as f32 + slot_ui::lowered(ch as f32, SHELF_ROW_LOWER);
+        let gap = 4.0;
+        let faces = self.patch_hint.map_or([(None, 80), (None, 160)], |[a, b]| {
+            [(Some(a.0), a.1), (Some(b.0), b.1)]
+        });
+        let seen = |w: u32| w.saturating_sub(slot_ui::HINT_EDGE) as f32;
+        let w = seen(faces[0].1) + gap + seen(faces[1].1);
+        let h = slot_ui::HINT_H as f32;
+        let pad = 8.0;
+        let x = ((OUT_W as f32 - w) / 2.0).round();
+        let y = (top - h - pad * 2.0).round();
+        out.push(Draw::Rect {
+            x: x - pad,
+            y: y - pad / 2.0,
+            w: w + pad * 2.0,
+            h: h + pad,
+            colour: [0.0, 0.0, 0.0, 0.72],
+        });
+        out.push(slot_ui::hint_quad(x, y, faces[0].1 as f32, faces[0].0));
+        let x2 = x + seen(faces[0].1) + gap;
+        out.push(slot_ui::hint_quad(x2, y, faces[1].1 as f32, faces[1].0));
     }
 
     /// Every word the Patcher on screen says, for the binary to make the ones it has not yet.

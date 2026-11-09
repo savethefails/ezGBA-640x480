@@ -122,3 +122,69 @@ fn a_card_with_no_pico8_carts_says_so() {
     press(&mut a, Btn::A);
     assert!(matches!(a.phase(), Phase::Patcher { .. }));
 }
+
+fn pico8_shelf() -> (tempfile::TempDir, std::path::PathBuf, App) {
+    let d = tmp_root_with_carts(&[]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..SlotState::default()
+        },
+    )
+    .unwrap();
+    let games = slot::pico8_patch::games(d.path());
+    std::fs::create_dir_all(&games).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pico8");
+    std::fs::copy(
+        fixture.join("multi_demo-2.p8.png"),
+        games.join("multi_demo-2.p8.png"),
+    )
+    .unwrap();
+    std::fs::write(
+        games.join("celeste-1.p8"),
+        "pico-8 cartridge\nversion 43\n__lua__\nprint(\"hi\")\n",
+    )
+    .unwrap();
+    let (mut a, _) = app_booting_at(d.path(), CLOCK_IS_SET);
+    a.update(0.1);
+    (d, games, a)
+}
+
+fn select_start(a: &mut App) {
+    a.apply(Action::GbaDown(Btn::Select));
+    a.apply(Action::GbaDown(Btn::Start));
+    a.apply(Action::GbaUp(Btn::Start));
+    a.apply(Action::GbaUp(Btn::Select));
+}
+
+#[test]
+fn select_start_on_the_shelf_patches_a_multicart_and_the_hint_goes() {
+    let (_d, games, mut a) = pico8_shelf();
+    assert_eq!(a.selected_stem(), Some("celeste-1"));
+    assert!(!a.shows_patch_hint(), "a cart that runs as it is");
+    press(&mut a, Btn::Right);
+    a.update(0.1);
+    assert_eq!(a.selected_stem(), Some("multi_demo-2.p8"));
+    assert!(a.shows_patch_hint());
+    select_start(&mut a);
+    assert!(matches!(a.phase(), Phase::Shelf), "{:?}", a.phase());
+    assert_eq!(
+        slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
+        Status::Patched
+    );
+    a.update(0.1);
+    assert!(!a.shows_patch_hint(), "a patched cart looks like any other");
+}
+
+#[test]
+fn select_start_on_a_cart_with_nothing_to_patch_changes_nothing() {
+    let (_d, games, mut a) = pico8_shelf();
+    select_start(&mut a);
+    assert!(a.core_picker().is_none(), "the chord is not a START");
+    assert_eq!(
+        slot::pico8_patch::status(&games.join("celeste-1.p8")),
+        Status::Fine
+    );
+    assert!(matches!(a.phase(), Phase::Shelf));
+}
