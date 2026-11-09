@@ -647,12 +647,16 @@ pub struct App {
     patcher: Vec<crate::pico8_patch::Cart>,
     /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
     patcher_legend: Option<[(TexId, u32); 3]>,
-    /// Whether each PICO-8 cart looked at on the shelf still needs the patch, read the first
-    /// time it is selected rather than for the whole card at boot: deciding means unpacking
-    /// the cart's code, which is too slow to do for every cart at once.
-    patch_needed: HashMap<PathBuf, bool>,
-    /// SELECT+START PATCH, which the shelf shows over a cart that needs it.
-    patch_hint: Option<[(TexId, u32); 2]>,
+    /// What each PICO-8 cart looked at on the shelf still needs before it plays offline, read
+    /// the first time it is selected rather than for the whole card at boot: deciding means
+    /// unpacking the cart's code, which is too slow to do for every cart at once.
+    pico8_need: HashMap<PathBuf, Pico8Need>,
+    /// The download running (or just finished) for one cart, on a thread of its own.
+    offline: Option<Offline>,
+    /// How the download thread fetches, which tests replace.
+    offline_fetch: Arc<dyn Fn() -> Box<dyn crate::pico8_cache::Fetch + Send> + Send + Sync>,
+    /// The shelf's line over a PICO-8 cart: SELECT +, then the rest, with what the rest says.
+    pico8_hint: Option<Pico8HintFaces>,
     /// SELECT is physically down, so the shelf can tell SELECT+START from a bare START.
     select_held: bool,
     /// How far into the greeting, by the frame clock.
@@ -851,8 +855,10 @@ impl App {
             net_faces: None,
             patcher: Vec::new(),
             patcher_legend: None,
-            patch_needed: HashMap::new(),
-            patch_hint: None,
+            pico8_need: HashMap::new(),
+            offline: None,
+            offline_fetch: Arc::new(|| Box::new(crate::pico8_cache::Curl)),
+            pico8_hint: None,
             select_held: false,
             keyboard_text: slot_ui::KeyboardText {
                 title: None,
@@ -2202,7 +2208,7 @@ impl App {
                 // SELECT+START patches a PICO-8 multicart that would otherwise fail to find its
                 // parts. Only here: in a game the pair is the console's own, and many reset on it.
                 Action::GbaDown(Btn::Start) if self.core_picker.is_none() && self.select_held => {
-                    self.patch_selected()
+                    self.get_offline()
                 }
                 Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
                     self.open_core_picker()
@@ -2786,8 +2792,9 @@ impl App {
             }
             _ => None,
         };
+        self.poll_offline();
         if self.on_shelf() {
-            self.check_selected_patch();
+            self.check_selected_need();
         }
         // One clip for the whole movement, and the only thing done to it is when it starts.
         if touched {
@@ -3330,7 +3337,7 @@ impl App {
                             self.slot_letter_alpha(),
                             out,
                         );
-                        self.draw_patch_hint(out);
+                        self.draw_pico8_hint(out);
                     }
                 }
                 draw_footer(
@@ -5960,7 +5967,7 @@ impl App {
         };
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         let name = name.unwrap_or_default();
-        self.patch_needed.clear();
+        self.pico8_need.clear();
         match done {
             Ok(()) => {
                 let what = if restore { "restored" } else { "patched" };
@@ -5986,61 +5993,201 @@ impl App {
         }
     }
 
-    /// The selected cart on the shelf, when it is a PICO-8 cart that still needs the patch.
-    fn selected_needs_patch(&self) -> Option<&Path> {
+    /// The selected cart on the shelf, when it is a PICO-8 cart, and what it still needs.
+    fn selected_pico8(&self) -> Option<(&Path, Pico8Need)> {
         let cart = self.shelf().carts.get(self.shelf().index)?;
-        (cart.platform == slot_store::Platform::Pico8
-            && self.patch_needed.get(&cart.rom) == Some(&true))
-        .then_some(cart.rom.as_path())
+        if cart.platform != slot_store::Platform::Pico8 {
+            return None;
+        }
+        let need = self.pico8_need.get(&cart.rom).copied()?;
+        Some((cart.rom.as_path(), need))
     }
 
-    /// Reads whether the selected PICO-8 cart needs the patch, once per cart.
-    fn check_selected_patch(&mut self) {
+    /// Reads what the selected PICO-8 cart needs, once per cart.
+    fn check_selected_need(&mut self) {
         let Some(cart) = self.shelf().carts.get(self.shelf().index) else {
             return;
         };
-        if cart.platform != slot_store::Platform::Pico8 || self.patch_needed.contains_key(&cart.rom)
-        {
+        if cart.platform != slot_store::Platform::Pico8 || self.pico8_need.contains_key(&cart.rom) {
             return;
         }
         let rom = cart.rom.clone();
-        let needed = matches!(
-            crate::pico8_patch::status(&rom),
-            crate::pico8_patch::Status::Multicart { .. }
-        );
-        self.patch_needed.insert(rom, needed);
+        let need = match crate::pico8_patch::status(&rom) {
+            crate::pico8_patch::Status::Multicart { .. } => Pico8Need::Patch,
+            _ => match &self.root {
+                Some(root) if !crate::pico8_cache::missing(root, &rom).is_empty() => {
+                    Pico8Need::Download
+                }
+                _ => Pico8Need::Nothing,
+            },
+        };
+        self.pico8_need.insert(rom, need);
     }
 
-    /// SELECT+START on the shelf: the selected cart is patched if it needs it, and anything
-    /// else is refused, so the chord never falls through to the core picker.
-    fn patch_selected(&mut self) {
-        self.check_selected_patch();
-        match self.selected_needs_patch().map(Path::to_path_buf) {
-            Some(rom) => self.apply_patch(&rom, false),
-            None => self.refuse(),
+    /// Whether Wi-Fi is up with an address, which is what a download needs.
+    fn online(&self) -> bool {
+        self.wifi_was_up
+    }
+
+    /// For tests with no radio: say Wi-Fi is up.
+    #[doc(hidden)]
+    pub fn assume_online(&mut self) {
+        self.wifi_was_up = true;
+    }
+
+    /// For tests: how the download thread fetches.
+    #[doc(hidden)]
+    pub fn set_offline_fetch(
+        &mut self,
+        fetch: Arc<dyn Fn() -> Box<dyn crate::pico8_cache::Fetch + Send> + Send + Sync>,
+    ) {
+        self.offline_fetch = fetch;
+    }
+
+    /// A download is still running.
+    fn offline_busy(&self) -> bool {
+        self.offline.as_ref().is_some_and(|o| o.result.is_none())
+    }
+
+    /// SELECT+START on the shelf: a cart that needs the patch is patched, then every cart it
+    /// names is fetched so it plays with Wi-Fi off. Refused with nothing to do, with Wi-Fi down,
+    /// and while another download runs, so the chord never falls through to START.
+    fn get_offline(&mut self) {
+        self.check_selected_need();
+        let Some((rom, need)) = self.selected_pico8().map(|(r, n)| (r.to_path_buf(), n)) else {
+            return self.refuse();
+        };
+        if need == Pico8Need::Nothing || self.offline_busy() || !self.online() {
+            return self.refuse();
+        }
+        let Some(root) = self.root.clone() else {
+            return self.refuse();
+        };
+        if need == Pico8Need::Patch {
+            self.apply_patch(&rom, false);
+            if crate::pico8_patch::status(&rom) != crate::pico8_patch::Status::Patched {
+                return;
+            }
+        }
+        let shared = Arc::new(std::sync::Mutex::new(OfflineJob::default()));
+        let job = shared.clone();
+        let make = self.offline_fetch.clone();
+        let cart = rom.clone();
+        crate::latency::note(&format!("offline copy: {} started", rom.display()));
+        let spawned = std::thread::Builder::new()
+            .name("pico8-offline".into())
+            .spawn(move || {
+                let mut fetch = make();
+                let result = crate::pico8_cache::download(
+                    &root,
+                    &cart,
+                    fetch.as_mut(),
+                    &mut |done, total| {
+                        if let Ok(mut j) = job.lock() {
+                            j.done = done;
+                            j.total = total;
+                        }
+                    },
+                );
+                if let Ok(mut j) = job.lock() {
+                    j.result = Some(result);
+                }
+            });
+        if spawned.is_err() {
+            return self.refuse();
+        }
+        self.offline = Some(Offline {
+            rom,
+            shared,
+            result: None,
+            ended_at: 0,
+        });
+    }
+
+    /// Once a frame: the download's news in, and its last word taken down once it has been up
+    /// long enough to read.
+    fn poll_offline(&mut self) {
+        let now = self.now();
+        let Some(o) = &mut self.offline else {
+            return;
+        };
+        if o.result.is_none() {
+            let Some(result) = o.shared.lock().ok().and_then(|mut j| j.result.take()) else {
+                return;
+            };
+            match &result {
+                Ok(n) => crate::latency::note(&format!("offline copy: {n} carts fetched")),
+                Err(id) => crate::latency::note(&format!("offline copy: #{id} failed")),
+            }
+            let failed = result.is_err();
+            o.result = Some(result);
+            o.ended_at = now;
+            // What the cart needs has changed either way: ask again.
+            self.pico8_need.clear();
+            if failed {
+                self.refuse();
+            }
+        } else if now.saturating_sub(o.ended_at) >= OFFLINE_WORD_MS {
+            self.offline = None;
         }
     }
 
-    /// Whether the shelf is showing SELECT+START PATCH over the selected cart.
-    pub fn shows_patch_hint(&self) -> bool {
-        self.on_shelf() && self.core_picker.is_none() && self.selected_needs_patch().is_some()
+    /// What the shelf says over the selected PICO-8 cart: whether it shows SELECT + START in
+    /// front, and the words. `None` over a cart with nothing to say.
+    pub fn pico8_hint_text(&self) -> Option<(bool, String)> {
+        if !self.on_shelf() || self.core_picker.is_some() {
+            return None;
+        }
+        let (rom, need) = self.selected_pico8()?;
+        if let Some(o) = self.offline.as_ref().filter(|o| o.rom == rom) {
+            return Some(match &o.result {
+                None => {
+                    let (done, total) = o.shared.lock().map_or((0, 0), |j| (j.done, j.total));
+                    let total = total.max(1);
+                    (
+                        false,
+                        format!("Downloading {}/{total}", (done + 1).min(total)),
+                    )
+                }
+                Some(Ok(_)) => (false, "Ready offline".into()),
+                Some(Err(_)) => (false, "Download failed".into()),
+            });
+        }
+        match need {
+            Pico8Need::Nothing => None,
+            _ if !self.online() => Some((false, "Needs Wi-Fi".into())),
+            Pico8Need::Patch => Some((true, "Patch & download".into())),
+            Pico8Need::Download => Some((true, "Download parts".into())),
+        }
     }
 
-    pub fn has_patch_hint(&self) -> bool {
-        self.patch_hint.is_some()
+    /// What the faces the binary last made for the line say, if it made any.
+    pub fn pico8_hint_made(&self) -> Option<&(bool, String)> {
+        self.pico8_hint.as_ref().map(|h| &h.text)
     }
 
-    /// SELECT + and START PATCH FOR WI-FI, as two hints so each key gets a whole cap.
-    pub fn set_patch_hint(&mut self, faces: [(TexId, u32); 2]) {
-        self.patch_hint = Some(faces);
+    /// The SELECT + face and the face for the rest, made by the binary for `text`.
+    pub fn set_pico8_hint(
+        &mut self,
+        text: (bool, String),
+        select: (TexId, u32),
+        body: (TexId, u32),
+    ) {
+        self.pico8_hint = Some(Pico8HintFaces { text, select, body });
+    }
+
+    /// The faces already made, which the binary redraws in place when the words change.
+    pub fn pico8_hint_faces(&self) -> Option<((TexId, u32), (TexId, u32))> {
+        self.pico8_hint.as_ref().map(|h| (h.select, h.body))
     }
 
     /// Over the selected cart, on a dark pill so it reads on any wallpaper. Only once the row
     /// has settled on it, so it does not slide about with a cart passing through the middle.
-    fn draw_patch_hint(&self, out: &mut Vec<Draw>) {
-        if !self.shows_patch_hint() {
+    fn draw_pico8_hint(&self, out: &mut Vec<Draw>) {
+        let Some(text) = self.pico8_hint_text() else {
             return;
-        }
+        };
+        let keys = text.0;
         let shelf = self.shelf();
         if (shelf.scroll_target() - shelf.scroll).abs() > 0.05 {
             return;
@@ -6048,12 +6195,17 @@ impl App {
         let (_, ch) = slot_ui::cart_box(slot_store::Platform::Pico8);
         let top =
             slot_ui::foot_y(ch as f32) - ch as f32 + slot_ui::lowered(ch as f32, SHELF_ROW_LOWER);
+        // Until the binary has made faces for what the line says now, it holds its place.
+        let made = self.pico8_hint.as_ref().filter(|h| h.text == text);
+        let select = made.map_or((None, 80), |h| (Some(h.select.0), h.select.1));
+        let body = made.map_or((None, 200), |h| (Some(h.body.0), h.body.1));
         let gap = 4.0;
-        let faces = self.patch_hint.map_or([(None, 80), (None, 160)], |[a, b]| {
-            [(Some(a.0), a.1), (Some(b.0), b.1)]
-        });
         let seen = |w: u32| w.saturating_sub(slot_ui::HINT_EDGE) as f32;
-        let w = seen(faces[0].1) + gap + seen(faces[1].1);
+        let w = if keys {
+            seen(select.1) + gap + seen(body.1)
+        } else {
+            seen(body.1)
+        };
         let h = slot_ui::HINT_H as f32;
         let pad = 8.0;
         let x = ((OUT_W as f32 - w) / 2.0).round();
@@ -6065,9 +6217,12 @@ impl App {
             h: h + pad,
             colour: [0.0, 0.0, 0.0, 0.72],
         });
-        out.push(slot_ui::hint_quad(x, y, faces[0].1 as f32, faces[0].0));
-        let x2 = x + seen(faces[0].1) + gap;
-        out.push(slot_ui::hint_quad(x2, y, faces[1].1 as f32, faces[1].0));
+        let mut at = x;
+        if keys {
+            out.push(slot_ui::hint_quad(at, y, select.1 as f32, select.0));
+            at += seen(select.1) + gap;
+        }
+        out.push(slot_ui::hint_quad(at, y, body.1 as f32, body.0));
     }
 
     /// Every word the Patcher on screen says, for the binary to make the ones it has not yet.
@@ -6140,4 +6295,41 @@ impl App {
         }
         .draw(out);
     }
+}
+
+/// What a PICO-8 cart on the shelf still needs before it plays with Wi-Fi off.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Pico8Need {
+    /// A multicart that only finds its parts from the BBS: patched, then its parts fetched.
+    Patch,
+    /// Parts it names that are not on the card yet.
+    Download,
+    /// Nothing: it runs from the card as it is.
+    Nothing,
+}
+
+/// How long the shelf keeps a finished download's last word up.
+const OFFLINE_WORD_MS: Millis = 3000;
+
+/// What the download thread shares with the frame loop.
+#[derive(Default)]
+struct OfflineJob {
+    done: usize,
+    total: usize,
+    result: Option<Result<usize, String>>,
+}
+
+/// One cart's download, while it runs and for a moment after.
+struct Offline {
+    rom: PathBuf,
+    shared: Arc<std::sync::Mutex<OfflineJob>>,
+    result: Option<Result<usize, String>>,
+    ended_at: Millis,
+}
+
+/// The faces for the shelf's line over a PICO-8 cart, and what they say.
+struct Pico8HintFaces {
+    text: (bool, String),
+    select: (TexId, u32),
+    body: (TexId, u32),
 }

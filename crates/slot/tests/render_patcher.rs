@@ -133,15 +133,39 @@ fn render_shelf_patch_hint() {
     shot(&mut f, &mut c, &dir, "shelf-fine");
     tap(&mut f, &mut input, Btn::Right);
     run(&mut f, &mut input, 40);
+    shot(&mut f, &mut c, &dir, "shelf-wifi-off");
+    f.app_mut().assume_online();
+    f.app_mut()
+        .set_offline_fetch(std::sync::Arc::new(|| Box::new(SlowBbs)));
+    run(&mut f, &mut input, 5);
     shot(&mut f, &mut c, &dir, "shelf-needs-patch");
     input.0.push_back(vec![RawEvent::Down(Btn::Select)]);
     run(&mut f, &mut input, 3);
     tap(&mut f, &mut input, Btn::Start);
     input.0.push_back(vec![RawEvent::Up(Btn::Select)]);
     run(&mut f, &mut input, 20);
-    shot(&mut f, &mut c, &dir, "shelf-patched");
+    shot(&mut f, &mut c, &dir, "shelf-downloading");
+    run(&mut f, &mut input, 120);
+    shot(&mut f, &mut c, &dir, "shelf-ready");
+    run(&mut f, &mut input, 220);
+    shot(&mut f, &mut c, &dir, "shelf-done");
     assert_eq!(
         slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
         slot::pico8_patch::Status::Patched
     );
+}
+
+/// Serves the demo cart for every id, a little slowly, so the progress can be seen.
+struct SlowBbs;
+
+impl slot::pico8_cache::Fetch for SlowBbs {
+    fn fetch(&mut self, url: &str, out: &Path) -> bool {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let lid = url.rsplit("lid=").next().unwrap();
+        if url.contains("nfo=1") {
+            return std::fs::write(out, format!("lid:{lid}-1\n")).is_ok();
+        }
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pico8");
+        std::fs::copy(fixture.join("multi_demo-2.p8.png"), out).is_ok()
+    }
 }

@@ -158,28 +158,158 @@ fn select_start(a: &mut App) {
     a.apply(Action::GbaUp(Btn::Select));
 }
 
-#[test]
-fn select_start_on_the_shelf_patches_a_multicart_and_the_hint_goes() {
-    let (_d, games, mut a) = pico8_shelf();
-    assert_eq!(a.selected_stem(), Some("celeste-1"));
-    assert!(!a.shows_patch_hint(), "a cart that runs as it is");
-    press(&mut a, Btn::Right);
+/// A BBS that is a folder: the patched cart's own id serves the cart as it is on the BBS (which
+/// names #multi_demo_part), and #multi_demo_part serves a launcher that names itself.
+struct Bbs {
+    plain: std::path::PathBuf,
+    part: std::path::PathBuf,
+}
+
+impl slot::pico8_cache::Fetch for Bbs {
+    fn fetch(&mut self, url: &str, out: &Path) -> bool {
+        let lid = url.rsplit("lid=").next().unwrap();
+        if url.contains("nfo=1") {
+            std::fs::write(out, format!("lid:{lid}-5\ntitle:t\n")).unwrap();
+            return true;
+        }
+        let from = match lid {
+            "multi_demo-5" => &self.plain,
+            "multi_demo_part-5" => &self.part,
+            _ => return false,
+        };
+        std::fs::copy(from, out).is_ok()
+    }
+}
+
+fn bbs_for(a: &mut App, keep: &Path) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pico8");
+    let side = keep.join("side");
+    let part = side.join("Games/PICO8/multi_demo_part-1.p8.png");
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::copy(fixture.join("multi_demo-2.p8.png"), &part).unwrap();
+    slot::pico8_patch::patch(&side, &part).unwrap();
+    let plain = fixture.join("multi_demo-2.p8.png");
+    a.set_offline_fetch(std::sync::Arc::new(move || {
+        Box::new(Bbs {
+            plain: plain.clone(),
+            part: part.clone(),
+        })
+    }));
+}
+
+/// Frames until the download's last word is up, or a few seconds.
+fn until_done(a: &mut App) -> Option<(bool, String)> {
+    for _ in 0..400 {
+        a.update(0.016);
+        let text = a.pico8_hint_text();
+        if text
+            .as_ref()
+            .is_some_and(|(_, t)| !t.starts_with("Downloading"))
+        {
+            return text;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    a.pico8_hint_text()
+}
+
+fn on_multicart(a: &mut App) {
+    press(a, Btn::Right);
     a.update(0.1);
     assert_eq!(a.selected_stem(), Some("multi_demo-2.p8"));
-    assert!(a.shows_patch_hint());
+}
+
+#[test]
+fn with_wi_fi_off_the_shelf_says_to_turn_it_on_and_select_start_does_nothing() {
+    let (_d, games, mut a) = pico8_shelf();
+    assert_eq!(a.selected_stem(), Some("celeste-1"));
+    assert_eq!(a.pico8_hint_text(), None, "a cart that runs as it is");
+    on_multicart(&mut a);
+    assert_eq!(
+        a.pico8_hint_text(),
+        Some((false, "Needs Wi-Fi".to_string()))
+    );
+    select_start(&mut a);
+    assert!(matches!(a.phase(), Phase::Shelf));
+    assert!(matches!(
+        slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
+        Status::Multicart { .. }
+    ));
+}
+
+#[test]
+fn select_start_patches_a_multicart_then_downloads_every_part() {
+    let (d, games, mut a) = pico8_shelf();
+    bbs_for(&mut a, d.path());
+    a.assume_online();
+    on_multicart(&mut a);
+    assert_eq!(
+        a.pico8_hint_text(),
+        Some((true, "Patch & download".to_string()))
+    );
     select_start(&mut a);
     assert!(matches!(a.phase(), Phase::Shelf), "{:?}", a.phase());
     assert_eq!(
         slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
         Status::Patched
     );
-    a.update(0.1);
-    assert!(!a.shows_patch_hint(), "a patched cart looks like any other");
+    assert_eq!(
+        until_done(&mut a),
+        Some((false, "Ready offline".to_string()))
+    );
+    let carts = slot::pico8_cache::carts_dir(d.path());
+    assert!(slot::pico8_cache::cached(&carts, "multi_demo").is_some());
+    assert!(slot::pico8_cache::cached(&carts, "multi_demo_part").is_some());
+    // The word goes, and a cart with everything it needs looks like any other.
+    for _ in 0..40 {
+        a.update(0.1);
+    }
+    assert_eq!(a.pico8_hint_text(), None);
+    select_start(&mut a);
+    assert!(matches!(a.phase(), Phase::Shelf));
 }
 
 #[test]
-fn select_start_on_a_cart_with_nothing_to_patch_changes_nothing() {
+fn a_patched_cart_with_parts_missing_offers_the_download_alone() {
+    let (d, games, mut a) = pico8_shelf();
+    slot::pico8_patch::patch(d.path(), &games.join("multi_demo-2.p8.png")).unwrap();
+    bbs_for(&mut a, d.path());
+    a.assume_online();
+    on_multicart(&mut a);
+    assert_eq!(
+        a.pico8_hint_text(),
+        Some((true, "Download parts".to_string()))
+    );
+    select_start(&mut a);
+    assert_eq!(
+        until_done(&mut a),
+        Some((false, "Ready offline".to_string()))
+    );
+}
+
+#[test]
+fn a_failed_download_says_so_and_can_be_tried_again() {
+    let (d, games, mut a) = pico8_shelf();
+    slot::pico8_patch::patch(d.path(), &games.join("multi_demo-2.p8.png")).unwrap();
+    a.set_offline_fetch(std::sync::Arc::new(|| {
+        Box::new(Bbs {
+            plain: "/nowhere".into(),
+            part: "/nowhere".into(),
+        })
+    }));
+    a.assume_online();
+    on_multicart(&mut a);
+    select_start(&mut a);
+    assert_eq!(
+        until_done(&mut a),
+        Some((false, "Download failed".to_string()))
+    );
+}
+
+#[test]
+fn select_start_on_a_cart_with_nothing_to_get_changes_nothing() {
     let (_d, games, mut a) = pico8_shelf();
+    a.assume_online();
     select_start(&mut a);
     assert!(a.core_picker().is_none(), "the chord is not a START");
     assert_eq!(

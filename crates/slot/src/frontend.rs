@@ -202,6 +202,12 @@ impl Frontend {
         self.session.app()
     }
 
+    /// For tests: the app behind the screen, to steer.
+    #[doc(hidden)]
+    pub fn app_mut(&mut self) -> &mut App {
+        self.session.app_mut()
+    }
+
     /// Everything that never changes: the carts, the HUD glyphs and the key caps, waiting for
     /// the ones `upload_boot_faces` leaves to a thread. All of it needs a live context, so it
     /// happens after the compositor and not at boot.
@@ -772,14 +778,29 @@ fn sync_quick_clock(app: &mut App, compositor: &mut Compositor, state: &mut Quic
 /// words whenever they change.
 /// The Patcher's faces: its legend and fixed words once, and each cart's name as it first shows.
 fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
-    // Made the first time the shelf has a cart to show it over, and kept.
-    if app.shows_patch_hint() && !app.has_patch_hint() {
-        let mut up = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w);
-        let faces = [
-            up(hint_face("SELECT", "+")),
-            up(hint_face("START", "Patch for Wi-Fi")),
-        ];
-        app.set_patch_hint(faces);
+    // The shelf's line over a PICO-8 cart, remade in place whenever what it says changes.
+    if let Some(text) = app.pico8_hint_text() {
+        if app.pico8_hint_made() != Some(&text) {
+            let (keys, label) = &text;
+            let body = if *keys {
+                hint_face("START", label)
+            } else {
+                word_face(label)
+            };
+            let (select, body) = match app.pico8_hint_faces() {
+                Some((select, (tex, _))) => {
+                    compositor.update_texture(tex, body.w, body.h, &body.rgba);
+                    (select, (tex, body.w))
+                }
+                None => {
+                    let s = hint_face("SELECT", "+");
+                    let select = (compositor.create_texture(s.w, s.h, &s.rgba), s.w);
+                    let tex = compositor.create_texture(body.w, body.h, &body.rgba);
+                    (select, (tex, body.w))
+                }
+            };
+            app.set_pico8_hint(text, select, body);
+        }
     }
     if !app.on_patcher_page() {
         return;
