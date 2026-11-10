@@ -309,13 +309,35 @@ fn strings(code: &[u8]) -> Vec<&[u8]> {
 }
 
 /// The cart PICO-8 keeps for `id`, when both its files are there.
+///
+/// Also writes `<lid>.nfo` beside it when that is missing. A cart run from the BBS hears its
+/// own id with the revision on, `stat(101)` is `lemmings_p8-3`, and Lemmings loads itself back
+/// by that name when it has finished installing; offline, PICO-8 finds that only through an
+/// nfo named for it, and without one the load fails and the game hangs. PICO-8 itself writes
+/// only `<id>.nfo`.
 pub fn cached(dir: &Path, id: &str) -> Option<PathBuf> {
     let nfo = std::fs::read_to_string(dir.join(format!("{id}.nfo"))).ok()?;
     let lid = lid_of(&nfo)?;
     let cart = dir.join(format!("{lid}.p8.png"));
-    std::fs::metadata(&cart)
-        .is_ok_and(|m| m.len() > 0)
-        .then_some(cart)
+    if !std::fs::metadata(&cart).is_ok_and(|m| m.len() > 0) {
+        return None;
+    }
+    keep_lid_nfo(dir, id, &lid, &nfo);
+    Some(cart)
+}
+
+/// `<lid>.nfo`, the same answer under the revision's own name, when it is not there yet.
+fn keep_lid_nfo(dir: &Path, id: &str, lid: &str, nfo: &str) {
+    let path = dir.join(format!("{lid}.nfo"));
+    if lid == id || path.exists() {
+        return;
+    }
+    match std::fs::write(&path, nfo) {
+        Ok(()) => log(&format!(
+            "#{id}: wrote {lid}.nfo, for loads by its revision"
+        )),
+        Err(e) => log(&format!("#{id}: cannot write {lid}.nfo: {e}")),
+    }
 }
 
 /// The revision an nfo names, `lid:lemcavea-14`.
@@ -517,6 +539,7 @@ fn fetch_one(dir: &Path, id: &str, fetch: &mut dyn Fetch) -> Option<PathBuf> {
         log(&format!("#{id}: cannot write {id}.nfo: {e}"));
         return None;
     }
+    keep_lid_nfo(dir, id, &lid, &nfo);
     Some(cart)
 }
 

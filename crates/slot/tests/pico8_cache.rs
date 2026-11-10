@@ -108,6 +108,14 @@ fn every_part_and_the_parts_parts_land_where_pico8_keeps_them() {
             Some(format!("lid:{lid}").as_str())
         );
         assert!(dir.join(format!("{lid}.p8.png")).exists(), "{lid}");
+        // Under its revision too, for a cart that loads itself back by `stat(101)`.
+        assert_eq!(
+            std::fs::read_to_string(dir.join(format!("{lid}.nfo")))
+                .unwrap()
+                .lines()
+                .next(),
+            Some(format!("lid:{lid}").as_str())
+        );
         assert_eq!(
             pico8_cache::cached(&dir, id),
             Some(dir.join(format!("{lid}.p8.png")))
@@ -156,4 +164,27 @@ fn a_cart_that_names_no_parts_needs_nothing() {
     )
     .unwrap();
     assert!(pico8_cache::missing(d.path(), &cart).is_empty());
+}
+
+#[test]
+fn a_kept_part_missing_its_revision_nfo_gets_one_without_the_network() {
+    let d = tempfile::tempdir().unwrap();
+    let dir = pico8_cache::carts_dir(d.path());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lemmings_p8.nfo"),
+        "lid:lemmings_p8-3\nmid:lemmings_p8\n",
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture("multi_demo-2.p8.png"),
+        dir.join("lemmings_p8-3.p8.png"),
+    )
+    .unwrap();
+    assert!(!dir.join("lemmings_p8-3.nfo").exists());
+    assert!(pico8_cache::cached(&dir, "lemmings_p8").is_some());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("lemmings_p8-3.nfo")).unwrap(),
+        "lid:lemmings_p8-3\nmid:lemmings_p8\n"
+    );
 }
