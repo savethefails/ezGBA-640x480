@@ -100,6 +100,128 @@ static uint64_t now_ns(void)
 }
 static uint64_t start_ns;
 
+/* ---- the latency log ----
+ * A press followed from the frontend changing the buttons, to PICO-8 taking them in, to the
+ * first frame PICO-8 published after that, to the frontend taking that frame. Written to
+ * PICO-8's own output, which ezGBA keeps on the card: a line for each of the first presses of a
+ * run and then every LAT_THEN'th, and every LAT_WINDOW_NS a summary of the frames, the input
+ * polls, the waits on the frontend and the presses. What it cannot see: the frames a cart takes
+ * to answer a press, and what the frontend does before and after. */
+#define LAT_WINDOW_NS 10000000000ull
+#define LAT_FIRST 40u
+#define LAT_THEN 25u
+struct lat_stat { double sum, max; unsigned n; };
+static void lat_add(struct lat_stat *s, double v)
+{
+	s->sum += v;
+	if (v > s->max) s->max = v;
+	s->n++;
+}
+static struct {
+	uint32_t seq, buttons, drawn_frame;
+	uint64_t in_ns, read_ns, drawn_ns;
+	int state;                          /* 0 nothing followed, 1 read, 2 drawn */
+	unsigned presses;
+	uint64_t since_ns, frame_ns, poll_ns;
+	unsigned frames, polls, waits;
+	double frame_gap, poll_gap, wait_ms;
+	struct lat_stat to_read, to_draw, to_pick, total;
+} lat;
+static int lat_on(void);
+
+static void lat_summary(uint64_t t)
+{
+	if (!lat.since_ns) { lat.since_ns = t; return; }
+	if (t - lat.since_ns < LAT_WINDOW_NS) return;
+#define AVG(s) ((s).n ? (s).sum / (s).n : 0.0)
+	fprintf(stderr, "[sdl] last %.1f s: %u frames published (longest gap %.1f ms), "
+		"%u input polls (longest gap %.1f ms), waited on the frontend %u times (%.0f ms); "
+		"%u presses: read avg %.1f max %.1f, drawn avg %.1f max %.1f, "
+		"taken avg %.1f max %.1f, core to core avg %.1f max %.1f ms\n",
+		(t - lat.since_ns) / 1e9, lat.frames, lat.frame_gap, lat.polls, lat.poll_gap,
+		lat.waits, lat.wait_ms, lat.total.n, AVG(lat.to_read), lat.to_read.max,
+		AVG(lat.to_draw), lat.to_draw.max, AVG(lat.to_pick), lat.to_pick.max,
+		AVG(lat.total), lat.total.max);
+#undef AVG
+	lat.since_ns = t;
+	lat.frames = lat.polls = lat.waits = 0;
+	lat.frame_gap = lat.poll_gap = lat.wait_ms = 0;
+	memset(&lat.to_read, 0, sizeof lat.to_read);
+	memset(&lat.to_draw, 0, sizeof lat.to_draw);
+	memset(&lat.to_pick, 0, sizeof lat.to_pick);
+	memset(&lat.total, 0, sizeof lat.total);
+}
+
+/* The followed press's frame has been published: has the frontend taken it yet? */
+static void lat_check_picked(void)
+{
+	if (lat.state != 2) return;
+	uint32_t pf = __atomic_load_n(&shm->picked_frame, __ATOMIC_ACQUIRE);
+	if ((int32_t)(pf - lat.drawn_frame) < 0) return;
+	uint64_t pick_ns = shm->picked_ns;
+	int exact = pf == lat.drawn_frame;
+	double r = (lat.read_ns - lat.in_ns) / 1e6, d = (lat.drawn_ns - lat.read_ns) / 1e6;
+	double p = pick_ns > lat.drawn_ns ? (pick_ns - lat.drawn_ns) / 1e6 : 0;
+	double all = pick_ns > lat.in_ns ? (pick_ns - lat.in_ns) / 1e6 : 0;
+	lat_add(&lat.to_read, r);
+	lat_add(&lat.to_draw, d);
+	lat_add(&lat.to_pick, p);
+	lat_add(&lat.total, all);
+	lat.presses++;
+	if (lat.presses <= LAT_FIRST || lat.presses % LAT_THEN == 0)
+		fprintf(stderr, "[sdl] press %u (buttons %#x): PICO-8 read it %.1f ms after the core "
+			"sent it, published a frame %.1f ms after that, the core took %s %.1f ms later; "
+			"%.1f ms core to core\n", lat.presses, lat.buttons, r, d,
+			exact ? "it" : "a later one", p, all);
+	lat.state = 0;
+}
+
+/* PICO-8 has taken in buttons that changed. */
+static void lat_read(uint32_t b)
+{
+	if (!lat_on()) return;
+	uint32_t seq = __atomic_load_n(&shm->input_seq, __ATOMIC_ACQUIRE);
+	if (seq == lat.seq) return;
+	lat.seq = seq;
+	lat.buttons = b;
+	lat.in_ns = shm->input_ns;
+	lat.read_ns = now_ns();
+	lat.state = 1;
+}
+
+/* PICO-8 asked for input. */
+static void lat_poll(void)
+{
+	if (!lat_on()) return;
+	uint64_t t = now_ns();
+	if (lat.poll_ns) {
+		double gap = (t - lat.poll_ns) / 1e6;
+		if (gap > lat.poll_gap) lat.poll_gap = gap;
+	}
+	lat.poll_ns = t;
+	lat.polls++;
+}
+
+/* PICO-8 published frame `seq`. */
+static void lat_frame(uint32_t seq)
+{
+	if (!lat_on()) return;
+	uint64_t t = now_ns();
+	lat_check_picked();
+	if (lat.frame_ns) {
+		double gap = (t - lat.frame_ns) / 1e6;
+		if (gap > lat.frame_gap) lat.frame_gap = gap;
+	}
+	lat.frame_ns = t;
+	lat.frames++;
+	if (lat.state == 1) {
+		lat.drawn_ns = t;
+		lat.drawn_frame = seq;
+		lat.state = 2;
+	}
+	lat_summary(t);
+}
+
 __attribute__((constructor)) static void shim_init(void)
 {
 	start_ns = now_ns();
@@ -281,12 +403,23 @@ EXPORT void SDL_UnlockSurface(SDL_Surface *s) { (void)s; }
 static void wait_for_host(void)
 {
 	if (shm == &local_shm) return;
+	uint64_t from = 0;
 	for (;;) {
 		uint64_t h = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
-		if (h && now_ns() - h < HOST_STALE_NS) return;
+		uint64_t t = now_ns();
+		if (h && t - h < HOST_STALE_NS) {
+			if (from) {
+				lat.waits++;
+				lat.wait_ms += (t - from) / 1e6;
+			}
+			return;
+		}
+		if (!from) from = t;
 		SDL_Delay(5);
 	}
 }
+
+static int lat_on(void) { return shm && shm != &local_shm; }
 
 /* Sample a w x h picture (pitch in pixels) down to 128x128 and publish it. */
 static void publish(const uint32_t *px, int w, int h, int pitch)
@@ -302,6 +435,7 @@ static void publish(const uint32_t *px, int w, int h, int pitch)
 	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 	__atomic_store_n(&shm->frame_seq, seq + 2, __ATOMIC_RELEASE);
 	__atomic_store_n(&shm->ready, 1, __ATOMIC_RELEASE);
+	lat_frame(seq + 2);
 }
 
 EXPORT SDL_Surface *SDL_GetWindowSurface(void *p)
@@ -452,8 +586,10 @@ static int npending;
 
 static void sync_keys(void)
 {
+	lat_poll();
 	uint32_t b = __atomic_load_n(&shm->buttons, __ATOMIC_ACQUIRE);
 	if (b == buttons_seen) return;
+	lat_read(b);
 	Uint8 want[NUM_SCANCODES] = { 0 };
 	for (int i = 0; i < NKEYS; i++)
 		if (b & (1u << keymap[i].button)) want[keymap[i].scancode] = 1;

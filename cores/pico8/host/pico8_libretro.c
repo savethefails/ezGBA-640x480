@@ -365,14 +365,38 @@ RETRO_API void retro_reset(void)
 
 static void read_frame(void)
 {
+	static uint32_t taken;
 	for (int tries = 0; tries < 4; tries++) {
 		uint32_t s1 = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
 		if (s1 & 1) continue;
 		__atomic_thread_fence(__ATOMIC_SEQ_CST);
 		memcpy(frame, shm->frame, sizeof frame);
 		__atomic_thread_fence(__ATOMIC_SEQ_CST);
-		if (__atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE) == s1) return;
+		if (__atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE) == s1) {
+			/* For the latency log: which of PICO-8's frames this was, and when. */
+			if (s1 != taken) {
+				taken = s1;
+				shm->picked_ns = now_ns();
+				__atomic_store_n(&shm->picked_frame, s1, __ATOMIC_RELEASE);
+			}
+			return;
+		}
 	}
+}
+
+/* The buttons for PICO-8, with the moment they changed ahead of them, so PICO-8's side can
+ * say how long the press took to reach it. */
+static void send_buttons(uint32_t b)
+{
+	static uint32_t sent;
+	static int any;
+	if (!any || b != sent) {
+		shm->input_ns = now_ns();
+		__atomic_store_n(&shm->input_seq, shm->input_seq + 1, __ATOMIC_RELEASE);
+		sent = b;
+		any = 1;
+	}
+	__atomic_store_n(&shm->buttons, b, __ATOMIC_RELEASE);
 }
 
 static uint32_t buttons_now(void)
@@ -432,7 +456,7 @@ RETRO_API void retro_run(void)
 {
 	if (input_poll_cb) input_poll_cb();
 	if (shm) {
-		__atomic_store_n(&shm->buttons, buttons_now(), __ATOMIC_RELEASE);
+		send_buttons(buttons_now());
 		keep_alive();
 		child_alive();
 		read_frame();

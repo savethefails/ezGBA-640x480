@@ -67,6 +67,21 @@ pub fn note(line: &str) {
     }
 }
 
+/// Whether the kernel has a default route, which is what any download needs first. With none
+/// (Wi-Fi off, or not yet given an address) a failure is final, and asking again only waits.
+/// `true` where the table cannot be read, so retries are not lost off the device.
+pub fn has_route() -> bool {
+    let Ok(table) = std::fs::read_to_string("/proc/net/route") else {
+        return true;
+    };
+    table.lines().skip(1).any(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        f.len() > 3
+            && f[1] == "00000000"
+            && u32::from_str_radix(f[3], 16).is_ok_and(|fl| fl & 1 != 0)
+    })
+}
+
 fn uptime() -> String {
     std::fs::read_to_string("/proc/uptime")
         .ok()

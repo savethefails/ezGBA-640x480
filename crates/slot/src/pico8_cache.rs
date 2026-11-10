@@ -45,9 +45,9 @@ impl Fetch for Curl {
         let mut args = vec![
             "-fsSL",
             "--connect-timeout",
-            "15",
+            "10",
             "--max-time",
-            "120",
+            "60",
             "-o",
             &out_s,
         ];
@@ -56,25 +56,70 @@ impl Fetch for Curl {
         }
         args.push(url);
         // A radio that dozed through a quiet minute can lose the first answer, as the wrapper
-        // knows: a name that will not resolve or a host that will not answer is asked again.
+        // knows: a name that will not resolve or a host that will not answer is asked again,
+        // but only while there is a route to ask over at all.
         for attempt in 1..=3 {
-            let code = std::process::Command::new(CURL)
+            let started = std::time::Instant::now();
+            let ran = std::process::Command::new(CURL)
                 .args(&args)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .ok()
-                .and_then(|s| s.code());
-            crate::pico8_net::note(&format!("slot: offline copy: {url}: curl exit {code:?}"));
+                .stderr(std::process::Stdio::piped())
+                .output();
+            let ms = started.elapsed().as_millis();
+            let (code, said) = match &ran {
+                Ok(o) => (
+                    o.status.code(),
+                    String::from_utf8_lossy(&o.stderr).trim().to_string(),
+                ),
+                Err(e) => (None, format!("could not run {CURL}: {e}")),
+            };
+            let bytes = std::fs::metadata(out).map_or(0, |m| m.len());
+            log(&format!(
+                "  curl {url} (try {attempt}): exit {}, {bytes} bytes, {ms} ms{}",
+                code.map_or("none".into(), |c| c.to_string()),
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {said}")
+                }
+            ));
             match code {
                 Some(0) => return true,
-                Some(6 | 7) if attempt < 3 => std::thread::sleep(std::time::Duration::from_secs(1)),
+                Some(6 | 7) if attempt < 3 && crate::pico8_net::has_route() => {
+                    std::thread::sleep(std::time::Duration::from_secs(1))
+                }
+                Some(6 | 7) if attempt < 3 => {
+                    log("  no network route: not asking again");
+                    return false;
+                }
                 _ => return false,
             }
         }
         false
     }
+}
+
+/// A line in the download log, marked as this module's.
+fn log(line: &str) {
+    crate::pico8_net::note(&format!("slot: cache: {line}"));
+}
+
+/// A file's size for the log, or that it is not there.
+fn size_of(path: &Path) -> String {
+    match std::fs::metadata(path) {
+        Ok(m) => format!("{} bytes", m.len()),
+        Err(_) => "missing".into(),
+    }
+}
+
+/// A short, one-line look at text that came back, for the log.
+fn glimpse(bytes: &[u8]) -> String {
+    let text: String = String::from_utf8_lossy(&bytes[..bytes.len().min(120)])
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    text.trim().to_string()
 }
 
 /// The BBS ids named in a cart's string literals, in the order they first appear.
@@ -223,10 +268,28 @@ pub fn download(
     fetch: &mut dyn Fetch,
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<usize, String> {
+    let started = std::time::Instant::now();
     let dir = carts_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let code = read_code(cart).map_err(|e| format!("{}: {e}", cart.display()))?;
+    log(&format!(
+        "download for {} into {}",
+        cart.display(),
+        dir.display()
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        log(&format!("cannot make {}: {e}", dir.display()));
+        format!("{}: {e}", dir.display())
+    })?;
+    let code = read_code(cart).map_err(|e| {
+        log(&format!("cannot read {}: {e}", cart.display()));
+        format!("{}: {e}", cart.display())
+    })?;
     let mut queue: VecDeque<String> = refs(&code).into();
+    log(&format!(
+        "{} names {:?} ({} bytes of code)",
+        name_of(cart),
+        queue,
+        code.len()
+    ));
     let mut seen: HashSet<String> = HashSet::new();
     let mut fetched = 0;
     while let Some(id) = queue.pop_front() {
@@ -234,23 +297,72 @@ pub fn download(
             continue;
         }
         if seen.len() >= MAX_CARTS {
+            log(&format!(
+                "stopping at {MAX_CARTS} carts, {} still queued: {:?}",
+                queue.len() + 1,
+                queue
+            ));
             break;
         }
         seen.insert(id.clone());
         progress(seen.len() - 1, seen.len() + queue.len());
         let path = match cached(&dir, &id) {
-            Some(path) => path,
+            Some(path) => {
+                log(&format!(
+                    "#{id}: already kept as {} ({})",
+                    name_of(&path),
+                    size_of(&path)
+                ));
+                path
+            }
             None => {
-                let path = fetch_one(&dir, &id, fetch).ok_or_else(|| id.clone())?;
+                log(&format!(
+                    "#{id}: fetching ({} of {} known)",
+                    seen.len(),
+                    seen.len() + queue.len()
+                ));
+                let one = std::time::Instant::now();
+                let Some(path) = fetch_one(&dir, &id, fetch) else {
+                    log(&format!(
+                        "#{id}: failed after {} ms; {fetched} fetched before it, {} ms in all",
+                        one.elapsed().as_millis(),
+                        started.elapsed().as_millis()
+                    ));
+                    report(root, cart);
+                    return Err(id);
+                };
+                log(&format!(
+                    "#{id}: kept as {} ({}) in {} ms",
+                    name_of(&path),
+                    size_of(&path),
+                    one.elapsed().as_millis()
+                ));
                 fetched += 1;
                 path
             }
         };
-        if let Ok(code) = read_code(&path) {
-            queue.extend(refs(&code).into_iter().filter(|r| !seen.contains(r)));
+        match read_code(&path) {
+            Ok(code) => {
+                let named = refs(&code);
+                let new: Vec<&String> = named
+                    .iter()
+                    .filter(|r| !seen.contains(*r) && !queue.contains(r))
+                    .collect();
+                log(&format!("#{id} names {named:?}; new to the list: {new:?}"));
+                queue.extend(refs(&code).into_iter().filter(|r| !seen.contains(r)));
+            }
+            Err(e) => log(&format!(
+                "#{id}: cannot read its code ({e}), so what it names is not known"
+            )),
         }
     }
     progress(seen.len(), seen.len());
+    log(&format!(
+        "done: {fetched} fetched, {} carts in all, {} ms",
+        seen.len(),
+        started.elapsed().as_millis()
+    ));
+    report(root, cart);
     Ok(fetched)
 }
 
@@ -261,22 +373,145 @@ fn fetch_one(dir: &Path, id: &str, fetch: &mut dyn Fetch) -> Option<PathBuf> {
     // Not PICO-8's own `temp-<id>.nfo`, which a game running at the same time may be writing.
     let temp = dir.join(format!("ezgba-{id}.nfo.part"));
     let ok = fetch.fetch(&format!("{NFO_URL}{id}"), &temp);
-    let nfo = std::fs::read_to_string(&temp).unwrap_or_default();
+    let nfo = std::fs::read(&temp).unwrap_or_default();
     let _ = std::fs::remove_file(&temp);
     if !ok {
+        log(&format!("#{id}: the BBS did not answer for its info"));
         return None;
     }
-    let lid = lid_of(&nfo)?;
+    let nfo = String::from_utf8_lossy(&nfo).into_owned();
+    log(&format!(
+        "#{id}: info ({} bytes): {}",
+        nfo.len(),
+        glimpse(nfo.as_bytes())
+    ));
+    let Some(lid) = lid_of(&nfo) else {
+        log(&format!(
+            "#{id}: the info names no revision (no usable lid: line), so there is no cart to ask for"
+        ));
+        return None;
+    };
+    if lid != id && !lid.starts_with(&format!("{id}-")) {
+        log(&format!(
+            "#{id}: note: the info names {lid}, not a revision of {id}; fetching it anyway"
+        ));
+    }
     let cart = dir.join(format!("{lid}.p8.png"));
     let part = dir.join(format!("{lid}.p8.png.part"));
     let ok = fetch.fetch(&format!("{CART_URL}{lid}"), &part);
-    let png = std::fs::read(&part).is_ok_and(|b| b.starts_with(b"\x89PNG"));
-    if !ok || !png || std::fs::rename(&part, &cart).is_err() {
+    let bytes = std::fs::read(&part).unwrap_or_default();
+    let png = bytes.starts_with(b"\x89PNG");
+    if !ok || !png {
+        if !ok {
+            log(&format!("#{id}: the cart {lid} did not arrive"));
+        } else {
+            log(&format!(
+                "#{id}: what came back for {lid} is not a PNG ({} bytes): {}",
+                bytes.len(),
+                glimpse(&bytes)
+            ));
+        }
         let _ = std::fs::remove_file(&part);
         return None;
     }
-    std::fs::write(dir.join(format!("{id}.nfo")), nfo).ok()?;
+    if let Err(e) = std::fs::rename(&part, &cart) {
+        log(&format!(
+            "#{id}: cannot move {} into place: {e}",
+            part.display()
+        ));
+        let _ = std::fs::remove_file(&part);
+        return None;
+    }
+    if let Err(e) = std::fs::write(dir.join(format!("{id}.nfo")), &nfo) {
+        log(&format!("#{id}: cannot write {id}.nfo: {e}"));
+        return None;
+    }
     Some(cart)
+}
+
+fn name_of(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
+/// Writes to the log what `cart` needs and what the cache holds for it: every id reachable
+/// from it, kept (with the revision and size) or missing, and what else is in the cache. For
+/// telling what a multicart expects apart from what is on the card.
+pub fn report(root: &Path, cart: &Path) {
+    let dir = carts_dir(root);
+    let Ok(code) = read_code(cart) else {
+        log(&format!("report: cannot read {}", cart.display()));
+        return;
+    };
+    let mut queue: VecDeque<(String, String)> = refs(&code)
+        .into_iter()
+        .map(|r| (r, name_of(cart)))
+        .collect();
+    let mut seen = HashSet::new();
+    let (mut kept, mut gone) = (Vec::new(), Vec::new());
+    let mut wanted_files = HashSet::new();
+    while let Some((id, from)) = queue.pop_front() {
+        if !seen.insert(id.clone()) || seen.len() > MAX_CARTS {
+            continue;
+        }
+        let nfo = dir.join(format!("{id}.nfo"));
+        wanted_files.insert(format!("{id}.nfo"));
+        let text = std::fs::read_to_string(&nfo).ok();
+        let lid = text.as_deref().and_then(lid_of);
+        match (&text, &lid, cached(&dir, &id)) {
+            (_, Some(lid), Some(path)) => {
+                wanted_files.insert(format!("{lid}.p8.png"));
+                kept.push(format!("#{id} -> {lid} ({})", size_of(&path)));
+                let named = read_code(&path).map(|c| refs(&c)).unwrap_or_default();
+                queue.extend(named.into_iter().map(|r| (r, id.clone())));
+            }
+            (Some(_), Some(lid), None) => {
+                wanted_files.insert(format!("{lid}.p8.png"));
+                gone.push(format!("#{id} (named by {from}): {id}.nfo says {lid}, but {lid}.p8.png is missing or empty"))
+            }
+            (Some(t), None, _) => gone.push(format!(
+                "#{id} (named by {from}): {id}.nfo names no revision: {}",
+                glimpse(t.as_bytes())
+            )),
+            (None, _, _) => gone.push(format!("#{id} (named by {from}): no {id}.nfo")),
+        }
+    }
+    log(&format!(
+        "report for {}: {} parts expected, {} kept, {} missing",
+        name_of(cart),
+        seen.len(),
+        kept.len(),
+        gone.len()
+    ));
+    for k in &kept {
+        log(&format!("  kept {k}"));
+    }
+    for g in &gone {
+        log(&format!("  MISSING {g}"));
+    }
+    let others: Vec<String> = std::fs::read_dir(&dir)
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !wanted_files.contains(n))
+                .collect()
+        })
+        .unwrap_or_default();
+    let leftovers: Vec<&String> = others
+        .iter()
+        .filter(|n| n.ends_with(".part") || n.starts_with("temp-"))
+        .collect();
+    log(&format!(
+        "  the cache holds {} other files{}",
+        others.len(),
+        if leftovers.is_empty() {
+            String::new()
+        } else {
+            format!(", unfinished downloads among them: {leftovers:?}")
+        }
+    ));
 }
 
 #[cfg(test)]

@@ -18,6 +18,15 @@ log() {
 }
 
 log "wget $*"
+t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+
+# Whether the kernel has a default route: with none, nothing can be fetched, and asking again
+# only makes the load wait.
+has_route() {
+	command -v awk >/dev/null 2>&1 || return 0
+	[ -r /proc/net/route ] || return 0
+	awk 'NR > 1 && $2 == "00000000" { f = 1 } END { exit !f }' /proc/net/route
+}
 
 # While this runs, a file named for it says a download is in flight: a state of PICO-8 kept now
 # would come back waiting on a download that no longer exists. Named for this process, so one
@@ -55,6 +64,27 @@ if [ -z "$url" ]; then
 	exec /usr/bin/wget "$@"
 fi
 
+# What the card already holds for what PICO-8 is asking about: the copy it falls back to when
+# this fetch fails.
+case "$url" in
+*nfo=1*lid=*)
+	id=${url##*lid=}
+	dir=${out%/*}
+	if [ -f "$dir/$id.nfo" ]; then
+		lid=$(sed -n 's/^lid://p' "$dir/$id.nfo" 2>/dev/null | head -n 1)
+		if [ -s "$dir/$lid.p8.png" ]; then
+			log "  kept copy: $id.nfo names $lid, $(wc -c < "$dir/$lid.p8.png" | tr -d ' ') bytes"
+		else
+			log "  kept copy: $id.nfo names ${lid:-nothing}, but $lid.p8.png is missing"
+		fi
+	else
+		log "  kept copy: none for $id"
+	fi
+	;;
+esac
+has_route && route=up || route=none
+log "  network route: $route"
+
 # As wget does, the file PICO-8 named is made before anything is fetched, and left empty when the
 # fetch fails. PICO-8 reads a missing one as no connection at all and gives up, where an empty
 # one sends it to the copy it already keeps: without this, a cart it has downloaded once would
@@ -76,6 +106,10 @@ while :; do
 	code=$?
 	case "$code" in 6 | 7) ;; *) break ;; esac
 	[ "$try" -ge 3 ] && break
+	if ! has_route; then
+		log "  curl exit $code with no network route: not asking again"
+		break
+	fi
 	log "  curl exit $code: again"
 	sleep 1
 	try=$((try + 1))
@@ -84,5 +118,7 @@ said=$(cat "$err" 2>/dev/null)
 rm -f "$err"
 size=
 [ -n "$out" ] && [ -f "$out" ] && size=" ($(wc -c < "$out" 2>/dev/null | tr -d ' ') bytes)"
-log "  curl exit $code$size${said:+: $said}"
+t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+took=$(awk "BEGIN { printf \"%.2f\", $t1 - $t0 }" 2>/dev/null)
+log "  curl exit $code$size in ${took:-?} s after $try tries${said:+: $said}"
 exit $code

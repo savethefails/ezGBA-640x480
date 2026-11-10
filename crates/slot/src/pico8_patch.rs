@@ -113,8 +113,12 @@ pub fn bbs_id(name: &str) -> Option<String> {
 }
 
 pub fn status(path: &Path) -> Status {
-    let Ok(code) = read_code(path) else {
-        return Status::Unreadable;
+    let code = match read_code(path) {
+        Ok(code) => code,
+        Err(e) => {
+            log(&format!("{}: unreadable: {e}", file_name(path)));
+            return Status::Unreadable;
+        }
     };
     if code.starts_with(MARK.as_bytes()) {
         return Status::Patched;
@@ -158,16 +162,41 @@ fn launcher(id: &str) -> String {
 /// Swaps the cart's code for the launcher, keeping the original first. Refuses anything that
 /// is not a multicart with an id, so a cart is never patched twice or patched for nothing.
 pub fn patch(root: &Path, path: &Path) -> io::Result<()> {
-    let Status::Multicart { id } = status(path) else {
+    let name = file_name(path);
+    let result = patch_inner(root, path);
+    match &result {
+        Ok(()) => log(&format!("{name}: patched; now {:?}", status(path))),
+        Err(e) => log(&format!("{name}: patch failed: {e}")),
+    }
+    result
+}
+
+fn patch_inner(root: &Path, path: &Path) -> io::Result<()> {
+    let name = file_name(path);
+    let found = status(path);
+    let Status::Multicart { id } = found else {
+        log(&format!("{name}: not patched: it is {found:?}"));
         return Err(io::Error::other("not a multicart this can patch"));
     };
     let bytes = std::fs::read(path)?;
+    let old_code = read_code(path).map_or(0, |c| c.len());
     let dir = originals(root);
     std::fs::create_dir_all(&dir)?;
-    let keep = dir.join(file_name(path));
+    let keep = dir.join(&name);
     // A copy already there is the original from an earlier patch: never written over.
-    if !keep.exists() {
+    if keep.exists() {
+        log(&format!(
+            "{name}: the original is already kept at {} ({} bytes), left as it is",
+            keep.display(),
+            std::fs::metadata(&keep).map_or(0, |m| m.len())
+        ));
+    } else {
         slot_store::atomic_write(&keep, &bytes)?;
+        log(&format!(
+            "{name}: original ({} bytes, {old_code} bytes of code) kept at {}",
+            bytes.len(),
+            keep.display()
+        ));
     }
     let code = launcher(&id);
     let out = if is_png(path) {
@@ -175,15 +204,42 @@ pub fn patch(root: &Path, path: &Path) -> io::Result<()> {
     } else {
         text_with_code(&bytes, &code)?
     };
+    log(&format!(
+        "{name}: writing a launcher for #{id} ({} bytes of code, {} bytes of {})",
+        code.len(),
+        out.len(),
+        if is_png(path) { "PNG" } else { "text" }
+    ));
     slot_store::atomic_write(path, &out)
 }
 
 /// Puts the original back.
 pub fn restore(root: &Path, path: &Path) -> io::Result<()> {
-    let keep = originals(root).join(file_name(path));
-    let bytes = std::fs::read(&keep)?;
-    slot_store::atomic_write(path, &bytes)?;
-    std::fs::remove_file(&keep)
+    let name = file_name(path);
+    let keep = originals(root).join(&name);
+    let result = (|| {
+        let bytes = std::fs::read(&keep)?;
+        slot_store::atomic_write(path, &bytes)?;
+        std::fs::remove_file(&keep)?;
+        Ok::<usize, io::Error>(bytes.len())
+    })();
+    match &result {
+        Ok(n) => log(&format!(
+            "{name}: restored from {} ({n} bytes); now {:?}",
+            keep.display(),
+            status(path)
+        )),
+        Err(e) => log(&format!(
+            "{name}: restore from {} failed: {e}",
+            keep.display()
+        )),
+    }
+    result.map(|_| ())
+}
+
+/// A line in the download log, marked as this module's.
+fn log(line: &str) {
+    crate::pico8_net::note(&format!("slot: patch: {line}"));
 }
 
 fn is_png(path: &Path) -> bool {

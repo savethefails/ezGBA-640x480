@@ -4016,6 +4016,7 @@ impl App {
             "slot: launch: insert {cart} at {:.1} ms",
             crate::boot_time::ms()
         );
+        self.note_pico8_launch(clean);
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
@@ -4026,6 +4027,41 @@ impl App {
             resumed: false,
             clean,
         };
+    }
+
+    /// For a PICO-8 cart going in: what it is, what it needs and what the cache holds for it, in
+    /// the download log, on a thread so the insert never waits on reading carts.
+    fn note_pico8_launch(&self, clean: bool) {
+        let Some(cart) = self.shelf().carts.get(self.shelf().index) else {
+            return;
+        };
+        if cart.platform != slot_store::Platform::Pico8 {
+            return;
+        }
+        let (Some(root), rom) = (self.root.clone(), cart.rom.clone()) else {
+            return;
+        };
+        let online = self.online();
+        let route = crate::pico8_net::has_route();
+        let _ = std::thread::Builder::new()
+            .name("pico8-launch-note".into())
+            .spawn(move || {
+                crate::pico8_net::note(&format!(
+                    "slot: launch: {} ({}); {}; Wi-Fi {}, network route {}; patch status {:?}",
+                    rom.display(),
+                    std::fs::metadata(&rom)
+                        .map_or("missing".into(), |m| format!("{} bytes", m.len())),
+                    if clean {
+                        "starting clean"
+                    } else {
+                        "resuming if it can"
+                    },
+                    if online { "connected" } else { "not connected" },
+                    if route { "up" } else { "none" },
+                    crate::pico8_patch::status(&rom)
+                ));
+                crate::pico8_cache::report(&root, &rom);
+            });
     }
 
     /// Whether the cart going in is starting from the beginning. Read by whoever spawns the
@@ -5638,6 +5674,9 @@ impl App {
         if up && !self.wifi_was_up {
             crate::pico8_net::check_bbs(status.ssid.as_deref().unwrap_or("?"));
         }
+        if !up && self.wifi_was_up {
+            crate::pico8_net::note(&format!("slot: Wi-Fi went down (state {:?})", status.state));
+        }
         self.wifi_was_up = up;
         if scan != self.wifi_scanning {
             self.wifi_scanning = scan;
@@ -6012,15 +6051,27 @@ impl App {
             return;
         }
         let rom = cart.rom.clone();
-        let need = match crate::pico8_patch::status(&rom) {
-            crate::pico8_patch::Status::Multicart { .. } => Pico8Need::Patch,
-            _ => match &self.root {
-                Some(root) if !crate::pico8_cache::missing(root, &rom).is_empty() => {
-                    Pico8Need::Download
-                }
-                _ => Pico8Need::Nothing,
-            },
+        let started = std::time::Instant::now();
+        let status = crate::pico8_patch::status(&rom);
+        let missing = match (&status, &self.root) {
+            (crate::pico8_patch::Status::Multicart { .. }, _) | (_, None) => Vec::new(),
+            (_, Some(root)) => crate::pico8_cache::missing(root, &rom),
         };
+        let need = match status {
+            crate::pico8_patch::Status::Multicart { .. } => Pico8Need::Patch,
+            _ if !missing.is_empty() => Pico8Need::Download,
+            _ => Pico8Need::Nothing,
+        };
+        crate::pico8_net::note(&format!(
+            "slot: shelf: {} is {status:?}; needs {need:?}{}; checked in {} ms",
+            cart.stem,
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!(", missing {missing:?}")
+            },
+            started.elapsed().as_millis()
+        ));
         self.pico8_need.insert(rom, need);
     }
 
@@ -6054,15 +6105,37 @@ impl App {
     /// and while another download runs, so the chord never falls through to START.
     fn get_offline(&mut self) {
         self.check_selected_need();
+        let note = |why: &str| crate::pico8_net::note(&format!("slot: shelf: SELECT+START {why}"));
         let Some((rom, need)) = self.selected_pico8().map(|(r, n)| (r.to_path_buf(), n)) else {
+            note("refused: the selected cart is not a PICO-8 cart");
             return self.refuse();
         };
-        if need == Pico8Need::Nothing || self.offline_busy() || !self.online() {
+        let why = if need == Pico8Need::Nothing {
+            Some("it needs nothing")
+        } else if self.offline_busy() {
+            Some("a download is already running")
+        } else if !self.online() {
+            Some("Wi-Fi is not connected")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            note(&format!("refused on {}: {why}", rom.display()));
             return self.refuse();
         }
         let Some(root) = self.root.clone() else {
+            note("refused: no card");
             return self.refuse();
         };
+        note(&format!(
+            "on {}: {need:?}; network route {}",
+            rom.display(),
+            if crate::pico8_net::has_route() {
+                "up"
+            } else {
+                "MISSING"
+            }
+        ));
         if need == Pico8Need::Patch {
             self.apply_patch(&rom, false);
             if crate::pico8_patch::status(&rom) != crate::pico8_patch::Status::Patched {
@@ -6074,6 +6147,7 @@ impl App {
         let make = self.offline_fetch.clone();
         let cart = rom.clone();
         crate::latency::note(&format!("offline copy: {} started", rom.display()));
+        let begun = self.now();
         let spawned = std::thread::Builder::new()
             .name("pico8-offline".into())
             .spawn(move || {
@@ -6101,6 +6175,7 @@ impl App {
             shared,
             result: None,
             ended_at: 0,
+            started_at: begun,
         });
     }
 
@@ -6115,10 +6190,16 @@ impl App {
             let Some(result) = o.shared.lock().ok().and_then(|mut j| j.result.take()) else {
                 return;
             };
-            match &result {
-                Ok(n) => crate::latency::note(&format!("offline copy: {n} carts fetched")),
-                Err(id) => crate::latency::note(&format!("offline copy: #{id} failed")),
-            }
+            let took = now.saturating_sub(o.started_at);
+            let line = match &result {
+                Ok(n) => format!("{n} carts fetched in {took} ms"),
+                Err(id) => format!("stopped at #{id} after {took} ms"),
+            };
+            crate::latency::note(&format!("offline copy: {line}"));
+            crate::pico8_net::note(&format!(
+                "slot: shelf: download for {}: {line}",
+                o.rom.display()
+            ));
             let failed = result.is_err();
             o.result = Some(result);
             o.ended_at = now;
@@ -6325,6 +6406,7 @@ struct Offline {
     shared: Arc<std::sync::Mutex<OfflineJob>>,
     result: Option<Result<usize, String>>,
     ended_at: Millis,
+    started_at: Millis,
 }
 
 /// The faces for the shelf's line over a PICO-8 cart, and what they say.
