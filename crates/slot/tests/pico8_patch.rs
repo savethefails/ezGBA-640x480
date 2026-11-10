@@ -127,6 +127,8 @@ fn a_cart_that_runs_from_a_file_is_fine_and_other_files_are_not_listed() {
     .unwrap();
     std::fs::write(games.join("shot.png"), b"not a cart").unwrap();
     std::fs::write(games.join("broken.p8.png"), b"not a png").unwrap();
+    // What a Mac leaves beside every file it copies: not a cart, and not listed.
+    std::fs::write(games.join("._plain-1.p8"), b"\0\x05\x16\x07 Mac notes").unwrap();
     let carts = pico8_patch::scan(d.path());
     let got: Vec<_> = carts.iter().map(|c| (c.name.as_str(), &c.status)).collect();
     assert_eq!(

@@ -42,6 +42,8 @@ impl Fetch for Curl {
         const CURL: &str = "/usr/bin/curl";
         const ROOTS: &str = "/etc/ssl/certs/ca-certificates.crt";
         let out_s = out.to_string_lossy().into_owned();
+        let head = out.with_extension("headers");
+        let head_s = head.to_string_lossy().into_owned();
         let mut args = vec![
             "-fsSL",
             "--connect-timeout",
@@ -50,34 +52,46 @@ impl Fetch for Curl {
             "60",
             "-o",
             &out_s,
+            "-D",
+            &head_s,
+            "-w",
+            "%{http_code}",
         ];
         if Path::new(ROOTS).exists() {
             args.extend(["--cacert", ROOTS]);
         }
         args.push(url);
-        // A radio that dozed through a quiet minute can lose the first answer, as the wrapper
-        // knows: a name that will not resolve or a host that will not answer is asked again,
-        // but only while there is a route to ask over at all.
-        for attempt in 1..=3 {
+        let cart = url.contains("get_cart.php");
+        let mut tries = 0;
+        let mut busy_waits = 0;
+        loop {
+            tries += 1;
+            if cart {
+                pace_cart();
+            }
             let started = std::time::Instant::now();
             let ran = std::process::Command::new(CURL)
                 .args(&args)
                 .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .output();
             let ms = started.elapsed().as_millis();
-            let (code, said) = match &ran {
+            let (code, http, said) = match &ran {
                 Ok(o) => (
                     o.status.code(),
+                    String::from_utf8_lossy(&o.stdout).trim().to_string(),
                     String::from_utf8_lossy(&o.stderr).trim().to_string(),
                 ),
-                Err(e) => (None, format!("could not run {CURL}: {e}")),
+                Err(e) => (None, String::new(), format!("could not run {CURL}: {e}")),
             };
+            let headers = std::fs::read_to_string(&head).unwrap_or_default();
+            let _ = std::fs::remove_file(&head);
             let bytes = std::fs::metadata(out).map_or(0, |m| m.len());
             log(&format!(
-                "  curl {url} (try {attempt}): exit {}, {bytes} bytes, {ms} ms{}",
+                "  curl {url} (try {tries}): exit {}, HTTP {}, {bytes} bytes, {ms} ms{}",
                 code.map_or("none".into(), |c| c.to_string()),
+                if http.is_empty() { "-" } else { &http },
                 if said.is_empty() {
                     String::new()
                 } else {
@@ -86,18 +100,95 @@ impl Fetch for Curl {
             ));
             match code {
                 Some(0) => return true,
-                Some(6 | 7) if attempt < 3 && crate::pico8_net::has_route() => {
+                // Too many requests: the BBS lets a burst of carts through and then refuses for
+                // about a minute. Waited out, as long as it says or longer each time, and the same
+                // cart asked for again.
+                Some(22) if http == "429" || said.contains("429") => {
+                    if busy_waits >= BUSY_WAITS.len() {
+                        log("  the BBS is still refusing: giving up on this cart for now");
+                        return false;
+                    }
+                    let asked = retry_after(&headers);
+                    let wait = asked.unwrap_or(BUSY_WAITS[busy_waits]).clamp(5, 180);
+                    busy_waits += 1;
+                    log(&format!(
+                        "  the BBS says too many requests (429){}; waiting {wait} s, then asking again",
+                        asked.map_or(String::new(), |s| format!(", retry after {s} s"))
+                    ));
+                    wait_for_bbs(wait);
+                }
+                // A radio that dozed through a quiet minute can lose the first answer, as the
+                // wrapper knows: a name that will not resolve or a host that will not answer is
+                // asked again, but only while there is a route to ask over at all.
+                Some(6 | 7) if tries < 3 && crate::pico8_net::has_route() => {
                     std::thread::sleep(std::time::Duration::from_secs(1))
                 }
-                Some(6 | 7) if attempt < 3 => {
+                Some(6 | 7) if tries < 3 => {
                     log("  no network route: not asking again");
                     return false;
                 }
                 _ => return false,
             }
         }
-        false
     }
+}
+
+/// How long to wait each time the BBS says too many requests, when it does not say itself.
+const BUSY_WAITS: [u64; 4] = [20, 40, 60, 60];
+
+/// The least time between one cart download and the next. The BBS lets a handful through in
+/// a burst and then refuses for a minute; spacing them out keeps under that more often.
+const CART_GAP_MS: u64 = 2000;
+
+/// When the downloads may next ask the BBS, in milliseconds since the epoch: the end of a wait
+/// on a refusal, which the screens show as a countdown.
+static WAIT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_CART: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Seconds left of a wait the BBS asked for, while one is running.
+pub fn bbs_wait_secs() -> Option<u64> {
+    let until = WAIT_UNTIL.load(std::sync::atomic::Ordering::Relaxed);
+    let now = epoch_ms();
+    (until > now).then(|| (until - now).div_ceil(1000))
+}
+
+fn wait_for_bbs(secs: u64) {
+    WAIT_UNTIL.store(
+        epoch_ms() + secs * 1000,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    std::thread::sleep(std::time::Duration::from_secs(secs));
+    WAIT_UNTIL.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn pace_cart() {
+    let Ok(mut last) = LAST_CART.lock() else {
+        return;
+    };
+    if let Some(at) = *last {
+        let gap = std::time::Duration::from_millis(CART_GAP_MS);
+        if let Some(left) = gap.checked_sub(at.elapsed()) {
+            std::thread::sleep(left);
+        }
+    }
+    *last = Some(std::time::Instant::now());
+}
+
+/// A `Retry-After` given in seconds.
+fn retry_after(headers: &str) -> Option<u64> {
+    headers.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim()
+            .eq_ignore_ascii_case("retry-after")
+            .then(|| v.trim().parse().ok())
+            .flatten()
+    })
 }
 
 /// A line in the download log, marked as this module's.
@@ -540,6 +631,19 @@ load("#rev_named-12")
                 "rev_named-12"
             ]
         );
+    }
+
+    #[test]
+    fn retry_after_is_read_in_seconds() {
+        assert_eq!(
+            retry_after("HTTP/1.1 429 Too Many\r\nRetry-After: 37\r\n"),
+            Some(37)
+        );
+        assert_eq!(
+            retry_after("retry-after: Wed, 21 Oct 2026 07:28:00 GMT\n"),
+            None
+        );
+        assert_eq!(retry_after("HTTP/1.1 429\n"), None);
     }
 
     #[test]

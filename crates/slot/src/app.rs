@@ -6406,10 +6406,14 @@ impl App {
                 None => {
                     let (done, total) = o.shared.lock().map_or((0, 0), |j| (j.done, j.total));
                     let total = total.max(1);
-                    (
-                        false,
-                        format!("Downloading {}/{total}", (done + 1).min(total)),
-                    )
+                    match crate::pico8_cache::bbs_wait_secs() {
+                        // The BBS asked for a pause: say so, so the wait does not look stuck.
+                        Some(secs) => (false, format!("BBS busy: {secs}s")),
+                        None => (
+                            false,
+                            format!("Downloading {}/{total}", (done + 1).min(total)),
+                        ),
+                    }
                 }
                 Some(Ok(_)) => (false, "Ready offline".into()),
                 Some(Err(_)) => (false, "Download failed".into()),
@@ -6518,10 +6522,11 @@ impl App {
                     let o_failed = matches!(o.result, Some(Err(_)));
                     if current.as_ref() == Some(&c.path) {
                         let total = total.max(1);
-                        return (
-                            patcher_name(&c.name),
-                            Some(format!("{}/{total}", (done + 1).min(total))),
-                        );
+                        let value = match crate::pico8_cache::bbs_wait_secs() {
+                            Some(secs) => format!("Wait {secs}s"),
+                            None => format!("{}/{total}", (done + 1).min(total)),
+                        };
+                        return (patcher_name(&c.name), Some(value));
                     }
                     if failed && o_failed {
                         return (patcher_name(&c.name), Some("Failed".to_string()));
@@ -6536,7 +6541,10 @@ impl App {
                         let job = job.expect("matched Some");
                         let (done, total) = job.shared.lock().map_or((0, 0), |j| (j.done, j.total));
                         let total = total.max(1);
-                        Some(format!("{}/{total}", (done + 1).min(total)))
+                        Some(match crate::pico8_cache::bbs_wait_secs() {
+                            Some(secs) => format!("Wait {secs}s"),
+                            None => format!("{}/{total}", (done + 1).min(total)),
+                        })
                     }
                     Some(Some(Err(_))) => Some("Failed".to_string()),
                     _ => patcher_value(c).map(str::to_string),

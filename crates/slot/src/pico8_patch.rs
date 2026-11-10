@@ -81,7 +81,15 @@ pub fn scan(root: &Path) -> Vec<Cart> {
     let mut carts: Vec<Cart> = dir
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && slot_store::Platform::Pico8.accepts(p))
+        // Not hidden files: an SD card used on a Mac carries a `._name` beside every cart,
+        // which is the Finder's notes about it rather than a cart.
+        .filter(|p| {
+            p.is_file()
+                && !p
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                && slot_store::Platform::Pico8.accepts(p)
+        })
         .map(|path| {
             let status = status(&path);
             let parts = read_code(&path)
