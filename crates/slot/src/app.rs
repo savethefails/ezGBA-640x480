@@ -646,7 +646,7 @@ pub struct App {
     /// The PICO-8 carts the Patcher lists, read when it opens and after each patch.
     patcher: Vec<crate::pico8_patch::Cart>,
     /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
-    patcher_legend: Option<[(TexId, u32); 3]>,
+    patcher_legend: Option<[(TexId, u32); 5]>,
     /// What each PICO-8 cart looked at on the shelf still needs before it plays offline, read
     /// the first time it is selected rather than for the whole card at boot: deciding means
     /// unpacking the cart's code, which is too slow to do for every cart at once.
@@ -5918,26 +5918,37 @@ impl App {
 }
 
 /// What the Patcher says a cart is, on the right of its row. A cart that runs from a file as it
-/// is says nothing.
-fn patcher_value(status: &crate::pico8_patch::Status) -> Option<&'static str> {
+/// is and names no parts says nothing.
+fn patcher_value(cart: &crate::pico8_patch::Cart) -> Option<&'static str> {
     use crate::pico8_patch::Status;
-    match status {
-        Status::Fine => None,
+    match cart.status {
         Status::Multicart { .. } => Some("Needs Patch"),
         Status::NoId => Some("No BBS ID"),
-        Status::Patched => Some("Patched"),
         Status::Unreadable => Some("Unreadable"),
+        _ if !cart.missing.is_empty() => Some("Download"),
+        Status::Patched => Some("Patched"),
+        Status::Fine if !cart.parts.is_empty() => Some("Offline Ready"),
+        Status::Fine => None,
     }
 }
 
-/// Every value the Patcher can show, made once with the page's other faces.
-pub const PATCHER_VALUES: [&str; 4] = ["Needs Patch", "No BBS ID", "Patched", "Unreadable"];
+/// Every fixed value the Patcher can show, made once with the page's other faces. A download's
+/// progress is made as it changes.
+pub const PATCHER_VALUES: [&str; 7] = [
+    "Needs Patch",
+    "No BBS ID",
+    "Patched",
+    "Unreadable",
+    "Download",
+    "Offline Ready",
+    "Failed",
+];
 
 /// What the Patcher shows when the card has no PICO-8 carts.
 pub const PATCHER_EMPTY: &str = "No PICO-8 carts";
 
 /// The longest name a row shows, so it never runs under its value.
-const PATCHER_NAME_MAX: usize = 22;
+const PATCHER_NAME_MAX: usize = 18;
 
 fn patcher_name(name: &str) -> String {
     if name.chars().count() <= PATCHER_NAME_MAX {
@@ -5970,6 +5981,9 @@ impl App {
             Action::GbaDown(Btn::Up) => row = row.saturating_sub(1),
             Action::GbaDown(Btn::Down) => row = (row + 1).min(last),
             Action::GbaDown(Btn::A) => self.patch_row(row),
+            // X puts a patched cart's original back whatever else it offers, so a cart still
+            // waiting on its parts can be restored without Wi-Fi.
+            Action::GbaDown(Btn::X) => self.restore_row(row),
             Action::GbaDown(Btn::B) | Action::QuickMenu | Action::Eject => {
                 self.phase = Phase::QuickMenu {
                     row: QuickRow::Patcher,
@@ -5986,12 +6000,42 @@ impl App {
         let Some(cart) = self.patcher.get(row).cloned() else {
             return self.refuse();
         };
+        crate::pico8_net::note(&format!(
+            "slot: patcher: A on {} ({:?}, {} parts, missing {:?})",
+            cart.name,
+            cart.status,
+            cart.parts.len(),
+            cart.missing
+        ));
         match cart.status {
-            Status::Multicart { .. } => self.apply_patch(&cart.path, false),
+            // Patched, and its parts fetched straight after when there is Wi-Fi to fetch them
+            // over; without, it is left patched and says Download.
+            Status::Multicart { .. } => {
+                self.apply_patch(&cart.path, false);
+                if self.online() && crate::pico8_patch::status(&cart.path) == Status::Patched {
+                    self.start_download(cart.path.clone());
+                }
+            }
+            _ if !cart.missing.is_empty() => {
+                if !self.start_download(cart.path.clone()) {
+                    self.refuse();
+                }
+            }
             Status::Patched => self.apply_patch(&cart.path, true),
             _ => self.refuse(),
         }
         self.rescan_patcher();
+    }
+
+    fn restore_row(&mut self, row: usize) {
+        match self.patcher.get(row).cloned() {
+            Some(c) if c.status == crate::pico8_patch::Status::Patched && !self.offline_busy() => {
+                crate::pico8_net::note(&format!("slot: patcher: X on {}: restoring", c.name));
+                self.apply_patch(&c.path, true);
+                self.rescan_patcher();
+            }
+            _ => self.refuse(),
+        }
     }
 
     /// Patches the cart at `path`, or with `restore` puts its original back. A refusal shakes.
@@ -6054,7 +6098,9 @@ impl App {
         let started = std::time::Instant::now();
         let status = crate::pico8_patch::status(&rom);
         let missing = match (&status, &self.root) {
-            (crate::pico8_patch::Status::Multicart { .. }, _) | (_, None) => Vec::new(),
+            (crate::pico8_patch::Status::Multicart { .. }, _)
+            | (crate::pico8_patch::Status::NoId, _)
+            | (_, None) => Vec::new(),
             (_, Some(root)) => crate::pico8_cache::missing(root, &rom),
         };
         let need = match status {
@@ -6123,10 +6169,10 @@ impl App {
             note(&format!("refused on {}: {why}", rom.display()));
             return self.refuse();
         }
-        let Some(root) = self.root.clone() else {
+        if self.root.is_none() {
             note("refused: no card");
             return self.refuse();
-        };
+        }
         note(&format!(
             "on {}: {need:?}; network route {}",
             rom.display(),
@@ -6141,6 +6187,29 @@ impl App {
             if crate::pico8_patch::status(&rom) != crate::pico8_patch::Status::Patched {
                 return;
             }
+        }
+        if !self.start_download(rom) {
+            self.refuse();
+        }
+    }
+
+    /// Starts fetching every part `rom` names, on a thread. `false` when it cannot: no card,
+    /// Wi-Fi down, or a download already running.
+    fn start_download(&mut self, rom: PathBuf) -> bool {
+        let Some(root) = self.root.clone() else {
+            return false;
+        };
+        if self.offline_busy() || !self.online() {
+            crate::pico8_net::note(&format!(
+                "slot: download for {} not started: {}",
+                rom.display(),
+                if self.offline_busy() {
+                    "another is running"
+                } else {
+                    "Wi-Fi is not connected"
+                }
+            ));
+            return false;
         }
         let shared = Arc::new(std::sync::Mutex::new(OfflineJob::default()));
         let job = shared.clone();
@@ -6168,7 +6237,7 @@ impl App {
                 }
             });
         if spawned.is_err() {
-            return self.refuse();
+            return false;
         }
         self.offline = Some(Offline {
             rom,
@@ -6177,6 +6246,7 @@ impl App {
             ended_at: 0,
             started_at: begun,
         });
+        true
     }
 
     /// Once a frame: the download's news in, and its last word taken down once it has been up
@@ -6205,6 +6275,9 @@ impl App {
             o.ended_at = now;
             // What the cart needs has changed either way: ask again.
             self.pico8_need.clear();
+            if self.on_patcher_page() {
+                self.rescan_patcher();
+            }
             if failed {
                 self.refuse();
             }
@@ -6322,11 +6395,31 @@ impl App {
         self.patcher
             .iter()
             .map(|c| {
-                (
-                    patcher_name(&c.name),
-                    patcher_value(&c.status).map(str::to_string),
-                )
+                let job = self.offline.as_ref().filter(|o| o.rom == c.path);
+                let value = match job.map(|o| &o.result) {
+                    Some(None) => {
+                        let job = job.expect("matched Some");
+                        let (done, total) = job.shared.lock().map_or((0, 0), |j| (j.done, j.total));
+                        let total = total.max(1);
+                        Some(format!("{}/{total}", (done + 1).min(total)))
+                    }
+                    Some(Some(Err(_))) => Some("Failed".to_string()),
+                    _ => patcher_value(c).map(str::to_string),
+                };
+                (patcher_name(&c.name), value)
             })
+            .collect()
+    }
+
+    /// Every value the Patcher shows now, for the binary to make the ones it has not yet: a
+    /// download's progress changes as it goes.
+    pub fn patcher_values(&self) -> Vec<String> {
+        if !self.on_patcher_page() {
+            return Vec::new();
+        }
+        self.patcher_rows()
+            .into_iter()
+            .filter_map(|(_, v)| v)
             .collect()
     }
 
@@ -6338,7 +6431,7 @@ impl App {
         self.patcher_legend.is_some()
     }
 
-    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 3]) {
+    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 5]) {
         self.patcher_legend = Some(legend);
     }
 
@@ -6361,9 +6454,14 @@ impl App {
                 .collect()
         };
         let legend: Vec<(TexId, u32)> = match self.patcher_legend {
-            Some([back, patch, restore]) => match self.patcher.get(row).map(|c| &c.status) {
-                Some(Status::Multicart { .. }) => vec![back, patch],
-                Some(Status::Patched) => vec![back, restore],
+            Some([back, patch, restore, download, restore_x]) => match self.patcher.get(row) {
+                _ if self.offline_busy() => vec![back],
+                Some(c) if matches!(c.status, Status::Multicart { .. }) => vec![back, patch],
+                Some(c) if !c.missing.is_empty() && c.status == Status::Patched => {
+                    vec![back, restore_x, download]
+                }
+                Some(c) if !c.missing.is_empty() => vec![back, download],
+                Some(c) if c.status == Status::Patched => vec![back, restore],
                 _ => vec![back],
             },
             None => Vec::new(),

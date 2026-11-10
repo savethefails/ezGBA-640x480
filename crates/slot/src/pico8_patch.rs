@@ -49,6 +49,18 @@ pub struct Cart {
     /// The file's name without `.p8` or `.p8.png`, as the page shows it.
     pub name: String,
     pub status: Status,
+    /// The BBS ids its code names: its parts, when it is a multicart.
+    pub parts: Vec<String>,
+    /// The parts not yet kept on the card, as far as the kept ones show.
+    pub missing: Vec<String>,
+}
+
+impl Cart {
+    /// A cart the Patcher has something to say about: one to patch, one it patched, or one
+    /// that names parts to download.
+    pub fn multicart(&self) -> bool {
+        self.status.actionable() || !self.parts.is_empty()
+    }
 }
 
 /// Where the carts are.
@@ -70,15 +82,30 @@ pub fn scan(root: &Path) -> Vec<Cart> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.is_file() && slot_store::Platform::Pico8.accepts(p))
-        .map(|path| Cart {
-            name: cart_name(&path),
-            status: status(&path),
-            path,
+        .map(|path| {
+            let status = status(&path);
+            let parts = read_code(&path)
+                .map(|c| crate::pico8_cache::refs(&c))
+                .unwrap_or_default();
+            // A cart still to be patched names its own parts only once it runs from the BBS.
+            let missing = match status {
+                // Without a BBS id it never runs from the BBS, so its parts would not help.
+                Status::Multicart { .. } | Status::NoId | Status::Unreadable => Vec::new(),
+                _ if parts.is_empty() => Vec::new(),
+                _ => crate::pico8_cache::missing(root, &path),
+            };
+            Cart {
+                name: cart_name(&path),
+                status,
+                parts,
+                missing,
+                path,
+            }
         })
         .collect();
-    // The carts the Patcher has something to do for come first: those that need it and those
-    // it has done, together, so patching or restoring one leaves it where it was.
-    carts.sort_by_key(|c| (!c.status.actionable(), slot_store::sort_key(&c.name)));
+    // The multicarts come first: those to patch, those patched, and those with parts to fetch,
+    // together, so patching or downloading one leaves it where it was.
+    carts.sort_by_key(|c| (!c.multicart(), slot_store::sort_key(&c.name)));
     carts
 }
 

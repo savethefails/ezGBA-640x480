@@ -815,6 +815,8 @@ fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
             hint(hint_face("B", "Back")),
             hint(hint_face("A", "Patch")),
             hint(hint_face("A", "Restore")),
+            hint(hint_face("A", "Download")),
+            hint(hint_face("X", "Restore")),
         ]);
         for w in crate::app::PATCHER_VALUES {
             let faces = [
@@ -822,6 +824,15 @@ fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
                 line(quick_value_face(w, true)),
             ];
             app.set_word(w.to_string(), faces);
+        }
+    }
+    for w in app.patcher_values() {
+        if !app.has_word(&w) {
+            let faces = [
+                line(quick_value_face(&w, false)),
+                line(quick_value_face(&w, true)),
+            ];
+            app.set_word(w, faces);
         }
     }
     for w in app.patcher_words() {
