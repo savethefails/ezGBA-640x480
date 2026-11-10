@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define P8HOST_MAGIC 0x50384853u        /* "P8HS" */
-#define P8HOST_VERSION 2
+#define P8HOST_VERSION 3
 #define P8HOST_W 128
 #define P8HOST_H 128
 #define P8HOST_RATE 22050               /* PICO-8's mono 16-bit audio */
@@ -39,6 +39,11 @@ struct p8host {
 	uint32_t input_seq;                 /* frontend: bumped after input_ns, before buttons */
 	uint32_t picked_frame;              /* frontend: frame_seq of the last new frame it took */
 	uint64_t picked_ns;                 /* frontend: when it took it */
+	/* Lockstep (version 3): PICO-8's clock moves one frame each time the frontend asks for one,
+	 * so the frame drawn after a press is ready inside the same frontend frame. */
+	uint32_t kick;                      /* frontend: bumped once per frame it wants */
+	uint32_t done_kick;                 /* PICO-8: the last kick it has finished with */
+	uint32_t lockstep;                  /* PICO-8: set when it runs by `kick` */
 };
 
 #endif

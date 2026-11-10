@@ -89,6 +89,40 @@ static void keep_alive(void)
 	if (shm) __atomic_store_n(&shm->host_ns, now_ns(), __ATOMIC_RELEASE);
 }
 
+/* PICO-8's clock runs on these: one kick, one frame of its time. Every retro_run gives one. */
+static uint64_t kicked_ns;
+static void kick(void)
+{
+	kicked_ns = now_ns();
+	__atomic_store_n(&shm->kick, shm->kick + 1, __ATOMIC_RELEASE);
+}
+
+/* While the core waits on PICO-8 (a first frame, a save, a load) no frames are being asked
+ * for, and a clock that only moved on them would hold PICO-8 still: these waits keep it going
+ * at its own speed. */
+static void keep_going(void)
+{
+	keep_alive();
+	if (shm && now_ns() - kicked_ns >= 16666667ull) kick();
+}
+
+/* The longest a frame waits for PICO-8 to finish the frame it was just given. Past it, the
+ * frame before is shown, as it always was: a cart too slow to keep up costs nothing more.
+ * Under the slack ezGBA's frames have before the panel takes them (about 6 ms on the H700),
+ * so waiting on a slow frame does not also make the frontend's own frame late. */
+#define LOCKSTEP_WAIT_NS 8000000ull
+
+static void wait_for_pico8(void)
+{
+	if (!__atomic_load_n(&shm->lockstep, __ATOMIC_ACQUIRE)) return;
+	uint32_t k = shm->kick;
+	uint64_t until = now_ns() + LOCKSTEP_WAIT_NS;
+	while (__atomic_load_n(&shm->done_kick, __ATOMIC_ACQUIRE) != k && now_ns() < until) {
+		struct timespec ts = { 0, 100000 };
+		nanosleep(&ts, NULL);
+	}
+}
+
 static void sleep_ms(int ms)
 {
 	struct timespec ts = { 0, ms * 1000000L };
@@ -458,7 +492,9 @@ RETRO_API void retro_run(void)
 	if (shm) {
 		send_buttons(buttons_now());
 		keep_alive();
+		kick();
 		child_alive();
+		wait_for_pico8();
 		read_frame();
 		play_audio();
 		audit_frame();
@@ -474,7 +510,7 @@ static int wait_ready(int ms)
 	for (int t = 0; t < ms; t += 10) {
 		if (!child_alive()) return -1;
 		if (__atomic_load_n(&shm->ready, __ATOMIC_ACQUIRE)) return 0;
-		keep_alive();
+		keep_going();
 		sleep_ms(10);
 	}
 	return -1;
@@ -493,7 +529,7 @@ static int take_state(void)
 	kill(child, SIGUSR1);
 	FILE *f = NULL;
 	for (int t = 0; t < 30000 && !f; t += 5) {   /* the first save also writes a dictionary */
-		keep_alive();                                /* PICO-8 saves at its next frame */
+		keep_going();                                /* PICO-8 saves at its next frame */
 		if (!child_alive()) return -1;
 		f = fopen(state_path, "rb");
 		if (!f) sleep_ms(5);
