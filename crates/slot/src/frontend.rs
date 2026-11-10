@@ -813,9 +813,7 @@ fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
         };
         app.set_patcher_legend([
             hint(hint_face("B", "Back")),
-            hint(hint_face("A", "Patch")),
-            hint(hint_face("A", "Restore")),
-            hint(hint_face("A", "Download")),
+            hint(hint_face("A", "Patch & Get All")),
             hint(hint_face("X", "Restore")),
         ]);
         for w in crate::app::PATCHER_VALUES {

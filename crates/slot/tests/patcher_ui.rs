@@ -77,25 +77,32 @@ fn a_multicart_is_patched_and_restored_from_the_menu() {
         ]
     );
 
-    // A cart that runs as it is: nothing to do.
+    // With no Wi-Fi, A does nothing at all: a cart patched now could not get its parts.
+    press(&mut a, Btn::A);
+    assert!(matches!(
+        a.patcher_carts()[0].status,
+        Status::Multicart { .. }
+    ));
+
+    // With Wi-Fi, A patches it and fetches its parts, whichever row is selected.
+    bbs_for(&mut a, d.path());
+    a.assume_online();
     press(&mut a, Btn::Down);
     press(&mut a, Btn::A);
-    assert_eq!(a.patcher_carts()[1].status, Status::Fine);
-
-    press(&mut a, Btn::Up);
-    press(&mut a, Btn::A);
+    assert_eq!(until_row(&mut a, 0, "Patched"), Some("Patched".to_string()));
     assert_eq!(a.patcher_carts()[0].status, Status::Patched);
+    assert_eq!(a.patcher_carts()[1].status, Status::Fine);
     assert_eq!(
         ring.read_resume().unwrap(),
         None,
         "the old resume would bring the old code back"
     );
-
-    // Patched, it names its own BBS copy, which is not on the card: A would download it,
-    // and with no Wi-Fi is refused; X restores.
-    assert_eq!(a.patcher_rows()[0].1.as_deref(), Some("Download"));
+    // Nothing left to do: A is refused.
     press(&mut a, Btn::A);
     assert_eq!(a.patcher_carts()[0].status, Status::Patched);
+
+    // X restores the selected patched cart.
+    press(&mut a, Btn::Up);
     press(&mut a, Btn::X);
     assert_eq!(
         a.patcher_carts()[0].status,
@@ -325,7 +332,7 @@ fn select_start_on_a_cart_with_nothing_to_get_changes_nothing() {
 }
 
 #[test]
-fn in_the_patcher_a_patches_then_downloads_every_part() {
+fn in_the_patcher_one_press_patches_and_downloads_everything() {
     let (d, games, mut a) = pico8_shelf();
     bbs_for(&mut a, d.path());
     a.assume_online();
@@ -333,22 +340,54 @@ fn in_the_patcher_a_patches_then_downloads_every_part() {
     assert_eq!(a.patcher_rows()[0].0, "multi_demo-2");
     assert_eq!(a.patcher_rows()[0].1.as_deref(), Some("Needs Patch"));
     press(&mut a, Btn::A);
+    let last = until_row(&mut a, 0, "Patched");
+    assert_eq!(last.as_deref(), Some("Patched"), "{:?}", a.patcher_rows());
     assert_eq!(
         slot::pico8_patch::status(&games.join("multi_demo-2.p8.png")),
         Status::Patched
     );
-    let mut last = None;
-    for _ in 0..400 {
-        a.update(0.016);
-        last = a.patcher_rows()[0].1.clone();
-        if last.as_deref() == Some("Patched") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(last.as_deref(), Some("Patched"), "{:?}", a.patcher_rows());
     let carts = slot::pico8_cache::carts_dir(d.path());
     assert!(slot::pico8_cache::cached(&carts, "multi_demo").is_some());
     assert!(slot::pico8_cache::cached(&carts, "multi_demo_part").is_some());
     assert!(a.patcher_carts()[0].missing.is_empty());
+}
+
+/// Frames until the Patcher's row `row` says `want`, or a few seconds; what it says then.
+fn until_row(a: &mut App, row: usize, want: &str) -> Option<String> {
+    let mut last = None;
+    for _ in 0..400 {
+        a.update(0.016);
+        last = a.patcher_rows()[row].1.clone();
+        if last.as_deref() == Some(want) && !a.downloading() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    last
+}
+
+#[test]
+fn one_press_works_through_every_cart_and_goes_on_past_a_failure() {
+    let (d, games, mut a) = pico8_shelf();
+    // A second multicart, whose own BBS copy the BBS does not have.
+    std::fs::copy(
+        games.join("multi_demo-2.p8.png"),
+        games.join("zzz_missing-4.p8.png"),
+    )
+    .unwrap();
+    bbs_for(&mut a, d.path());
+    a.assume_online();
+    open_patcher(&mut a);
+    let names: Vec<_> = a.patcher_rows().into_iter().map(|r| r.0).collect();
+    assert_eq!(names, ["multi_demo-2", "zzz_missing-4", "celeste-1"]);
+    press(&mut a, Btn::A);
+    assert_eq!(until_row(&mut a, 1, "Failed").as_deref(), Some("Failed"));
+    assert_eq!(a.patcher_rows()[0].1.as_deref(), Some("Patched"));
+    // Both were patched; only the one whose parts came is complete.
+    assert_eq!(
+        slot::pico8_patch::status(&games.join("zzz_missing-4.p8.png")),
+        Status::Patched
+    );
+    assert!(a.patcher_carts()[0].missing.is_empty());
+    assert!(!a.patcher_carts()[1].missing.is_empty());
 }

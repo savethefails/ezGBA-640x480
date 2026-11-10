@@ -95,8 +95,13 @@ fn render_patcher() {
     tap(&mut f, &mut input, Btn::Down);
     tap(&mut f, &mut input, Btn::Down);
     shot(&mut f, &mut c, &dir, "on-multicart");
+    f.app_mut().assume_online();
+    f.app_mut()
+        .set_offline_fetch(std::sync::Arc::new(|| Box::new(SlowBbs)));
     tap(&mut f, &mut input, Btn::A);
-    run(&mut f, &mut input, 10);
+    run(&mut f, &mut input, 30);
+    shot(&mut f, &mut c, &dir, "running");
+    run(&mut f, &mut input, 400);
     shot(&mut f, &mut c, &dir, "patched");
 }
 

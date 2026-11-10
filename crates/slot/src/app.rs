@@ -646,7 +646,7 @@ pub struct App {
     /// The PICO-8 carts the Patcher lists, read when it opens and after each patch.
     patcher: Vec<crate::pico8_patch::Cart>,
     /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
-    patcher_legend: Option<[(TexId, u32); 5]>,
+    patcher_legend: Option<[(TexId, u32); 3]>,
     /// What each PICO-8 cart looked at on the shelf still needs before it plays offline, read
     /// the first time it is selected rather than for the whole card at boot: deciding means
     /// unpacking the cart's code, which is too slow to do for every cart at once.
@@ -5958,9 +5958,10 @@ fn patcher_name(name: &str) -> String {
     format!("{short}..")
 }
 
-/// The quick menu's Patcher, which makes a PICO-8 multicart that only finds its parts as a BBS
-/// cart run from the card: see `pico8_patch`. A patches a cart that needs it and restores one
-/// that was patched; anything else is refused.
+/// The quick menu's Patcher: every PICO-8 cart on the card, multicarts first, each saying where
+/// it stands. One button does everything: A patches every multicart that only finds its parts
+/// as a BBS cart (see `pico8_patch`) and fetches every part not yet on the card (see
+/// `pico8_cache`), cart after cart. X puts a patched cart's original back.
 impl App {
     fn rescan_patcher(&mut self) {
         self.patcher = match &self.root {
@@ -5980,7 +5981,7 @@ impl App {
         match action {
             Action::GbaDown(Btn::Up) => row = row.saturating_sub(1),
             Action::GbaDown(Btn::Down) => row = (row + 1).min(last),
-            Action::GbaDown(Btn::A) => self.patch_row(row),
+            Action::GbaDown(Btn::A) => self.patch_all(),
             // X puts a patched cart's original back whatever else it offers, so a cart still
             // waiting on its parts can be restored without Wi-Fi.
             Action::GbaDown(Btn::X) => self.restore_row(row),
@@ -5993,38 +5994,6 @@ impl App {
             _ => {}
         }
         self.phase = Phase::Patcher { row };
-    }
-
-    fn patch_row(&mut self, row: usize) {
-        use crate::pico8_patch::Status;
-        let Some(cart) = self.patcher.get(row).cloned() else {
-            return self.refuse();
-        };
-        crate::pico8_net::note(&format!(
-            "slot: patcher: A on {} ({:?}, {} parts, missing {:?})",
-            cart.name,
-            cart.status,
-            cart.parts.len(),
-            cart.missing
-        ));
-        match cart.status {
-            // Patched, and its parts fetched straight after when there is Wi-Fi to fetch them
-            // over; without, it is left patched and says Download.
-            Status::Multicart { .. } => {
-                self.apply_patch(&cart.path, false);
-                if self.online() && crate::pico8_patch::status(&cart.path) == Status::Patched {
-                    self.start_download(cart.path.clone());
-                }
-            }
-            _ if !cart.missing.is_empty() => {
-                if !self.start_download(cart.path.clone()) {
-                    self.refuse();
-                }
-            }
-            Status::Patched => self.apply_patch(&cart.path, true),
-            _ => self.refuse(),
-        }
-        self.rescan_patcher();
     }
 
     fn restore_row(&mut self, row: usize) {
@@ -6141,6 +6110,11 @@ impl App {
         self.offline_fetch = fetch;
     }
 
+    /// Whether a download (one cart's, or the Patcher's run through them all) is running.
+    pub fn downloading(&self) -> bool {
+        self.offline_busy()
+    }
+
     /// A download is still running.
     fn offline_busy(&self) -> bool {
         self.offline.as_ref().is_some_and(|o| o.result.is_none())
@@ -6245,8 +6219,131 @@ impl App {
             result: None,
             ended_at: 0,
             started_at: begun,
+            batch: false,
+            seen_done: 0,
         });
         true
+    }
+
+    /// The Patcher's one button: every cart that needs the patch is patched, and every cart
+    /// with parts not on the card has them fetched, one cart after another on a thread. A cart
+    /// that fails is noted and the run goes on to the next. Needs Wi-Fi, since patching a cart
+    /// whose parts cannot then be fetched leaves it unable to run offline.
+    fn patch_all(&mut self) {
+        use crate::pico8_patch::Status;
+        let note = |line: &str| crate::pico8_net::note(&format!("slot: patcher: all: {line}"));
+        let Some(root) = self.root.clone() else {
+            return self.refuse();
+        };
+        if self.offline_busy() {
+            note("refused: a download is already running");
+            return self.refuse();
+        }
+        if !self.online() {
+            note("refused: Wi-Fi is not connected");
+            return self.refuse();
+        }
+        let carts: Vec<PathBuf> = self
+            .patcher
+            .iter()
+            .filter(|c| matches!(c.status, Status::Multicart { .. }) || !c.missing.is_empty())
+            .map(|c| c.path.clone())
+            .collect();
+        if carts.is_empty() {
+            note("nothing to do: every multicart is patched and has its parts");
+            return self.refuse();
+        }
+        note(&format!(
+            "{} carts to do: {:?}",
+            carts.len(),
+            carts
+                .iter()
+                .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+        ));
+        let stamp = format_stamp(self.wall_secs());
+        let shared = Arc::new(std::sync::Mutex::new(OfflineJob::default()));
+        let job = shared.clone();
+        let make = self.offline_fetch.clone();
+        let games = crate::pico8_patch::games(&root);
+        let spawned = std::thread::Builder::new()
+            .name("pico8-patch-all".into())
+            .spawn(move || {
+                let mut fetch = make();
+                let mut fetched = 0;
+                let mut failed = Vec::new();
+                for (i, cart) in carts.iter().enumerate() {
+                    if let Ok(mut j) = job.lock() {
+                        j.current = Some(cart.clone());
+                        j.carts_done = i;
+                        j.done = 0;
+                        j.total = 0;
+                    }
+                    let name = cart
+                        .file_name()
+                        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+                    note(&format!("{} of {}: {name}", i + 1, carts.len()));
+                    if matches!(crate::pico8_patch::status(cart), Status::Multicart { .. }) {
+                        if crate::pico8_patch::patch(&root, cart).is_err() {
+                            failed.push(cart.clone());
+                            continue;
+                        }
+                        // A state of the cart as it was would bring the old code back.
+                        if let Some(stem) = cart.file_stem().and_then(|s| s.to_str()) {
+                            let ring = slot_store::StateRing::new(
+                                &root,
+                                slot_store::Platform::Pico8,
+                                Core::Pico8,
+                                stem,
+                            );
+                            if let Err(e) = ring.retire_resume(&stamp) {
+                                note(&format!("{stem}: resume: {e}"));
+                            }
+                        }
+                    }
+                    let got = crate::pico8_cache::download(
+                        &root,
+                        cart,
+                        fetch.as_mut(),
+                        &mut |done, total| {
+                            if let Ok(mut j) = job.lock() {
+                                j.done = done;
+                                j.total = total;
+                            }
+                        },
+                    );
+                    match got {
+                        Ok(n) => fetched += n,
+                        Err(id) => {
+                            note(&format!("{name}: stopped at #{id}; going on to the next"));
+                            failed.push(cart.clone());
+                        }
+                    }
+                }
+                let result = if failed.is_empty() {
+                    Ok(fetched)
+                } else {
+                    Err(format!("{} of {} carts failed", failed.len(), carts.len()))
+                };
+                if let Ok(mut j) = job.lock() {
+                    j.current = None;
+                    j.carts_done = carts.len();
+                    j.failed = failed;
+                    j.result = Some(result);
+                }
+            });
+        if spawned.is_err() {
+            return self.refuse();
+        }
+        self.offline = Some(Offline {
+            rom: games,
+            shared,
+            result: None,
+            ended_at: 0,
+            started_at: self.now(),
+            batch: true,
+            seen_done: 0,
+        });
     }
 
     /// Once a frame: the download's news in, and its last word taken down once it has been up
@@ -6257,13 +6354,24 @@ impl App {
             return;
         };
         if o.result.is_none() {
+            // Each cart the run finishes changes what the page says about it.
+            let done = o.shared.lock().map_or(o.seen_done, |j| j.carts_done);
+            if o.batch && done != o.seen_done {
+                o.seen_done = done;
+                self.pico8_need.clear();
+                if self.on_patcher_page() {
+                    self.rescan_patcher();
+                }
+                return;
+            }
             let Some(result) = o.shared.lock().ok().and_then(|mut j| j.result.take()) else {
                 return;
             };
             let took = now.saturating_sub(o.started_at);
-            let line = match &result {
-                Ok(n) => format!("{n} carts fetched in {took} ms"),
-                Err(id) => format!("stopped at #{id} after {took} ms"),
+            let line = match (&result, o.batch) {
+                (Ok(n), _) => format!("{n} carts fetched in {took} ms"),
+                (Err(why), true) => format!("{why}, after {took} ms"),
+                (Err(id), false) => format!("stopped at #{id} after {took} ms"),
             };
             crate::latency::note(&format!("offline copy: {line}"));
             crate::pico8_net::note(&format!(
@@ -6395,7 +6503,34 @@ impl App {
         self.patcher
             .iter()
             .map(|c| {
-                let job = self.offline.as_ref().filter(|o| o.rom == c.path);
+                let batch = self.offline.as_ref().filter(|o| o.batch);
+                if let Some(o) = batch {
+                    let j = o.shared.lock();
+                    let (current, failed, done, total) =
+                        j.as_ref().map_or((None, false, 0, 0), |j| {
+                            (
+                                j.current.clone(),
+                                j.failed.contains(&c.path),
+                                j.done,
+                                j.total,
+                            )
+                        });
+                    let o_failed = matches!(o.result, Some(Err(_)));
+                    if current.as_ref() == Some(&c.path) {
+                        let total = total.max(1);
+                        return (
+                            patcher_name(&c.name),
+                            Some(format!("{}/{total}", (done + 1).min(total))),
+                        );
+                    }
+                    if failed && o_failed {
+                        return (patcher_name(&c.name), Some("Failed".to_string()));
+                    }
+                }
+                let job = self
+                    .offline
+                    .as_ref()
+                    .filter(|o| !o.batch && o.rom == c.path);
                 let value = match job.map(|o| &o.result) {
                     Some(None) => {
                         let job = job.expect("matched Some");
@@ -6431,7 +6566,7 @@ impl App {
         self.patcher_legend.is_some()
     }
 
-    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 5]) {
+    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 3]) {
         self.patcher_legend = Some(legend);
     }
 
@@ -6454,16 +6589,24 @@ impl App {
                 .collect()
         };
         let legend: Vec<(TexId, u32)> = match self.patcher_legend {
-            Some([back, patch, restore, download, restore_x]) => match self.patcher.get(row) {
-                _ if self.offline_busy() => vec![back],
-                Some(c) if matches!(c.status, Status::Multicart { .. }) => vec![back, patch],
-                Some(c) if !c.missing.is_empty() && c.status == Status::Patched => {
-                    vec![back, restore_x, download]
+            Some([back, all, restore]) => {
+                let mut legend = vec![back];
+                if !self.offline_busy() {
+                    if self
+                        .patcher
+                        .get(row)
+                        .is_some_and(|c| c.status == Status::Patched)
+                    {
+                        legend.push(restore);
+                    }
+                    if self.patcher.iter().any(|c| {
+                        matches!(c.status, Status::Multicart { .. }) || !c.missing.is_empty()
+                    }) {
+                        legend.push(all);
+                    }
                 }
-                Some(c) if !c.missing.is_empty() => vec![back, download],
-                Some(c) if c.status == Status::Patched => vec![back, restore],
-                _ => vec![back],
-            },
+                legend
+            }
             None => Vec::new(),
         };
         slot_ui::ListMenu {
@@ -6495,6 +6638,11 @@ const OFFLINE_WORD_MS: Millis = 3000;
 struct OfflineJob {
     done: usize,
     total: usize,
+    /// The Patcher's run through every cart: the one being worked on, how many are finished,
+    /// and those that failed.
+    current: Option<PathBuf>,
+    carts_done: usize,
+    failed: Vec<PathBuf>,
     result: Option<Result<usize, String>>,
 }
 
@@ -6505,6 +6653,10 @@ struct Offline {
     result: Option<Result<usize, String>>,
     ended_at: Millis,
     started_at: Millis,
+    /// The Patcher's run through every cart, rather than one cart's download.
+    batch: bool,
+    /// How many of the run's carts the page has been rescanned for.
+    seen_done: usize,
 }
 
 /// The faces for the shelf's line over a PICO-8 cart, and what they say.
