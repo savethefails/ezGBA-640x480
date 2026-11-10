@@ -592,7 +592,8 @@ pub fn report(root: &Path, cart: &Path) {
         .unwrap_or_default();
     let leftovers: Vec<&String> = others
         .iter()
-        .filter(|n| n.ends_with(".part") || n.starts_with("temp-"))
+        // Not PICO-8's own `temp-<id>.nfo`: it leaves one behind after every lookup.
+        .filter(|n| n.ends_with(".part"))
         .collect();
     log(&format!(
         "  the cache holds {} other files{}",

@@ -85,6 +85,15 @@ esac
 has_route && route=up || route=none
 log "  network route: $route"
 
+# With no route there is nothing to ask: curl would only wait out a name lookup (five seconds
+# with the name servers still listed) before failing, on every part a cart loads. Failing at once
+# sends PICO-8 straight to the copy it keeps, as the empty file below says.
+if [ "$route" = none ]; then
+	[ -n "$out" ] && [ "$out" != "-" ] && : > "$out"
+	log "  no network: failed at once, so PICO-8 uses what it keeps"
+	exit 6
+fi
+
 # As wget does, the file PICO-8 named is made before anything is fetched, and left empty when the
 # fetch fails. PICO-8 reads a missing one as no connection at all and gives up, where an empty
 # one sends it to the copy it already keeps: without this, a cart it has downloaded once would
