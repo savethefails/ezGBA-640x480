@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define P8HOST_MAGIC 0x50384853u        /* "P8HS" */
-#define P8HOST_VERSION 2
+#define P8HOST_VERSION 3
 #define P8HOST_W 128
 #define P8HOST_H 128
 #define P8HOST_RATE 22050               /* PICO-8's mono 16-bit audio */
@@ -39,6 +39,9 @@ struct p8host {
 	uint32_t input_seq;                 /* frontend: bumped after input_ns, before buttons */
 	uint32_t picked_frame;              /* frontend: frame_seq of the last new frame it took */
 	uint64_t picked_ns;                 /* frontend: when it took it */
+	/* Alignment (version 3): PICO-8 starts its frames just after the frontend writes the
+	 * buttons, and says so here; the frontend then waits for that frame. */
+	uint32_t aligned;                   /* PICO-8: frames start just after host_ns */
 };
 
 #endif

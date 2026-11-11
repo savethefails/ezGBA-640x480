@@ -452,13 +452,62 @@ static void audit_frame(void)
 	audit.low = UINT32_MAX;
 }
 
+/* Once PICO-8 has its frames starting just after the buttons are written (see sdl.c), the
+ * frame it draws on them is ready a few ms into this call, and is waited for rather than shown
+ * a frame late. Only when one is due: a 30 fps cart makes one every other call. Bounded, so a
+ * frame slower than this is shown next time, as it always was. */
+#define ALIGNED_WAIT_NS 7000000ull
+static unsigned runs_since_frame, runs_per_frame = 1;
+static uint32_t last_frame_seq;
+
+static void wait_for_frame(uint32_t before)
+{
+	if (!__atomic_load_n(&shm->aligned, __ATOMIC_ACQUIRE)) return;
+	if (runs_since_frame + 1 < runs_per_frame) return;
+	uint64_t until = now_ns() + ALIGNED_WAIT_NS;
+	for (;;) {
+		uint32_t s = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
+		if (s != before && !(s & 1)) return;
+		if (now_ns() >= until) return;
+		struct timespec ts = { 0, 100000 };
+		nanosleep(&ts, NULL);
+	}
+}
+
+/* How many calls PICO-8 takes per frame, learnt from when new frames arrive: 1 for a 60 fps
+ * cart, 2 for a 30 fps one, taken from most of the last GAPS frames so one slow frame does not
+ * have the next due frame missed. `between` is the frame number as this call began: a frame
+ * that came in since the last call was made for that call's buttons, so the count starts from
+ * there, and a 30 fps cart's frames are waited for on the calls they really come in. */
+#define GAPS 16
+static unsigned gaps[GAPS], gap_at;
+
+static void count_frames(uint32_t between)
+{
+	uint32_t s = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
+	runs_since_frame++;
+	if (s != last_frame_seq) {
+		int late = between != last_frame_seq;
+		last_frame_seq = s;
+		unsigned gap = runs_since_frame - late;
+		gaps[gap_at++ % GAPS] = gap ? gap : 1;
+		unsigned twos = 0;
+		for (int i = 0; i < GAPS; i++) twos += gaps[i] == 2;
+		runs_per_frame = twos * 4 >= GAPS * 3 ? 2 : 1;
+		runs_since_frame = late;
+	}
+}
+
 RETRO_API void retro_run(void)
 {
 	if (input_poll_cb) input_poll_cb();
 	if (shm) {
+		uint32_t before = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
 		send_buttons(buttons_now());
 		keep_alive();
 		child_alive();
+		wait_for_frame(before);
+		count_frames(before);
 		read_frame();
 		play_audio();
 		audit_frame();

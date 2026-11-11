@@ -99,6 +99,7 @@ static uint64_t now_ns(void)
 	return (uint64_t)ts.tv_sec * 1000000000u + ts.tv_nsec;
 }
 static uint64_t start_ns;
+static pthread_t main_thread;         /* PICO-8's: see "alignment" */
 
 /* ---- the latency log ----
  * A press followed from the frontend changing the buttons, to PICO-8 taking them in, to the
@@ -237,6 +238,7 @@ __attribute__((constructor)) static void shim_init(void)
 		shm->magic = P8HOST_MAGIC;
 		shm->version = P8HOST_VERSION;
 	}
+	main_thread = pthread_self();
 }
 
 /* ---- core ---- */
@@ -251,13 +253,87 @@ EXPORT void SDL_free(void *p) { free(p); }
  * being away is time that did not pass. Seen as a slow frame, the half second ezGBA takes to
  * put a cart in had PICO-8 warn at boot that it was running below 30fps. */
 static uint64_t held_ns;
+
+/* ---- alignment ----
+ * PICO-8 starts a frame when its clock passes the frame's deadline, and the frontend writes the
+ * buttons once a frame of its own; the two drift past each other, so the frame drawn after a
+ * press was ready a few ms after the frontend had already taken the one before it, and a press
+ * waited a whole frontend frame here. Its clock is kept flowing (the ARM PICO-8 drops to 30 fps
+ * on one that steps) but nudged, under a millisecond a frame, until each frame starts just
+ * after the frontend writes the buttons. Then the frontend waits the few ms for that frame and
+ * shows it in the same frame of its own. */
+/* Frame start, after the buttons are written: far enough after that PICO-8's whole-millisecond
+ * clock and its wait between frames, which jitter a start by about a millisecond either way,
+ * never start one before them, which would leave a press for the frame after. */
+#define ALIGN_TARGET_NS 2000000ll
+#define ALIGN_STEP_NS 500000ll          /* the most the clock is moved in one frame */
+#define ALIGN_NEAR_NS 1500000ll         /* within this of the target counts as aligned */
+#define ALIGN_FAR_NS 3000000ll          /* past this, no longer aligned */
+#define ALIGN_RUN 8                     /* frames near the target in a row to be aligned */
+static int64_t adjust_ns;               /* taken off PICO-8's clock; negative runs it ahead */
+static uint64_t last_ticks_ns;          /* never goes back */
+static pthread_mutex_t ticks_lock = PTHREAD_MUTEX_INITIALIZER;
+/* On PICO-8's main thread: when it last woke from a wait, and the frontend's frame then. */
+static uint64_t woke_ns, woke_host_ns, published_ns;
+static int near_run;
+
 EXPORT Uint32 SDL_GetTicks(void)
 {
 	uint64_t held = __atomic_load_n(&held_ns, __ATOMIC_RELAXED);
-	return (Uint32)((now_ns() - start_ns - held) / 1000000);
+	pthread_mutex_lock(&ticks_lock);
+	int64_t t = (int64_t)(now_ns() - start_ns - held) - adjust_ns;
+	if (t < (int64_t)last_ticks_ns) t = (int64_t)last_ticks_ns;
+	last_ticks_ns = (uint64_t)t;
+	pthread_mutex_unlock(&ticks_lock);
+	return (Uint32)(t / 1000000);
 }
+
+static int lat_on(void);
+
+/* A frame has just been published: how far after the frontend's buttons did it start, and
+ * the clock moved to bring that to the target. */
+static void align_frame(uint64_t t)
+{
+	if (!lat_on()) return;
+	uint64_t start = woke_ns > published_ns ? woke_ns : published_ns;
+	uint64_t host = woke_ns > published_ns ? woke_host_ns : 0;
+	published_ns = t;
+	if (!host || start < host) return;
+	int64_t period = 16800000ll;
+	int64_t e = (int64_t)(start - host) % period;
+	if (e > period / 2) e -= period;            /* started just before the next buttons */
+	int64_t err = e - ALIGN_TARGET_NS;
+	int64_t step = err * 3 / 10;
+	if (step > ALIGN_STEP_NS) step = ALIGN_STEP_NS;
+	if (step < -ALIGN_STEP_NS) step = -ALIGN_STEP_NS;
+	pthread_mutex_lock(&ticks_lock);
+	adjust_ns -= step;
+	pthread_mutex_unlock(&ticks_lock);
+	int64_t mag = err < 0 ? -err : err;
+	if (mag <= ALIGN_NEAR_NS) {
+		if (near_run < ALIGN_RUN && ++near_run == ALIGN_RUN)
+			__atomic_store_n(&shm->aligned, 1, __ATOMIC_RELEASE);
+	} else if (mag > ALIGN_FAR_NS) {
+		near_run = 0;
+		__atomic_store_n(&shm->aligned, 0, __ATOMIC_RELEASE);
+	}
+}
+
 EXPORT void SDL_Delay(Uint32 ms)
 {
+	/* PICO-8's main loop between frames: woken as soon as the frontend writes new buttons, so
+	 * a frame due then starts then. Other threads (the sound) sleep for real. */
+	if (lat_on() && pthread_equal(pthread_self(), main_thread)) {
+		uint64_t host = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
+		uint64_t until = now_ns() + (uint64_t)ms * 1000000ull;
+		while (now_ns() < until && __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE) == host) {
+			struct timespec ts = { 0, 200000 };
+			nanosleep(&ts, NULL);
+		}
+		woke_ns = now_ns();
+		woke_host_ns = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
+		return;
+	}
 	struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000 };
 	while (nanosleep(&ts, &ts) != 0) {}
 }
@@ -445,6 +521,7 @@ static void publish(const uint32_t *px, int w, int h, int pitch)
 	__atomic_store_n(&shm->frame_seq, seq + 2, __ATOMIC_RELEASE);
 	__atomic_store_n(&shm->ready, 1, __ATOMIC_RELEASE);
 	lat_frame(seq + 2);
+	align_frame(now_ns());
 }
 
 EXPORT SDL_Surface *SDL_GetWindowSurface(void *p)
