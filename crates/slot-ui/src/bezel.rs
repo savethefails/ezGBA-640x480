@@ -198,12 +198,13 @@ const GLASS: f32 = 0.38;
 /// Blocks out from the game for the reflection to fall to about a third.
 const FALLOFF: f32 = 5.0;
 /// How much wider the blur grows with each game pixel the glass is from the game.
-const SPREAD: f32 = 0.6;
+const SPREAD: f32 = 0.4;
 /// The bezel slopes away from the screen, so it mirrors more of the picture than its own width:
 /// each block out reaches this many blocks into the game.
 const SQUEEZE: f32 = 1.6;
-/// How much of the picture's colour the glass keeps.
-const SATURATION: f32 = 0.8;
+/// How much of the picture's colour the glass keeps: a little more than the picture has, since
+/// the dimming takes some of it back.
+const SATURATION: f32 = 1.15;
 
 /// Reflect's bars from one frame of the game, `xrgb` being `size` pixels of XRGB8888 as the core
 /// draws them, into `out` as `REFLECT_W` x `REFLECT_H` RGBA. Each bar mirrors the game's edge
