@@ -135,7 +135,8 @@ fn the_quick_menu_renders_full_screen() {
                 (32..=36).contains(&first),
                 "{name}: {row:?}'s label starts at x {first}"
             );
-            if row == QuickRow::About {
+            // The two rows that only open a page say nothing on the right.
+            if matches!(row, QuickRow::About | QuickRow::Patcher) {
                 continue;
             }
             let value = inked(&px, 320..OUT_W as usize, top);

@@ -12,7 +12,9 @@ mod fantasy;
 mod footer;
 mod hud;
 mod icon;
+mod keyboard;
 mod link_art;
+mod list_menu;
 mod mark;
 mod plate;
 mod polaroids;
@@ -57,11 +59,16 @@ pub use hud::{
     HUD_INK, HUD_MS, LINK_HOST_INK, LINK_JOIN_INK, PLATE_H,
 };
 pub use icon::{badge_face, icon_box, icon_face, warm_fonts, Badge, Icon};
+pub use keyboard::{
+    draw_keyboard, key_rect, special_label, special_room, Cap, Keyboard, KeyboardFaces,
+    KeyboardText, Special, Typed, LOWER, SPECIAL_LABELS, SYMBOL, UPPER,
+};
 pub use link_art::{
     link_art, LinkArt, ADAPTER_BASE_X, ADAPTER_BASE_Y, ADAPTER_H, ADAPTER_W, ARCS, ARROW_H,
     ARROW_LEFT_X, ARROW_RIGHT_X, ARROW_W, ARROW_Y, CLICKS_H, CLICKS_W, CLICKS_X, CLICKS_Y, PLUG_H,
     PLUG_TIP_X, PLUG_W, PORT_H, PORT_W, PORT_Y,
 };
+pub use list_menu::{ListMenu, ListRow, LIST_PITCH, LIST_SHOWN};
 pub use mark::{mark_at, mark_box, mark_face, MARK_H, MARK_W};
 pub use plate::{
     arrows_hint_face, arrows_hint_width, cap_width, centred_hints, hint_face, hint_quad, hint_row,
@@ -71,8 +78,9 @@ pub use plate::{
 pub use polaroids::{photo_face, PhotoFace, Polaroids, DOT, LEGEND, PHOTO_H, PHOTO_W};
 pub use power_menu::{menu_face, PowerChoice, MENU_PAD};
 pub use quick_menu::{
-    quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face, QuickMenu,
-    QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
+    key_word_face, quick_caret_face, quick_label_face, quick_legend_faces, quick_value_face,
+    quick_word_face, QuickMenu, QuickMenuFaces, QuickRow, QuickValue, QUICK_EDGE, QUICK_PITCH,
+    QUICK_TOP,
 };
 pub use refusal::Refusal;
 pub use shelf::{box_art_at, box_art_space, foot_y, lowered, rest_y, BoxArt, Shelf, LOWEST_FOOT};

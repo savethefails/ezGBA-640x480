@@ -14,10 +14,10 @@ use slot_ui::{
     arrows_hint_face, badge_face, bezel_face, bright_backdrop_face, cart_face, cart_face_with,
     cart_shadow, chip_face, chip_shadow_face, date_time_text, gb_cart_shadow, hhmm, hint_face,
     icon_face, mark_face, menu_face, photo_face, pico8_cart_shadow, quick_caret_face,
-    quick_label_face, quick_legend_faces, quick_value_face, set_clock_hint_face, snes_cart_shadow,
-    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, CartFace,
-    GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue, StickerFields,
-    Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    quick_label_face, quick_legend_faces, quick_value_face, quick_word_face, set_clock_hint_face,
+    snes_cart_shadow, socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face,
+    CartFace, GbShell, Icon, LinkBadge, PowerChoice, QuickMenuFaces, QuickRow, QuickValue,
+    StickerFields, Toast, UndoFace, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -84,6 +84,7 @@ pub struct Frontend {
     clocks: Clocks,
     about: AboutFace,
     quick_clock: QuickClock,
+    keyboard_text: KeyboardTextFaces,
     greeting: GreetingFace,
     /// Reflect's bars on the GPU, and the buffer each frame's are drawn into before they go up.
     reflection: Option<TexId>,
@@ -103,6 +104,16 @@ struct QuickClock {
     dim: Option<TexId>,
     lit: Option<TexId>,
     shown: String,
+}
+
+/// The keyboard's title and the text either side of its cursor, in textures of their own that
+/// each change re-fills, and what they were last made for.
+#[derive(Default)]
+struct KeyboardTextFaces {
+    title: Option<TexId>,
+    before: Option<TexId>,
+    after: Option<TexId>,
+    shown: Option<(String, String, String)>,
 }
 
 /// The about label, and what it was last built for. The gauge is the only thing on it that
@@ -175,6 +186,7 @@ impl Frontend {
             clocks: Clocks::default(),
             about: AboutFace::default(),
             quick_clock: QuickClock::default(),
+            keyboard_text: KeyboardTextFaces::default(),
             greeting: GreetingFace::default(),
             reflection: None,
             reflected: Vec::new(),
@@ -190,9 +202,20 @@ impl Frontend {
         self.session.app()
     }
 
+    /// For tests: the app behind the screen, to steer.
+    #[doc(hidden)]
+    pub fn app_mut(&mut self) -> &mut App {
+        self.session.app_mut()
+    }
+
     /// Everything that never changes: the carts, the HUD glyphs and the key caps, waiting for
     /// the ones `upload_boot_faces` leaves to a thread. All of it needs a live context, so it
     /// happens after the compositor and not at boot.
+    /// The Wi-Fi worker the quick menu's Wi-Fi page drives.
+    pub fn set_wifi(&mut self, wifi: crate::wifi::Wifi) {
+        self.session.app_mut().set_wifi(wifi);
+    }
+
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {
         self.upload_boot_faces(compositor);
         if let Some(faces) = self.ui_faces.take().and_then(|rx| rx.recv().ok()) {
@@ -470,6 +493,8 @@ impl Frontend {
         sync_about(self.session.app_mut(), compositor, &mut self.about);
         sync_greeting(self.session.app_mut(), compositor, &mut self.greeting);
         sync_quick_clock(self.session.app_mut(), compositor, &mut self.quick_clock);
+        sync_network(self.session.app_mut(), compositor, &mut self.keyboard_text);
+        sync_patcher(self.session.app_mut(), compositor);
         sync_core_picker(
             self.session.app_mut(),
             compositor,
@@ -746,6 +771,166 @@ fn sync_quick_clock(app: &mut App, compositor: &mut Compositor, state: &mut Quic
     let lit = upload(compositor, &mut state.lit, lit);
     app.set_quick_clock_faces((dim, dim_size.0, dim_size.1), (lit, lit_size.0, lit_size.1));
     state.shown = text;
+}
+
+/// The Wi-Fi pages' faces, made the first time the page opens rather than at boot, since most
+/// sessions never open it; then each network name as a scan first finds it; then the keyboard's
+/// words whenever they change.
+/// The Patcher's faces: its legend and fixed words once, and each cart's name as it first shows.
+fn sync_patcher(app: &mut App, compositor: &mut Compositor) {
+    // The shelf's line over a PICO-8 cart, remade in place whenever what it says changes.
+    if let Some(text) = app.pico8_hint_text() {
+        if app.pico8_hint_made() != Some(&text) {
+            let (keys, label) = &text;
+            let body = if *keys {
+                hint_face("START", label)
+            } else {
+                word_face(label)
+            };
+            let (select, body) = match app.pico8_hint_faces() {
+                Some((select, (tex, _))) => {
+                    compositor.update_texture(tex, body.w, body.h, &body.rgba);
+                    (select, (tex, body.w))
+                }
+                None => {
+                    let s = hint_face("SELECT", "+");
+                    let select = (compositor.create_texture(s.w, s.h, &s.rgba), s.w);
+                    let tex = compositor.create_texture(body.w, body.h, &body.rgba);
+                    (select, (tex, body.w))
+                }
+            };
+            app.set_pico8_hint(text, select, body);
+        }
+    }
+    if !app.on_patcher_page() {
+        return;
+    }
+    let mut line = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);
+    if !app.has_patcher_legend() {
+        let mut hint = |f: UndoFace| {
+            let (tex, w, _) = line(f);
+            (tex, w)
+        };
+        app.set_patcher_legend([
+            hint(hint_face("B", "Back")),
+            hint(hint_face("A", "Patch & Get All")),
+            hint(hint_face("X", "Restore")),
+        ]);
+        for w in crate::app::PATCHER_VALUES {
+            let faces = [
+                line(quick_value_face(w, false)),
+                line(quick_value_face(w, true)),
+            ];
+            app.set_word(w.to_string(), faces);
+        }
+    }
+    for w in app.patcher_values() {
+        if !app.has_word(&w) {
+            let faces = [
+                line(quick_value_face(&w, false)),
+                line(quick_value_face(&w, true)),
+            ];
+            app.set_word(w, faces);
+        }
+    }
+    for w in app.patcher_words() {
+        if !app.has_word(&w) {
+            let faces = [
+                line(quick_word_face(&w, false)),
+                line(quick_word_face(&w, true)),
+            ];
+            app.set_word(w, faces);
+        }
+    }
+}
+
+fn sync_network(app: &mut App, compositor: &mut Compositor, kb: &mut KeyboardTextFaces) {
+    if !app.on_network_page() {
+        kb.shown = None;
+        return;
+    }
+    let mut line = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);
+    if !app.has_net_faces() {
+        let mut hint = |f: UndoFace| {
+            let (tex, w, _) = line(f);
+            (tex, w)
+        };
+        let legend = [
+            hint(hint_face("B", "Back")),
+            hint(arrows_hint_face("Change")),
+            hint(hint_face("A", "Open")),
+            hint(hint_face("A", "Connect")),
+            hint(hint_face("X", "Forget")),
+            hint(hint_face("A", "Join")),
+        ];
+        let keyboard_legend = [
+            hint(hint_face("B", "Delete")),
+            hint(hint_face("Y", "Cancel")),
+            hint(hint_face("START", "Done")),
+        ];
+        let chars = [slot_ui::LOWER, slot_ui::UPPER, slot_ui::SYMBOL].map(|set| {
+            set.chars()
+                .map(|c| line(quick_word_face(&c.to_string(), true)))
+                .collect()
+        });
+        let specials = slot_ui::SPECIAL_LABELS
+            .iter()
+            .map(|w| line(slot_ui::key_word_face(w, slot_ui::special_room(w))))
+            .collect();
+        app.set_net_faces(crate::app::NetFaces {
+            legend,
+            keyboard_legend,
+            keyboard: slot_ui::KeyboardFaces { chars, specials },
+        });
+        let fixed = crate::network_page::FIXED_WORDS
+            .iter()
+            .copied()
+            .chain(crate::network_page::failure_words());
+        for w in fixed {
+            let faces = [
+                line(quick_value_face(w, false)),
+                line(quick_value_face(w, true)),
+            ];
+            app.set_word(w.to_string(), faces);
+        }
+    }
+    // Anything not made with the fixed words is a network's name, in its own case.
+    for w in app.network_words() {
+        if !app.has_word(&w) {
+            let faces = [
+                line(quick_word_face(&w, false)),
+                line(quick_word_face(&w, true)),
+            ];
+            app.set_word(w, faces);
+        }
+    }
+    let words = app.keyboard_words();
+    if words == kb.shown {
+        return;
+    }
+    let text = match &words {
+        Some((title, before, after)) => {
+            let mut make = |slot: &mut Option<TexId>, w: &str| {
+                (!w.is_empty()).then(|| {
+                    let f = quick_word_face(w, true);
+                    let size = (f.w, f.h);
+                    (upload(compositor, slot, f), size.0, size.1)
+                })
+            };
+            slot_ui::KeyboardText {
+                title: make(&mut kb.title, title),
+                before: make(&mut kb.before, before),
+                after: make(&mut kb.after, after),
+            }
+        }
+        None => slot_ui::KeyboardText {
+            title: None,
+            before: None,
+            after: None,
+        },
+    };
+    app.set_keyboard_text(text);
+    kb.shown = words;
 }
 
 /// One PNG decode each time the greeting's clock reaches a new frame.

@@ -27,6 +27,7 @@ use crate::link_kind::{link_carried, link_kind, serial_option, LinkKind};
 use crate::link_radio::{radio_jobs, LinkRole, RadioJob, RadioJobs};
 use crate::link_screen::LinkSprites;
 use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep};
+use crate::network_page::{self, NetPage, NetRow};
 use crate::persist::{self, Snapshot};
 use crate::video_mode::{self, VideoMode};
 
@@ -376,6 +377,17 @@ pub enum Phase {
     QuickMenu {
         row: QuickRow,
     },
+    /// The quick menu's Wi-Fi page, or the networks a scan found, with the row in hand. Opened
+    /// off the quick menu's Wi-Fi row, and back to it on B.
+    Network {
+        page: NetPage,
+        row: usize,
+    },
+    /// The quick menu's Patcher: every PICO-8 cart on the card, with the row in hand. Opened off
+    /// the quick menu's Patcher row, and back to it on B.
+    Patcher {
+        row: usize,
+    },
     Inserting {
         cart: String,
         t: f32,
@@ -611,6 +623,42 @@ pub struct App {
     sticker_face: Option<TexId>,
     /// Frames in `System/greeting/frames`; 0 means the card has no greeting.
     greeting_frames: usize,
+    /// The Wi-Fi worker, with the moment the app's clock read zero on its, so the worker's
+    /// `Instant`s can be had from the app's milliseconds. `None` where there is no radio.
+    wifi: Option<(crate::wifi::Wifi, std::time::Instant, Millis)>,
+    /// Hold has been sent and not let go.
+    wifi_held: bool,
+    /// When a Hold that did not take may be tried again.
+    wifi_retry_at: Millis,
+    /// Whether the worker has been told to keep scanning.
+    wifi_scanning: bool,
+    /// Whether Wi-Fi was up with an address last frame, so the moment it comes up is seen once.
+    wifi_was_up: bool,
+    /// The password being typed, and the network it is for.
+    keyboard: Option<(String, slot_ui::Keyboard)>,
+    /// Words on the Wi-Fi pages, grey and lit, made by the binary as they first appear: the names
+    /// of networks are not known until a scan finds them.
+    words: std::collections::HashMap<String, [(TexId, u32, u32); 2]>,
+    /// The Wi-Fi pages' legend and the keyboard's keys, made at boot.
+    net_faces: Option<NetFaces>,
+    /// The keyboard's title and the text either side of its cursor, made as they change.
+    keyboard_text: slot_ui::KeyboardText,
+    /// The PICO-8 carts the Patcher lists, read when it opens and after each patch.
+    patcher: Vec<crate::pico8_patch::Cart>,
+    /// B BACK, A PATCH and A RESTORE, with their widths, made when the Patcher first opens.
+    patcher_legend: Option<[(TexId, u32); 3]>,
+    /// What each PICO-8 cart looked at on the shelf still needs before it plays offline, read
+    /// the first time it is selected rather than for the whole card at boot: deciding means
+    /// unpacking the cart's code, which is too slow to do for every cart at once.
+    pico8_need: HashMap<PathBuf, Pico8Need>,
+    /// The download running (or just finished) for one cart, on a thread of its own.
+    offline: Option<Offline>,
+    /// How the download thread fetches, which tests replace.
+    offline_fetch: Arc<dyn Fn() -> Box<dyn crate::pico8_cache::Fetch + Send> + Send + Sync>,
+    /// The shelf's line over a PICO-8 cart: SELECT +, then the rest, with what the rest says.
+    pico8_hint: Option<Pico8HintFaces>,
+    /// SELECT is physically down, so the shelf can tell SELECT+START from a bare START.
+    select_held: bool,
     /// How far into the greeting, by the frame clock.
     greeting_ms: f64,
     /// How far into the greeting by the audio actually played, when there is audio.
@@ -797,6 +845,26 @@ impl App {
             quick_clock_faces: None,
             sticker_face: None,
             greeting_frames: 0,
+            wifi: None,
+            wifi_held: false,
+            wifi_retry_at: 0,
+            wifi_scanning: false,
+            wifi_was_up: false,
+            keyboard: None,
+            words: std::collections::HashMap::new(),
+            net_faces: None,
+            patcher: Vec::new(),
+            patcher_legend: None,
+            pico8_need: HashMap::new(),
+            offline: None,
+            offline_fetch: Arc::new(|| Box::new(crate::pico8_cache::Curl)),
+            pico8_hint: None,
+            select_held: false,
+            keyboard_text: slot_ui::KeyboardText {
+                title: None,
+                before: None,
+                after: None,
+            },
             greeting_ms: 0.0,
             greeting_audio_ms: None,
             greeting_face: None,
@@ -1166,7 +1234,8 @@ impl App {
                 Core::Snes9x2005 => QuickValue::Snes9x2005,
                 c => unreachable!("SNES emulator {c:?}"),
             }),
-            QuickRow::DateTime | QuickRow::About => None,
+            QuickRow::Wifi => Some(QuickValue::flag(self.state.wifi_on)),
+            QuickRow::DateTime | QuickRow::Patcher | QuickRow::About => None,
         }
     }
 
@@ -2051,6 +2120,11 @@ impl App {
     /// take them; while the game is playing they are the game's and the app sees only the
     /// gestures that are never the game's.
     pub fn apply(&mut self, action: Action) {
+        match action {
+            Action::GbaDown(Btn::Select) => self.select_held = true,
+            Action::GbaUp(Btn::Select) => self.select_held = false,
+            _ => {}
+        }
         // The lid, the light and the sound belong to the device rather than to whatever is
         // on screen, so they are taken before the phase gets a look at the action.
         match action {
@@ -2131,6 +2205,11 @@ impl App {
                 // every one of those chords; waiting out the 600 ms window instead would put
                 // that delay in front of the menu. START is bound to nothing here and reaches
                 // no core from the shelf, so it costs neither.
+                // SELECT+START patches a PICO-8 multicart that would otherwise fail to find its
+                // parts. Only here: in a game the pair is the console's own, and many reset on it.
+                Action::GbaDown(Btn::Start) if self.core_picker.is_none() && self.select_held => {
+                    self.get_offline()
+                }
                 Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
                     self.open_core_picker()
                 }
@@ -2217,6 +2296,8 @@ impl App {
                 }
             }
             Phase::QuickMenu { row } => self.quick_menu_input(row, action),
+            Phase::Network { page, row } => self.network_input(page, row, action),
+            Phase::Patcher { row } => self.patcher_input(row, action),
             _ => {}
         }
     }
@@ -2330,7 +2411,11 @@ impl App {
                 ));
                 ("snes-core", word.to_string())
             }
-            QuickRow::DateTime | QuickRow::About | QuickRow::Brightness => return,
+            QuickRow::DateTime
+            | QuickRow::Wifi
+            | QuickRow::Patcher
+            | QuickRow::About
+            | QuickRow::Brightness => return,
         };
         self.look.apply();
         if let Some(root) = &self.root {
@@ -2351,6 +2436,16 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
+            QuickRow::Wifi => {
+                self.phase = Phase::Network {
+                    page: NetPage::Main,
+                    row: 0,
+                }
+            }
+            QuickRow::Patcher => {
+                self.rescan_patcher();
+                self.phase = Phase::Patcher { row: 0 };
+            }
             QuickRow::Picture
             | QuickRow::Grid
             | QuickRow::GridDepth
@@ -2625,6 +2720,7 @@ impl App {
     pub fn update(&mut self, dt: f32) {
         self.clock += dt as f64 * 1000.0;
         self.timers();
+        self.steer_wifi();
         self.update_greeting(dt);
         // A queue poll rather than a syscall, so the frame loop can afford it every frame —
         // which is the whole reason the slow parts of starting a link are on a thread of
@@ -2696,6 +2792,10 @@ impl App {
             }
             _ => None,
         };
+        self.poll_offline();
+        if self.on_shelf() {
+            self.check_selected_need();
+        }
         // One clip for the whole movement, and the only thing done to it is when it starts.
         if touched {
             self.sfx = Some(match self.phase {
@@ -3185,6 +3285,8 @@ impl App {
                 faces: self.quick_menu_faces.as_ref(),
             }
             .draw(out),
+            Phase::Network { page, row } => self.draw_network(*page, *row, out),
+            Phase::Patcher { row } => self.draw_patcher(*row, out),
             Phase::Shelf => {
                 draw_backdrop(self.wallpaper, self.ground(), out);
                 // Out of the way of the lid, which lifts into the same space.
@@ -3235,6 +3337,7 @@ impl App {
                             self.slot_letter_alpha(),
                             out,
                         );
+                        self.draw_pico8_hint(out);
                     }
                 }
                 draw_footer(
@@ -3913,6 +4016,7 @@ impl App {
             "slot: launch: insert {cart} at {:.1} ms",
             crate::boot_time::ms()
         );
+        self.note_pico8_launch(clean);
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
@@ -3923,6 +4027,41 @@ impl App {
             resumed: false,
             clean,
         };
+    }
+
+    /// For a PICO-8 cart going in: what it is, what it needs and what the cache holds for it, in
+    /// the download log, on a thread so the insert never waits on reading carts.
+    fn note_pico8_launch(&self, clean: bool) {
+        let Some(cart) = self.shelf().carts.get(self.shelf().index) else {
+            return;
+        };
+        if cart.platform != slot_store::Platform::Pico8 {
+            return;
+        }
+        let (Some(root), rom) = (self.root.clone(), cart.rom.clone()) else {
+            return;
+        };
+        let online = self.online();
+        let route = crate::pico8_net::has_route();
+        let _ = std::thread::Builder::new()
+            .name("pico8-launch-note".into())
+            .spawn(move || {
+                crate::pico8_net::note(&format!(
+                    "slot: launch: {} ({}); {}; Wi-Fi {}, network route {}; patch status {:?}",
+                    rom.display(),
+                    std::fs::metadata(&rom)
+                        .map_or("missing".into(), |m| format!("{} bytes", m.len())),
+                    if clean {
+                        "starting clean"
+                    } else {
+                        "resuming if it can"
+                    },
+                    if online { "connected" } else { "not connected" },
+                    if route { "up" } else { "none" },
+                    crate::pico8_patch::status(&rom)
+                ));
+                crate::pico8_cache::report(&root, &rom);
+            });
     }
 
     /// Whether the cart going in is starting from the beginning. Read by whoever spawns the
@@ -4875,6 +5014,12 @@ impl App {
         else {
             return;
         };
+        // PICO-8 kept mid-download comes back waiting on a download that no longer exists, and
+        // spins for good. The last state is kept instead, from before the download.
+        if self.core == Core::Pico8 && crate::pico8_net::downloading() {
+            crate::pico8_net::note("slot: PICO-8 is downloading, so its state is not kept");
+            return;
+        }
         let Some(state) = snapshot.state() else {
             eprintln!("slot: flush: the core gave up no state");
             return;
@@ -5450,4 +5595,1081 @@ impl Look {
             contrast,
         });
     }
+}
+
+/// How long a Hold that did not take waits before it is tried again: a radio still coming up, or
+/// one the link has only just let go of.
+const WIFI_RETRY_MS: Millis = 5000;
+
+/// The Wi-Fi pages' faces that never change: the legend's hints, and the keyboard's keys.
+pub struct NetFaces {
+    /// B BACK, the arrows' CHANGE, A OPEN, A CONNECT, X FORGET and A JOIN, with their widths.
+    pub legend: [(TexId, u32); 6],
+    /// B DELETE, Y CANCEL and START DONE, under the keyboard.
+    pub keyboard_legend: [(TexId, u32); 3],
+    pub keyboard: slot_ui::KeyboardFaces,
+}
+
+/// The quick menu's Wi-Fi page. Wi-Fi is the player's to turn on and off: it stays up while it is
+/// on, in a game as on the shelf, because a PICO-8 multicart downloads its other carts while it
+/// runs. It goes down for a link, which needs the radio for itself, and for a doze or a power
+/// off; a link or a doze ended brings it back if it was on.
+impl App {
+    pub fn set_wifi(&mut self, wifi: crate::wifi::Wifi) {
+        self.wifi = Some((wifi, std::time::Instant::now(), self.now()));
+    }
+
+    pub fn wifi_snapshot(&self) -> &crate::wifi::Snapshot {
+        static NONE: std::sync::OnceLock<crate::wifi::Snapshot> = std::sync::OnceLock::new();
+        match &self.wifi {
+            Some((w, _, _)) => w.snapshot(),
+            None => NONE.get_or_init(crate::wifi::Snapshot::default),
+        }
+    }
+
+    pub fn wifi_on(&self) -> bool {
+        self.state.wifi_on
+    }
+
+    fn wifi_send(&mut self, cmd: crate::wifi::Cmd) {
+        if let Some((w, _, _)) = &mut self.wifi {
+            w.send(cmd);
+        }
+    }
+
+    /// Whether the radio should be up this frame.
+    fn wifi_wanted(&self) -> bool {
+        self.state.wifi_on
+            && !self.radio_linked()
+            && !self.shutting_down()
+            && !matches!(self.phase, Phase::Doze { .. })
+    }
+
+    /// A link has the radio, or is getting it.
+    fn radio_linked(&self) -> bool {
+        self.link_active() || self.starting.is_some()
+    }
+
+    /// Once a frame: the worker's news in, and the radio held or let go as `wifi_wanted` says.
+    fn steer_wifi(&mut self) {
+        let now = self.now();
+        let wanted = self.wifi_wanted();
+        let scan = self.state.wifi_on
+            && self.keyboard.is_none()
+            && matches!(
+                self.phase,
+                Phase::Network {
+                    page: NetPage::Scan,
+                    ..
+                }
+            );
+        let linked = self.radio_linked();
+        let Some((w, at, from)) = &mut self.wifi else {
+            return;
+        };
+        w.poll(*at + std::time::Duration::from_millis(now.saturating_sub(*from)));
+        // Each time Wi-Fi comes up, whether PICO-8 could reach the BBS over it goes in the log.
+        let status = &w.snapshot().status;
+        let up = status.state == crate::wifi::State::Completed && status.ip.is_some();
+        if up && !self.wifi_was_up {
+            crate::pico8_net::check_bbs(status.ssid.as_deref().unwrap_or("?"));
+        }
+        if !up && self.wifi_was_up {
+            crate::pico8_net::note(&format!("slot: Wi-Fi went down (state {:?})", status.state));
+        }
+        self.wifi_was_up = up;
+        if scan != self.wifi_scanning {
+            self.wifi_scanning = scan;
+            w.want_scans(scan);
+        }
+        if wanted {
+            // A Hold the worker could not make good: the radio would not start.
+            if self.wifi_held && !w.busy() && !w.snapshot().held {
+                self.wifi_held = false;
+                self.wifi_retry_at = now + WIFI_RETRY_MS;
+            }
+            if !self.wifi_held && now >= self.wifi_retry_at {
+                self.wifi_held = true;
+                w.send(crate::wifi::Cmd::Hold);
+            }
+        } else if std::mem::take(&mut self.wifi_held) {
+            // A link takes the radio as it is, so it is only let go of; anything else powers it
+            // off, which is what saves the battery.
+            w.send(if linked {
+                crate::wifi::Cmd::Release
+            } else {
+                crate::wifi::Cmd::PowerOff
+            });
+        }
+    }
+
+    fn set_wifi_on(&mut self, on: bool) {
+        if self.state.wifi_on == on {
+            return;
+        }
+        self.state.wifi_on = on;
+        self.wifi_retry_at = 0;
+        self.persist();
+    }
+
+    fn network_rows(&self, page: NetPage) -> Vec<NetRow> {
+        network_page::rows(page, self.wifi_snapshot(), self.state.wifi_on)
+    }
+
+    /// Up and Down move the bar; Left, Right and A turn Wi-Fi over on its row; A joins a network,
+    /// or opens the scan; X forgets a saved network; B goes back a page, and from the first page
+    /// to the quick menu's Wi-Fi row. The keyboard, while it is up, has every button.
+    fn network_input(&mut self, page: NetPage, row: usize, action: Action) {
+        if self.keyboard.is_some() {
+            return self.keyboard_input(action);
+        }
+        let rows = self.network_rows(page);
+        let last = rows.len().saturating_sub(1);
+        let mut row = row.min(last);
+        let here = rows.get(row).cloned();
+        let mut page = page;
+        match (action, here) {
+            (Action::GbaDown(Btn::Up), _) => row = row.saturating_sub(1),
+            (Action::GbaDown(Btn::Down), _) => row = (row + 1).min(last),
+            (
+                Action::GbaDown(Btn::Left | Btn::Right | Btn::A)
+                | Action::ShelfLeft
+                | Action::ShelfRight,
+                Some(NetRow::Power),
+            ) => {
+                let on = !self.state.wifi_on;
+                self.set_wifi_on(on);
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Saved { id, .. })) => {
+                self.wifi_send(crate::wifi::Cmd::Connect(id))
+            }
+            (Action::GbaDown(Btn::X), Some(NetRow::Saved { id, .. })) => {
+                self.wifi_send(crate::wifi::Cmd::Forget(id))
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Scan)) => {
+                page = NetPage::Scan;
+                row = 0;
+            }
+            (Action::GbaDown(Btn::A), Some(NetRow::Found { ssid, secured })) => {
+                if secured {
+                    let title = format!("Password for {ssid}");
+                    self.keyboard = Some((ssid, slot_ui::Keyboard::new(&title, "")));
+                } else {
+                    self.join_network(ssid, String::new());
+                    page = NetPage::Main;
+                    row = 0;
+                }
+            }
+            (Action::GbaDown(Btn::B) | Action::QuickMenu | Action::Eject, _) => match page {
+                NetPage::Main => {
+                    self.phase = Phase::QuickMenu {
+                        row: QuickRow::Wifi,
+                    };
+                    return;
+                }
+                NetPage::Scan => {
+                    page = NetPage::Main;
+                    let main = self.network_rows(NetPage::Main);
+                    row = main.iter().position(|r| *r == NetRow::Scan).unwrap_or(0);
+                }
+            },
+            _ => {}
+        }
+        self.phase = Phase::Network { page, row };
+    }
+
+    fn join_network(&mut self, ssid: String, password: String) {
+        self.wifi_send(crate::wifi::Cmd::Join {
+            ssid,
+            password,
+            hidden: false,
+        });
+    }
+
+    /// B deletes and Y gives up, so MENU is the one more way out; the shoulders move the cursor.
+    fn keyboard_input(&mut self, action: Action) {
+        let btn = match action {
+            Action::GbaDown(b) => b,
+            Action::ShelfLeft => Btn::L1,
+            Action::ShelfRight => Btn::R1,
+            Action::QuickMenu | Action::Eject => Btn::Y,
+            _ => return,
+        };
+        let Some((ssid, kb)) = &mut self.keyboard else {
+            return;
+        };
+        match kb.press(btn) {
+            slot_ui::Typed::Done(password) => {
+                let ssid = ssid.clone();
+                self.keyboard = None;
+                self.join_network(ssid, password);
+                self.phase = Phase::Network {
+                    page: NetPage::Main,
+                    row: 0,
+                };
+            }
+            slot_ui::Typed::Cancelled => self.keyboard = None,
+            _ => {}
+        }
+    }
+
+    /// What the keyboard needs made this frame: its title, and the text either side of its
+    /// cursor. `None` while it is not up.
+    pub fn keyboard_words(&self) -> Option<(String, String, String)> {
+        let (_, kb) = self.keyboard.as_ref()?;
+        let (before, after) = kb.split();
+        Some((kb.title().to_string(), before, after))
+    }
+
+    pub fn set_keyboard_text(&mut self, text: slot_ui::KeyboardText) {
+        self.keyboard_text = text;
+    }
+
+    /// Every word the Wi-Fi page on screen says, for the binary to make the ones it has not yet.
+    pub fn network_words(&self) -> Vec<String> {
+        let Phase::Network { page, .. } = self.phase else {
+            return Vec::new();
+        };
+        let (snap, on) = (self.wifi_snapshot(), self.state.wifi_on);
+        self.network_rows(page)
+            .iter()
+            .flat_map(|r| {
+                let (label, value) = network_page::words(r, snap, on);
+                std::iter::once(label).chain(value)
+            })
+            .collect()
+    }
+
+    pub fn has_word(&self, text: &str) -> bool {
+        self.words.contains_key(text)
+    }
+
+    /// A word's faces, grey then lit.
+    pub fn set_word(&mut self, text: String, faces: [(TexId, u32, u32); 2]) {
+        self.words.insert(text, faces);
+    }
+
+    /// The Wi-Fi pages are up, so their faces are wanted.
+    pub fn on_network_page(&self) -> bool {
+        matches!(self.phase, Phase::Network { .. })
+    }
+
+    pub fn has_net_faces(&self) -> bool {
+        self.net_faces.is_some()
+    }
+
+    pub fn set_net_faces(&mut self, faces: NetFaces) {
+        self.net_faces = Some(faces);
+    }
+
+    fn draw_network(&self, page: NetPage, row: usize, out: &mut Vec<Draw>) {
+        if let Some((_, kb)) = &self.keyboard {
+            let Some(faces) = &self.net_faces else {
+                return;
+            };
+            slot_ui::draw_keyboard(kb, &faces.keyboard, &self.keyboard_text, out);
+            let hints = slot_ui::centred_hints(&faces.keyboard_legend, slot_ui::LEGEND_GAP);
+            for (tex, w, x) in hints {
+                out.push(Draw::Tex {
+                    x: x.round(),
+                    y: 427.0,
+                    w: w as f32,
+                    h: HINT_H as f32,
+                    tex,
+                    alpha: 1.0,
+                });
+            }
+            return;
+        }
+        let (snap, on) = (self.wifi_snapshot(), self.state.wifi_on);
+        let rows = self.network_rows(page);
+        let list: Vec<slot_ui::ListRow> = rows
+            .iter()
+            .map(|r| {
+                let (label, value) = network_page::words(r, snap, on);
+                slot_ui::ListRow {
+                    label: self.words.get(&label).copied(),
+                    value: value.and_then(|v| self.words.get(&v).copied()),
+                    arrows: *r == NetRow::Power,
+                }
+            })
+            .collect();
+        let legend: Vec<(TexId, u32)> = match &self.net_faces {
+            Some(f) => {
+                let [back, change, open, connect, forget, join] = f.legend;
+                match rows.get(row) {
+                    Some(NetRow::Power) => vec![back, change],
+                    Some(NetRow::Saved { .. }) => vec![back, connect, forget],
+                    Some(NetRow::Scan) => vec![back, open],
+                    Some(NetRow::Found { .. }) => vec![back, join],
+                    _ => vec![back],
+                }
+            }
+            None => Vec::new(),
+        };
+        slot_ui::ListMenu {
+            rows: &list,
+            selected: row.min(rows.len().saturating_sub(1)),
+            carets: self.quick_menu_faces.as_ref().map(|f| f.carets),
+            legend: &legend,
+        }
+        .draw(out);
+    }
+}
+
+/// What the Patcher says a cart is, on the right of its row. A cart that runs from a file as it
+/// is and names no parts says nothing.
+fn patcher_value(cart: &crate::pico8_patch::Cart) -> Option<&'static str> {
+    use crate::pico8_patch::Status;
+    match cart.status {
+        Status::Multicart { .. } => Some("Needs Patch"),
+        Status::NoId => Some("No BBS ID"),
+        Status::Unreadable => Some("Unreadable"),
+        _ if !cart.missing.is_empty() => Some("Download"),
+        Status::Patched => Some("Patched"),
+        Status::Fine if !cart.parts.is_empty() => Some("Offline Ready"),
+        Status::Fine => None,
+    }
+}
+
+/// Every fixed value the Patcher can show, made once with the page's other faces. A download's
+/// progress is made as it changes.
+pub const PATCHER_VALUES: [&str; 7] = [
+    "Needs Patch",
+    "No BBS ID",
+    "Patched",
+    "Unreadable",
+    "Download",
+    "Offline Ready",
+    "Failed",
+];
+
+/// What the Patcher shows when the card has no PICO-8 carts.
+pub const PATCHER_EMPTY: &str = "No PICO-8 carts";
+
+/// The longest name a row shows, so it never runs under its value.
+const PATCHER_NAME_MAX: usize = 18;
+
+fn patcher_name(name: &str) -> String {
+    if name.chars().count() <= PATCHER_NAME_MAX {
+        return name.to_string();
+    }
+    let short: String = name.chars().take(PATCHER_NAME_MAX - 2).collect();
+    format!("{short}..")
+}
+
+/// The quick menu's Patcher: every PICO-8 cart on the card, multicarts first, each saying where
+/// it stands. One button does everything: A patches every multicart that only finds its parts
+/// as a BBS cart (see `pico8_patch`) and fetches every part not yet on the card (see
+/// `pico8_cache`), cart after cart. X puts a patched cart's original back.
+impl App {
+    fn rescan_patcher(&mut self) {
+        self.patcher = match &self.root {
+            Some(root) => crate::pico8_patch::scan(root),
+            None => Vec::new(),
+        };
+    }
+
+    /// The carts the Patcher lists, for a test to read.
+    pub fn patcher_carts(&self) -> &[crate::pico8_patch::Cart] {
+        &self.patcher
+    }
+
+    fn patcher_input(&mut self, row: usize, action: Action) {
+        let last = self.patcher.len().saturating_sub(1);
+        let mut row = row.min(last);
+        match action {
+            Action::GbaDown(Btn::Up) => row = row.saturating_sub(1),
+            Action::GbaDown(Btn::Down) => row = (row + 1).min(last),
+            Action::GbaDown(Btn::A) => self.patch_all(),
+            // X puts a patched cart's original back whatever else it offers, so a cart still
+            // waiting on its parts can be restored without Wi-Fi.
+            Action::GbaDown(Btn::X) => self.restore_row(row),
+            Action::GbaDown(Btn::B) | Action::QuickMenu | Action::Eject => {
+                self.phase = Phase::QuickMenu {
+                    row: QuickRow::Patcher,
+                };
+                return;
+            }
+            _ => {}
+        }
+        self.phase = Phase::Patcher { row };
+    }
+
+    fn restore_row(&mut self, row: usize) {
+        match self.patcher.get(row).cloned() {
+            Some(c) if c.status == crate::pico8_patch::Status::Patched && !self.offline_busy() => {
+                crate::pico8_net::note(&format!("slot: patcher: X on {}: restoring", c.name));
+                self.apply_patch(&c.path, true);
+                self.rescan_patcher();
+            }
+            _ => self.refuse(),
+        }
+    }
+
+    /// Patches the cart at `path`, or with `restore` puts its original back. A refusal shakes.
+    fn apply_patch(&mut self, path: &Path, restore: bool) {
+        let Some(root) = self.root.clone() else {
+            return self.refuse();
+        };
+        let done = if restore {
+            crate::pico8_patch::restore(&root, path)
+        } else {
+            crate::pico8_patch::patch(&root, path)
+        };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = name.unwrap_or_default();
+        self.pico8_need.clear();
+        match done {
+            Ok(()) => {
+                let what = if restore { "restored" } else { "patched" };
+                crate::latency::note(&format!("patcher: {name} {what}"));
+                // A state of the cart as it was holds its old code running: resumed into the new
+                // one, it would carry on as the old. Moved aside, as a refused one is.
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    let ring = slot_store::StateRing::new(
+                        &root,
+                        slot_store::Platform::Pico8,
+                        Core::Pico8,
+                        stem,
+                    );
+                    if let Err(e) = ring.retire_resume(&format_stamp(self.wall_secs())) {
+                        eprintln!("slot: patcher: {stem}: resume: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("slot: patcher: {name}: {e}");
+                self.refuse();
+            }
+        }
+    }
+
+    /// The selected cart on the shelf, when it is a PICO-8 cart, and what it still needs.
+    fn selected_pico8(&self) -> Option<(&Path, Pico8Need)> {
+        let cart = self.shelf().carts.get(self.shelf().index)?;
+        if cart.platform != slot_store::Platform::Pico8 {
+            return None;
+        }
+        let need = self.pico8_need.get(&cart.rom).copied()?;
+        Some((cart.rom.as_path(), need))
+    }
+
+    /// Reads what the selected PICO-8 cart needs, once per cart.
+    fn check_selected_need(&mut self) {
+        let Some(cart) = self.shelf().carts.get(self.shelf().index) else {
+            return;
+        };
+        if cart.platform != slot_store::Platform::Pico8 || self.pico8_need.contains_key(&cart.rom) {
+            return;
+        }
+        let rom = cart.rom.clone();
+        let started = std::time::Instant::now();
+        let status = crate::pico8_patch::status(&rom);
+        let missing = match (&status, &self.root) {
+            (crate::pico8_patch::Status::Multicart { .. }, _)
+            | (crate::pico8_patch::Status::NoId, _)
+            | (_, None) => Vec::new(),
+            (_, Some(root)) => crate::pico8_cache::missing(root, &rom),
+        };
+        let need = match status {
+            crate::pico8_patch::Status::Multicart { .. } => Pico8Need::Patch,
+            _ if !missing.is_empty() => Pico8Need::Download,
+            _ => Pico8Need::Nothing,
+        };
+        crate::pico8_net::note(&format!(
+            "slot: shelf: {} is {status:?}; needs {need:?}{}; checked in {} ms",
+            cart.stem,
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!(", missing {missing:?}")
+            },
+            started.elapsed().as_millis()
+        ));
+        self.pico8_need.insert(rom, need);
+    }
+
+    /// Whether Wi-Fi is up with an address, which is what a download needs.
+    fn online(&self) -> bool {
+        self.wifi_was_up
+    }
+
+    /// For tests with no radio: say Wi-Fi is up.
+    #[doc(hidden)]
+    pub fn assume_online(&mut self) {
+        self.wifi_was_up = true;
+    }
+
+    /// For tests: how the download thread fetches.
+    #[doc(hidden)]
+    pub fn set_offline_fetch(
+        &mut self,
+        fetch: Arc<dyn Fn() -> Box<dyn crate::pico8_cache::Fetch + Send> + Send + Sync>,
+    ) {
+        self.offline_fetch = fetch;
+    }
+
+    /// Whether a download (one cart's, or the Patcher's run through them all) is running.
+    pub fn downloading(&self) -> bool {
+        self.offline_busy()
+    }
+
+    /// A download is still running.
+    fn offline_busy(&self) -> bool {
+        self.offline.as_ref().is_some_and(|o| o.result.is_none())
+    }
+
+    /// SELECT+START on the shelf: a cart that needs the patch is patched, then every cart it
+    /// names is fetched so it plays with Wi-Fi off. Refused with nothing to do, with Wi-Fi down,
+    /// and while another download runs, so the chord never falls through to START.
+    fn get_offline(&mut self) {
+        self.check_selected_need();
+        let note = |why: &str| crate::pico8_net::note(&format!("slot: shelf: SELECT+START {why}"));
+        let Some((rom, need)) = self.selected_pico8().map(|(r, n)| (r.to_path_buf(), n)) else {
+            note("refused: the selected cart is not a PICO-8 cart");
+            return self.refuse();
+        };
+        let why = if need == Pico8Need::Nothing {
+            Some("it needs nothing")
+        } else if self.offline_busy() {
+            Some("a download is already running")
+        } else if !self.online() {
+            Some("Wi-Fi is not connected")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            note(&format!("refused on {}: {why}", rom.display()));
+            return self.refuse();
+        }
+        if self.root.is_none() {
+            note("refused: no card");
+            return self.refuse();
+        }
+        note(&format!(
+            "on {}: {need:?}; network route {}",
+            rom.display(),
+            if crate::pico8_net::has_route() {
+                "up"
+            } else {
+                "MISSING"
+            }
+        ));
+        if need == Pico8Need::Patch {
+            self.apply_patch(&rom, false);
+            if crate::pico8_patch::status(&rom) != crate::pico8_patch::Status::Patched {
+                return;
+            }
+        }
+        if !self.start_download(rom) {
+            self.refuse();
+        }
+    }
+
+    /// Starts fetching every part `rom` names, on a thread. `false` when it cannot: no card,
+    /// Wi-Fi down, or a download already running.
+    fn start_download(&mut self, rom: PathBuf) -> bool {
+        let Some(root) = self.root.clone() else {
+            return false;
+        };
+        if self.offline_busy() || !self.online() {
+            crate::pico8_net::note(&format!(
+                "slot: download for {} not started: {}",
+                rom.display(),
+                if self.offline_busy() {
+                    "another is running"
+                } else {
+                    "Wi-Fi is not connected"
+                }
+            ));
+            return false;
+        }
+        let shared = Arc::new(std::sync::Mutex::new(OfflineJob::default()));
+        let job = shared.clone();
+        let make = self.offline_fetch.clone();
+        let cart = rom.clone();
+        crate::latency::note(&format!("offline copy: {} started", rom.display()));
+        let begun = self.now();
+        let spawned = std::thread::Builder::new()
+            .name("pico8-offline".into())
+            .spawn(move || {
+                let mut fetch = make();
+                let result = crate::pico8_cache::download(
+                    &root,
+                    &cart,
+                    fetch.as_mut(),
+                    &mut |done, total| {
+                        if let Ok(mut j) = job.lock() {
+                            j.done = done;
+                            j.total = total;
+                        }
+                    },
+                );
+                if let Ok(mut j) = job.lock() {
+                    j.result = Some(result);
+                }
+            });
+        if spawned.is_err() {
+            return false;
+        }
+        self.offline = Some(Offline {
+            rom,
+            shared,
+            result: None,
+            ended_at: 0,
+            started_at: begun,
+            batch: false,
+            seen_done: 0,
+        });
+        true
+    }
+
+    /// The Patcher's one button: every cart that needs the patch is patched, and every cart
+    /// with parts not on the card has them fetched, one cart after another on a thread. A cart
+    /// that fails is noted and the run goes on to the next. Needs Wi-Fi, since patching a cart
+    /// whose parts cannot then be fetched leaves it unable to run offline.
+    fn patch_all(&mut self) {
+        use crate::pico8_patch::Status;
+        let note = |line: &str| crate::pico8_net::note(&format!("slot: patcher: all: {line}"));
+        let Some(root) = self.root.clone() else {
+            return self.refuse();
+        };
+        if self.offline_busy() {
+            note("refused: a download is already running");
+            return self.refuse();
+        }
+        if !self.online() {
+            note("refused: Wi-Fi is not connected");
+            return self.refuse();
+        }
+        let carts: Vec<PathBuf> = self
+            .patcher
+            .iter()
+            .filter(|c| matches!(c.status, Status::Multicart { .. }) || !c.missing.is_empty())
+            .map(|c| c.path.clone())
+            .collect();
+        if carts.is_empty() {
+            note("nothing to do: every multicart is patched and has its parts");
+            return self.refuse();
+        }
+        note(&format!(
+            "{} carts to do: {:?}",
+            carts.len(),
+            carts
+                .iter()
+                .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+        ));
+        let stamp = format_stamp(self.wall_secs());
+        let shared = Arc::new(std::sync::Mutex::new(OfflineJob::default()));
+        let job = shared.clone();
+        let make = self.offline_fetch.clone();
+        let games = crate::pico8_patch::games(&root);
+        let spawned = std::thread::Builder::new()
+            .name("pico8-patch-all".into())
+            .spawn(move || {
+                let mut fetch = make();
+                let mut fetched = 0;
+                let mut failed = Vec::new();
+                for (i, cart) in carts.iter().enumerate() {
+                    if let Ok(mut j) = job.lock() {
+                        j.current = Some(cart.clone());
+                        j.carts_done = i;
+                        j.done = 0;
+                        j.total = 0;
+                    }
+                    let name = cart
+                        .file_name()
+                        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+                    note(&format!("{} of {}: {name}", i + 1, carts.len()));
+                    if matches!(crate::pico8_patch::status(cart), Status::Multicart { .. }) {
+                        if crate::pico8_patch::patch(&root, cart).is_err() {
+                            failed.push(cart.clone());
+                            continue;
+                        }
+                        // A state of the cart as it was would bring the old code back.
+                        if let Some(stem) = cart.file_stem().and_then(|s| s.to_str()) {
+                            let ring = slot_store::StateRing::new(
+                                &root,
+                                slot_store::Platform::Pico8,
+                                Core::Pico8,
+                                stem,
+                            );
+                            if let Err(e) = ring.retire_resume(&stamp) {
+                                note(&format!("{stem}: resume: {e}"));
+                            }
+                        }
+                    }
+                    let got = crate::pico8_cache::download(
+                        &root,
+                        cart,
+                        fetch.as_mut(),
+                        &mut |done, total| {
+                            if let Ok(mut j) = job.lock() {
+                                j.done = done;
+                                j.total = total;
+                            }
+                        },
+                    );
+                    match got {
+                        Ok(n) => fetched += n,
+                        Err(id) => {
+                            note(&format!("{name}: stopped at #{id}; going on to the next"));
+                            failed.push(cart.clone());
+                        }
+                    }
+                }
+                let result = if failed.is_empty() {
+                    Ok(fetched)
+                } else {
+                    Err(format!("{} of {} carts failed", failed.len(), carts.len()))
+                };
+                if let Ok(mut j) = job.lock() {
+                    j.current = None;
+                    j.carts_done = carts.len();
+                    j.failed = failed;
+                    j.result = Some(result);
+                }
+            });
+        if spawned.is_err() {
+            return self.refuse();
+        }
+        self.offline = Some(Offline {
+            rom: games,
+            shared,
+            result: None,
+            ended_at: 0,
+            started_at: self.now(),
+            batch: true,
+            seen_done: 0,
+        });
+    }
+
+    /// Once a frame: the download's news in, and its last word taken down once it has been up
+    /// long enough to read.
+    fn poll_offline(&mut self) {
+        let now = self.now();
+        let Some(o) = &mut self.offline else {
+            return;
+        };
+        if o.result.is_none() {
+            // Each cart the run finishes changes what the page says about it.
+            let done = o.shared.lock().map_or(o.seen_done, |j| j.carts_done);
+            if o.batch && done != o.seen_done {
+                o.seen_done = done;
+                self.pico8_need.clear();
+                if self.on_patcher_page() {
+                    self.rescan_patcher();
+                }
+                return;
+            }
+            let Some(result) = o.shared.lock().ok().and_then(|mut j| j.result.take()) else {
+                return;
+            };
+            let took = now.saturating_sub(o.started_at);
+            let line = match (&result, o.batch) {
+                (Ok(n), _) => format!("{n} carts fetched in {took} ms"),
+                (Err(why), true) => format!("{why}, after {took} ms"),
+                (Err(id), false) => format!("stopped at #{id} after {took} ms"),
+            };
+            crate::latency::note(&format!("offline copy: {line}"));
+            crate::pico8_net::note(&format!(
+                "slot: shelf: download for {}: {line}",
+                o.rom.display()
+            ));
+            let failed = result.is_err();
+            o.result = Some(result);
+            o.ended_at = now;
+            // What the cart needs has changed either way: ask again.
+            self.pico8_need.clear();
+            if self.on_patcher_page() {
+                self.rescan_patcher();
+            }
+            if failed {
+                self.refuse();
+            }
+        } else if now.saturating_sub(o.ended_at) >= OFFLINE_WORD_MS {
+            self.offline = None;
+        }
+    }
+
+    /// What the shelf says over the selected PICO-8 cart: whether it shows SELECT + START in
+    /// front, and the words. `None` over a cart with nothing to say.
+    pub fn pico8_hint_text(&self) -> Option<(bool, String)> {
+        if !self.on_shelf() || self.core_picker.is_some() {
+            return None;
+        }
+        let (rom, need) = self.selected_pico8()?;
+        if let Some(o) = self.offline.as_ref().filter(|o| o.rom == rom) {
+            return Some(match &o.result {
+                None => {
+                    let (done, total) = o.shared.lock().map_or((0, 0), |j| (j.done, j.total));
+                    let total = total.max(1);
+                    match crate::pico8_cache::bbs_wait_secs() {
+                        // The BBS asked for a pause: say so, so the wait does not look stuck.
+                        Some(secs) => (false, format!("BBS busy: {secs}s")),
+                        None => (
+                            false,
+                            format!("Downloading {}/{total}", (done + 1).min(total)),
+                        ),
+                    }
+                }
+                Some(Ok(_)) => (false, "Ready offline".into()),
+                Some(Err(_)) => (false, "Download failed".into()),
+            });
+        }
+        match need {
+            Pico8Need::Nothing => None,
+            _ if !self.online() => Some((false, "Needs Wi-Fi".into())),
+            Pico8Need::Patch => Some((true, "Patch & download".into())),
+            Pico8Need::Download => Some((true, "Download parts".into())),
+        }
+    }
+
+    /// What the faces the binary last made for the line say, if it made any.
+    pub fn pico8_hint_made(&self) -> Option<&(bool, String)> {
+        self.pico8_hint.as_ref().map(|h| &h.text)
+    }
+
+    /// The SELECT + face and the face for the rest, made by the binary for `text`.
+    pub fn set_pico8_hint(
+        &mut self,
+        text: (bool, String),
+        select: (TexId, u32),
+        body: (TexId, u32),
+    ) {
+        self.pico8_hint = Some(Pico8HintFaces { text, select, body });
+    }
+
+    /// The faces already made, which the binary redraws in place when the words change.
+    pub fn pico8_hint_faces(&self) -> Option<((TexId, u32), (TexId, u32))> {
+        self.pico8_hint.as_ref().map(|h| (h.select, h.body))
+    }
+
+    /// Over the selected cart, on a dark pill so it reads on any wallpaper. Only once the row
+    /// has settled on it, so it does not slide about with a cart passing through the middle.
+    fn draw_pico8_hint(&self, out: &mut Vec<Draw>) {
+        let Some(text) = self.pico8_hint_text() else {
+            return;
+        };
+        let keys = text.0;
+        let shelf = self.shelf();
+        if (shelf.scroll_target() - shelf.scroll).abs() > 0.05 {
+            return;
+        }
+        let (_, ch) = slot_ui::cart_box(slot_store::Platform::Pico8);
+        let top =
+            slot_ui::foot_y(ch as f32) - ch as f32 + slot_ui::lowered(ch as f32, SHELF_ROW_LOWER);
+        // Until the binary has made faces for what the line says now, it holds its place.
+        let made = self.pico8_hint.as_ref().filter(|h| h.text == text);
+        let select = made.map_or((None, 80), |h| (Some(h.select.0), h.select.1));
+        let body = made.map_or((None, 200), |h| (Some(h.body.0), h.body.1));
+        let gap = 4.0;
+        let seen = |w: u32| w.saturating_sub(slot_ui::HINT_EDGE) as f32;
+        let w = if keys {
+            seen(select.1) + gap + seen(body.1)
+        } else {
+            seen(body.1)
+        };
+        let h = slot_ui::HINT_H as f32;
+        let pad = 8.0;
+        let x = ((OUT_W as f32 - w) / 2.0).round();
+        let y = (top - h - pad * 2.0).round();
+        out.push(Draw::Rect {
+            x: x - pad,
+            y: y - pad / 2.0,
+            w: w + pad * 2.0,
+            h: h + pad,
+            colour: [0.0, 0.0, 0.0, 0.72],
+        });
+        let mut at = x;
+        if keys {
+            out.push(slot_ui::hint_quad(at, y, select.1 as f32, select.0));
+            at += seen(select.1) + gap;
+        }
+        out.push(slot_ui::hint_quad(at, y, body.1 as f32, body.0));
+    }
+
+    /// Every word the Patcher on screen says, for the binary to make the ones it has not yet.
+    pub fn patcher_words(&self) -> Vec<String> {
+        if !self.on_patcher_page() {
+            return Vec::new();
+        }
+        if self.patcher.is_empty() {
+            return vec![PATCHER_EMPTY.to_string()];
+        }
+        self.patcher.iter().map(|c| patcher_name(&c.name)).collect()
+    }
+
+    /// Every row's label and value, as the page shows them.
+    pub fn patcher_rows(&self) -> Vec<(String, Option<String>)> {
+        self.patcher
+            .iter()
+            .map(|c| {
+                let batch = self.offline.as_ref().filter(|o| o.batch);
+                if let Some(o) = batch {
+                    let j = o.shared.lock();
+                    let (current, failed, done, total) =
+                        j.as_ref().map_or((None, false, 0, 0), |j| {
+                            (
+                                j.current.clone(),
+                                j.failed.contains(&c.path),
+                                j.done,
+                                j.total,
+                            )
+                        });
+                    let o_failed = matches!(o.result, Some(Err(_)));
+                    if current.as_ref() == Some(&c.path) {
+                        let total = total.max(1);
+                        let value = match crate::pico8_cache::bbs_wait_secs() {
+                            Some(secs) => format!("Wait {secs}s"),
+                            None => format!("{}/{total}", (done + 1).min(total)),
+                        };
+                        return (patcher_name(&c.name), Some(value));
+                    }
+                    if failed && o_failed {
+                        return (patcher_name(&c.name), Some("Failed".to_string()));
+                    }
+                }
+                let job = self
+                    .offline
+                    .as_ref()
+                    .filter(|o| !o.batch && o.rom == c.path);
+                let value = match job.map(|o| &o.result) {
+                    Some(None) => {
+                        let job = job.expect("matched Some");
+                        let (done, total) = job.shared.lock().map_or((0, 0), |j| (j.done, j.total));
+                        let total = total.max(1);
+                        Some(match crate::pico8_cache::bbs_wait_secs() {
+                            Some(secs) => format!("Wait {secs}s"),
+                            None => format!("{}/{total}", (done + 1).min(total)),
+                        })
+                    }
+                    Some(Some(Err(_))) => Some("Failed".to_string()),
+                    _ => patcher_value(c).map(str::to_string),
+                };
+                (patcher_name(&c.name), value)
+            })
+            .collect()
+    }
+
+    /// Every value the Patcher shows now, for the binary to make the ones it has not yet: a
+    /// download's progress changes as it goes.
+    pub fn patcher_values(&self) -> Vec<String> {
+        if !self.on_patcher_page() {
+            return Vec::new();
+        }
+        self.patcher_rows()
+            .into_iter()
+            .filter_map(|(_, v)| v)
+            .collect()
+    }
+
+    pub fn on_patcher_page(&self) -> bool {
+        matches!(self.phase, Phase::Patcher { .. })
+    }
+
+    pub fn has_patcher_legend(&self) -> bool {
+        self.patcher_legend.is_some()
+    }
+
+    pub fn set_patcher_legend(&mut self, legend: [(TexId, u32); 3]) {
+        self.patcher_legend = Some(legend);
+    }
+
+    fn draw_patcher(&self, row: usize, out: &mut Vec<Draw>) {
+        use crate::pico8_patch::Status;
+        let list: Vec<slot_ui::ListRow> = if self.patcher.is_empty() {
+            vec![slot_ui::ListRow {
+                label: self.words.get(PATCHER_EMPTY).copied(),
+                value: None,
+                arrows: false,
+            }]
+        } else {
+            self.patcher_rows()
+                .into_iter()
+                .map(|(label, value)| slot_ui::ListRow {
+                    label: self.words.get(&label).copied(),
+                    value: value.and_then(|v| self.words.get(&v).copied()),
+                    arrows: false,
+                })
+                .collect()
+        };
+        let legend: Vec<(TexId, u32)> = match self.patcher_legend {
+            Some([back, all, restore]) => {
+                let mut legend = vec![back];
+                if !self.offline_busy() {
+                    if self
+                        .patcher
+                        .get(row)
+                        .is_some_and(|c| c.status == Status::Patched)
+                    {
+                        legend.push(restore);
+                    }
+                    if self.patcher.iter().any(|c| {
+                        matches!(c.status, Status::Multicart { .. }) || !c.missing.is_empty()
+                    }) {
+                        legend.push(all);
+                    }
+                }
+                legend
+            }
+            None => Vec::new(),
+        };
+        slot_ui::ListMenu {
+            rows: &list,
+            selected: row.min(list.len().saturating_sub(1)),
+            carets: None,
+            legend: &legend,
+        }
+        .draw(out);
+    }
+}
+
+/// What a PICO-8 cart on the shelf still needs before it plays with Wi-Fi off.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Pico8Need {
+    /// A multicart that only finds its parts from the BBS: patched, then its parts fetched.
+    Patch,
+    /// Parts it names that are not on the card yet.
+    Download,
+    /// Nothing: it runs from the card as it is.
+    Nothing,
+}
+
+/// How long the shelf keeps a finished download's last word up.
+const OFFLINE_WORD_MS: Millis = 3000;
+
+/// What the download thread shares with the frame loop.
+#[derive(Default)]
+struct OfflineJob {
+    done: usize,
+    total: usize,
+    /// The Patcher's run through every cart: the one being worked on, how many are finished,
+    /// and those that failed.
+    current: Option<PathBuf>,
+    carts_done: usize,
+    failed: Vec<PathBuf>,
+    result: Option<Result<usize, String>>,
+}
+
+/// One cart's download, while it runs and for a moment after.
+struct Offline {
+    rom: PathBuf,
+    shared: Arc<std::sync::Mutex<OfflineJob>>,
+    result: Option<Result<usize, String>>,
+    ended_at: Millis,
+    started_at: Millis,
+    /// The Patcher's run through every cart, rather than one cart's download.
+    batch: bool,
+    /// How many of the run's carts the page has been rescanned for.
+    seen_done: usize,
+}
+
+/// The faces for the shelf's line over a PICO-8 cart, and what they say.
+struct Pico8HintFaces {
+    text: (bool, String),
+    select: (TexId, u32),
+    body: (TexId, u32),
 }

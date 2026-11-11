@@ -690,8 +690,11 @@ fn both_b_and_menu_take_the_about_screen_back_to_the_quick_menu() {
             s.app_mut()
                 .apply(slot_input::Action::GbaDown(slot_input::Btn::Down));
         }
+        // About opens on the release, so a hold can replay the greeting instead.
         s.app_mut()
             .apply(slot_input::Action::GbaDown(slot_input::Btn::A));
+        s.app_mut()
+            .apply(slot_input::Action::GbaUp(slot_input::Btn::A));
         assert!(matches!(s.app().phase(), slot::app::Phase::About));
         s.app_mut().apply(out);
         assert_eq!(

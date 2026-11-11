@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define P8HOST_MAGIC 0x50384853u        /* "P8HS" */
-#define P8HOST_VERSION 1
+#define P8HOST_VERSION 3
 #define P8HOST_W 128
 #define P8HOST_H 128
 #define P8HOST_RATE 22050               /* PICO-8's mono 16-bit audio */
@@ -33,6 +33,17 @@ struct p8host {
 	uint32_t audio_r;                   /* samples read, free running */
 	uint32_t buttons;                   /* 1 << P8B_* */
 	uint64_t host_ns;                   /* CLOCK_MONOTONIC of the frontend's last frame */
+	/* A press followed through both sides, for the latency log (version 2). Every time is
+	 * CLOCK_MONOTONIC, which both processes share. */
+	uint64_t input_ns;                  /* frontend: when `buttons` last changed */
+	uint32_t input_seq;                 /* frontend: bumped after input_ns, before buttons */
+	uint32_t picked_frame;              /* frontend: frame_seq of the last new frame it took */
+	uint64_t picked_ns;                 /* frontend: when it took it */
+	/* Alignment (version 3): PICO-8 starts its frames just after the frontend writes the
+	 * buttons, and says so here; the frontend then waits for that frame. */
+	uint32_t aligned;                   /* PICO-8: frames start just after host_ns */
+	uint32_t waits_every;               /* frontend: waits for a frame every this many calls */
+	uint32_t waited, missed;            /* frontend: frames waited for and had, and not had */
 };
 
 #endif

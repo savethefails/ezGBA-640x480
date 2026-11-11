@@ -43,7 +43,13 @@ impl Slot {
     fn new() -> Self {
         Slot {
             gfx: None,
-            frontend: Frontend::boot(Box::new(SimPlatform::new())),
+            frontend: {
+                // No radio on a desk: a fake one with a few networks in range, so the Wi-Fi
+                // page can be driven.
+                let mut f = Frontend::boot(Box::new(SimPlatform::new()));
+                f.set_wifi(slot::wifi::Wifi::spawn(Box::new(slot::wifi::Fake::demo())));
+                f
+            },
             input: HostInput::new(),
         }
     }

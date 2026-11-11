@@ -94,6 +94,9 @@ pub struct SlotState {
     pub ff_speed: u8,
     /// Whether fast forward is heard, sped up, rather than dropped.
     pub ff_sound: bool,
+    /// Wi-Fi turned on from the quick menu's Wi-Fi page. Off until the player turns it on, and
+    /// kept across power offs: the radio costs battery, and only PICO-8's BBS downloads use it.
+    pub wifi_on: bool,
     /// Whether the core is asked to simulate the washed-out tint of the console's own LCD.
     ///
     /// A device-wide preference rather than a per-cart one, because the quick menu is only
@@ -140,6 +143,7 @@ impl Default for SlotState {
             rumble: true,
             ff_speed: FF_SPEED_DEFAULT,
             ff_sound: false,
+            wifi_on: false,
             colour_correction: false,
             greeted: false,
             shelf_cart: None,
@@ -163,7 +167,7 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nvolume_hp={}\nmuted={}\nmuted_hp={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngreeted={}\nshelf_cart={}\nshelf_platform={}\nwallpaper={}\n",
+        "cart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nvolume_hp={}\nmuted={}\nmuted_hp={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\nwifi_on={}\ncolour_correction={}\ngreeted={}\nshelf_cart={}\nshelf_platform={}\nwallpaper={}\n",
         s.cart.as_deref().unwrap_or(""),
         s.cart_platform.map_or(String::new(), platform_key),
         s.brightness,
@@ -177,6 +181,7 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.rumble as u8,
         s.ff_speed,
         s.ff_sound as u8,
+        s.wifi_on as u8,
         s.colour_correction as u8,
         s.greeted as u8,
         s.shelf_cart.as_deref().unwrap_or(""),
@@ -213,6 +218,7 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut rumble = None;
     let mut ff_speed = None;
     let mut ff_sound = None;
+    let mut wifi_on = None;
     let mut colour_correction = None;
     let mut greeted = None;
     let mut shelf_cart = None;
@@ -236,6 +242,7 @@ fn parse(text: &str) -> Option<SlotState> {
             "rumble" => rumble = flag(value),
             "ff_speed" => ff_speed = ff_speed_value(value),
             "ff_sound" => ff_sound = flag(value),
+            "wifi_on" => wifi_on = flag(value),
             "colour_correction" => colour_correction = flag(value),
             "greeted" => greeted = flag(value),
             // Forgiven like the settings: a card that never wrote them opens as it always did.
@@ -266,6 +273,7 @@ fn parse(text: &str) -> Option<SlotState> {
         rumble: rumble.unwrap_or(fallback.rumble),
         ff_speed: ff_speed.unwrap_or(fallback.ff_speed),
         ff_sound: ff_sound.unwrap_or(fallback.ff_sound),
+        wifi_on: wifi_on.unwrap_or(fallback.wifi_on),
         colour_correction: colour_correction.unwrap_or(fallback.colour_correction),
         greeted: greeted.unwrap_or(fallback.greeted),
         shelf_cart,

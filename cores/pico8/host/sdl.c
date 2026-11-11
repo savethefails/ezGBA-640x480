@@ -99,6 +99,147 @@ static uint64_t now_ns(void)
 	return (uint64_t)ts.tv_sec * 1000000000u + ts.tv_nsec;
 }
 static uint64_t start_ns;
+static pthread_t main_thread;         /* PICO-8's: see "alignment" */
+static int64_t adjust_ns;               /* taken off PICO-8's clock; negative runs it ahead */
+/* For the summary: frame starts measured, and their sum, since the last one. */
+static int64_t align_sum_ns;
+static unsigned align_n, align_skipped;
+
+/* ---- the latency log ----
+ * A press followed from the frontend changing the buttons, to PICO-8 taking them in, to the
+ * first frame PICO-8 published after that, to the frontend taking that frame. Written to
+ * PICO-8's own output, which ezGBA keeps on the card: a line for each of the first presses of a
+ * run and then every LAT_THEN'th, and every LAT_WINDOW_NS a summary of the frames, the input
+ * polls, the waits on the frontend and the presses. What it cannot see: the frames a cart takes
+ * to answer a press, and what the frontend does before and after. */
+#define LAT_WINDOW_NS 10000000000ull
+#define LAT_FIRST 40u
+#define LAT_THEN 25u
+struct lat_stat { double sum, max; unsigned n; };
+static void lat_add(struct lat_stat *s, double v)
+{
+	s->sum += v;
+	if (v > s->max) s->max = v;
+	s->n++;
+}
+static struct {
+	uint32_t seq, buttons, drawn_frame;
+	uint64_t in_ns, read_ns, drawn_ns;
+	int state;                          /* 0 nothing followed, 1 read, 2 drawn */
+	unsigned presses;
+	uint64_t since_ns, frame_ns, poll_ns;
+	unsigned frames, polls, waits;
+	double frame_gap, poll_gap, wait_ms;
+	struct lat_stat to_read, to_draw, to_pick, total;
+} lat;
+static int lat_on(void);
+
+static void lat_summary(uint64_t t)
+{
+	if (!lat.since_ns) { lat.since_ns = t; return; }
+	if (t - lat.since_ns < LAT_WINDOW_NS) return;
+#define AVG(s) ((s).n ? (s).sum / (s).n : 0.0)
+	fprintf(stderr, "[sdl] last %.1f s: %u frames published (longest gap %.1f ms), "
+		"%u input polls (longest gap %.1f ms), waited on the frontend %u times (%.0f ms); "
+		"%u presses: read avg %.1f max %.1f, drawn avg %.1f max %.1f, "
+		"taken avg %.1f max %.1f, core to core avg %.1f max %.1f ms\n",
+		(t - lat.since_ns) / 1e9, lat.frames, lat.frame_gap, lat.polls, lat.poll_gap,
+		lat.waits, lat.wait_ms, lat.total.n, AVG(lat.to_read), lat.to_read.max,
+		AVG(lat.to_draw), lat.to_draw.max, AVG(lat.to_pick), lat.to_pick.max,
+		AVG(lat.total), lat.total.max);
+#undef AVG
+	{
+		static uint32_t waited, missed;
+		uint32_t w = shm->waited, m = shm->missed;
+		fprintf(stderr, "[sdl]   alignment: %s; frames started %.1f ms after the buttons on "
+			"average (%u measured, %u not), clock moved %.1f ms in all; the core waits "
+			"every %u call(s): %u frames had, %u not in time\n",
+			__atomic_load_n(&shm->aligned, __ATOMIC_ACQUIRE) ? "aligned" : "NOT aligned",
+			align_n ? align_sum_ns / 1e6 / align_n : 0.0, align_n, align_skipped,
+			-adjust_ns / 1e6, shm->waits_every, w - waited, m - missed);
+		waited = w;
+		missed = m;
+		align_sum_ns = 0;
+		align_n = align_skipped = 0;
+	}
+	lat.since_ns = t;
+	lat.frames = lat.polls = lat.waits = 0;
+	lat.frame_gap = lat.poll_gap = lat.wait_ms = 0;
+	memset(&lat.to_read, 0, sizeof lat.to_read);
+	memset(&lat.to_draw, 0, sizeof lat.to_draw);
+	memset(&lat.to_pick, 0, sizeof lat.to_pick);
+	memset(&lat.total, 0, sizeof lat.total);
+}
+
+/* The followed press's frame has been published: has the frontend taken it yet? */
+static void lat_check_picked(void)
+{
+	if (lat.state != 2) return;
+	uint32_t pf = __atomic_load_n(&shm->picked_frame, __ATOMIC_ACQUIRE);
+	if ((int32_t)(pf - lat.drawn_frame) < 0) return;
+	uint64_t pick_ns = shm->picked_ns;
+	int exact = pf == lat.drawn_frame;
+	double r = (lat.read_ns - lat.in_ns) / 1e6, d = (lat.drawn_ns - lat.read_ns) / 1e6;
+	double p = pick_ns > lat.drawn_ns ? (pick_ns - lat.drawn_ns) / 1e6 : 0;
+	double all = pick_ns > lat.in_ns ? (pick_ns - lat.in_ns) / 1e6 : 0;
+	lat_add(&lat.to_read, r);
+	lat_add(&lat.to_draw, d);
+	lat_add(&lat.to_pick, p);
+	lat_add(&lat.total, all);
+	lat.presses++;
+	if (lat.presses <= LAT_FIRST || lat.presses % LAT_THEN == 0)
+		fprintf(stderr, "[sdl] press %u (buttons %#x): PICO-8 read it %.1f ms after the core "
+			"sent it, published a frame %.1f ms after that, the core took %s %.1f ms later; "
+			"%.1f ms core to core\n", lat.presses, lat.buttons, r, d,
+			exact ? "it" : "a later one", p, all);
+	lat.state = 0;
+}
+
+/* PICO-8 has taken in buttons that changed. */
+static void lat_read(uint32_t b)
+{
+	if (!lat_on()) return;
+	uint32_t seq = __atomic_load_n(&shm->input_seq, __ATOMIC_ACQUIRE);
+	if (seq == lat.seq) return;
+	lat.seq = seq;
+	lat.buttons = b;
+	lat.in_ns = shm->input_ns;
+	lat.read_ns = now_ns();
+	lat.state = 1;
+}
+
+/* PICO-8 asked for input. */
+static void lat_poll(void)
+{
+	if (!lat_on()) return;
+	uint64_t t = now_ns();
+	if (lat.poll_ns) {
+		double gap = (t - lat.poll_ns) / 1e6;
+		if (gap > lat.poll_gap) lat.poll_gap = gap;
+	}
+	lat.poll_ns = t;
+	lat.polls++;
+}
+
+/* PICO-8 published frame `seq`. */
+static void lat_frame(uint32_t seq)
+{
+	if (!lat_on()) return;
+	uint64_t t = now_ns();
+	lat_check_picked();
+	if (lat.frame_ns) {
+		double gap = (t - lat.frame_ns) / 1e6;
+		if (gap > lat.frame_gap) lat.frame_gap = gap;
+	}
+	lat.frame_ns = t;
+	lat.frames++;
+	if (lat.state == 1) {
+		lat.drawn_ns = t;
+		lat.drawn_frame = seq;
+		lat.state = 2;
+	}
+	lat_summary(t);
+}
 
 __attribute__((constructor)) static void shim_init(void)
 {
@@ -115,6 +256,7 @@ __attribute__((constructor)) static void shim_init(void)
 		shm->magic = P8HOST_MAGIC;
 		shm->version = P8HOST_VERSION;
 	}
+	main_thread = pthread_self();
 }
 
 /* ---- core ---- */
@@ -125,31 +267,148 @@ EXPORT const char *SDL_GetError(void) { return ""; }
 EXPORT void SDL_ClearError(void) {}
 EXPORT SDL_bool SDL_SetHint(const char *n, const char *v) { (void)n; (void)v; return 1; }
 EXPORT void SDL_free(void *p) { free(p); }
-EXPORT Uint32 SDL_GetTicks(void) { return (Uint32)((now_ns() - start_ns) / 1000000); }
+/* Time PICO-8 spent held by wait_for_host, taken out of its clock: to PICO-8 the frontend
+ * being away is time that did not pass. Seen as a slow frame, the half second ezGBA takes to
+ * put a cart in had PICO-8 warn at boot that it was running below 30fps. */
+static uint64_t held_ns;
+
+/* ---- alignment ----
+ * PICO-8 starts a frame when its clock passes the frame's deadline, and the frontend writes the
+ * buttons once a frame of its own; the two drift past each other, so the frame drawn after a
+ * press was ready a few ms after the frontend had already taken the one before it, and a press
+ * waited a whole frontend frame here. Its clock is kept flowing (the ARM PICO-8 drops to 30 fps
+ * on one that steps) but nudged, under a millisecond a frame, until each frame starts just
+ * after the frontend writes the buttons. Then the frontend waits the few ms for that frame and
+ * shows it in the same frame of its own. */
+/* Frame start, after the buttons are written: far enough after that PICO-8's whole-millisecond
+ * clock and its wait between frames, which jitter a start by about a millisecond either way,
+ * never start one before them, which would leave a press for the frame after. */
+#define ALIGN_TARGET_NS 2000000ll
+#define ALIGN_STEP_NS 500000ll          /* the most the clock is moved in one frame */
+#define ALIGN_NEAR_NS 1500000ll         /* within this of the target counts as aligned */
+#define ALIGN_FAR_NS 3000000ll          /* past this, no longer aligned */
+#define ALIGN_RUN 8                     /* frames near the target in a row to be aligned */
+static uint64_t last_ticks_ns;          /* never goes back */
+static pthread_mutex_t ticks_lock = PTHREAD_MUTEX_INITIALIZER;
+/* On PICO-8's main thread: when it last woke from a wait, and the frontend's frame then. */
+static uint64_t woke_ns, woke_host_ns, published_ns;
+static int near_run;
+
+
+EXPORT Uint32 SDL_GetTicks(void)
+{
+	uint64_t held = __atomic_load_n(&held_ns, __ATOMIC_RELAXED);
+	pthread_mutex_lock(&ticks_lock);
+	int64_t t = (int64_t)(now_ns() - start_ns - held) - adjust_ns;
+	if (t < (int64_t)last_ticks_ns) t = (int64_t)last_ticks_ns;
+	last_ticks_ns = (uint64_t)t;
+	pthread_mutex_unlock(&ticks_lock);
+	return (Uint32)(t / 1000000);
+}
+
+static int lat_on(void);
+
+/* A frame has just been published: how far after the frontend's buttons did it start, and
+ * the clock moved to bring that to the target. */
+static void align_frame(uint64_t t)
+{
+	if (!lat_on()) return;
+	uint64_t start = woke_ns > published_ns ? woke_ns : published_ns;
+	uint64_t host = woke_ns > published_ns ? woke_host_ns : 0;
+	published_ns = t;
+	if (!host || start < host) { align_skipped++; return; }
+	int64_t period = 16800000ll;
+	int64_t e = (int64_t)(start - host) % period;
+	if (e > period / 2) e -= period;            /* started just before the next buttons */
+	align_sum_ns += e;
+	align_n++;
+	int64_t err = e - ALIGN_TARGET_NS;
+	int64_t step = err * 3 / 10;
+	if (step > ALIGN_STEP_NS) step = ALIGN_STEP_NS;
+	if (step < -ALIGN_STEP_NS) step = -ALIGN_STEP_NS;
+	pthread_mutex_lock(&ticks_lock);
+	adjust_ns -= step;
+	pthread_mutex_unlock(&ticks_lock);
+	int64_t mag = err < 0 ? -err : err;
+	if (mag <= ALIGN_NEAR_NS) {
+		if (near_run < ALIGN_RUN && ++near_run == ALIGN_RUN)
+			__atomic_store_n(&shm->aligned, 1, __ATOMIC_RELEASE);
+	} else if (mag > ALIGN_FAR_NS) {
+		near_run = 0;
+		__atomic_store_n(&shm->aligned, 0, __ATOMIC_RELEASE);
+	}
+}
+
 EXPORT void SDL_Delay(Uint32 ms)
 {
+	/* PICO-8's main loop between frames: woken as soon as the frontend writes new buttons, so
+	 * a frame due then starts then. Other threads (the sound) sleep for real. */
+	if (lat_on() && pthread_equal(pthread_self(), main_thread)) {
+		uint64_t host = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
+		uint64_t until = now_ns() + (uint64_t)ms * 1000000ull;
+		while (now_ns() < until && __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE) == host) {
+			struct timespec ts = { 0, 200000 };
+			nanosleep(&ts, NULL);
+		}
+		woke_ns = now_ns();
+		woke_host_ns = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
+		return;
+	}
 	struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000 };
 	while (nanosleep(&ts, &ts) != 0) {}
 }
 
 /* ---- threads ---- */
-struct thread { pthread_t t; int (*fn)(void *); void *data; };
+/* PICO-8 downloads from the BBS on a thread, keeps the handle, and detaches
+ * it when the next download starts. A handle is ours, not PICO-8's: it is
+ * not in the memory a save state keeps. So a state loaded in another run
+ * holds a handle this process never made, and detaching through it would
+ * read freed or unmapped memory. Only handles made here, and not yet
+ * detached, are acted on; any other is a thread that no longer exists. */
+struct thread { pthread_t t; struct thread *next; };
+struct thread_start { int (*fn)(void *); void *data; };
+static struct thread *threads;
+static pthread_mutex_t threads_lock = PTHREAD_MUTEX_INITIALIZER;
 static void *thread_main(void *p)
 {
-	struct thread *t = p;
-	return (void *)(intptr_t)t->fn(t->data);
+	struct thread_start s = *(struct thread_start *)p;
+	free(p);
+	return (void *)(intptr_t)s.fn(s.data);
 }
 EXPORT void *SDL_CreateThread(int (*fn)(void *), const char *name, void *data)
 {
 	(void)name;
 	struct thread *t = calloc(1, sizeof *t);
-	if (!t) return NULL;
-	t->fn = fn;
-	t->data = data;
-	if (pthread_create(&t->t, NULL, thread_main, t) != 0) { free(t); return NULL; }
+	struct thread_start *s = malloc(sizeof *s);
+	if (!t || !s) { free(t); free(s); return NULL; }
+	s->fn = fn;
+	s->data = data;
+	pthread_mutex_lock(&threads_lock);
+	if (pthread_create(&t->t, NULL, thread_main, s) != 0) {
+		pthread_mutex_unlock(&threads_lock);
+		free(t);
+		free(s);
+		return NULL;
+	}
+	t->next = threads;
+	threads = t;
+	pthread_mutex_unlock(&threads_lock);
 	return t;
 }
-EXPORT void SDL_DetachThread(void *p) { if (p) pthread_detach(((struct thread *)p)->t); }
+EXPORT void SDL_DetachThread(void *p)
+{
+	if (!p) return;
+	pthread_mutex_lock(&threads_lock);
+	for (struct thread **at = &threads; *at; at = &(*at)->next) {
+		if (*at != p) continue;
+		struct thread *t = *at;
+		*at = t->next;
+		pthread_detach(t->t);
+		free(t);
+		break;
+	}
+	pthread_mutex_unlock(&threads_lock);
+}
 
 /* ---- displays and video drivers ---- */
 #define SCREEN_W 640
@@ -248,12 +507,24 @@ EXPORT void SDL_UnlockSurface(SDL_Surface *s) { (void)s; }
 static void wait_for_host(void)
 {
 	if (shm == &local_shm) return;
+	uint64_t from = 0;
 	for (;;) {
 		uint64_t h = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
-		if (h && now_ns() - h < HOST_STALE_NS) return;
+		uint64_t t = now_ns();
+		if (h && t - h < HOST_STALE_NS) {
+			if (from) {
+				lat.waits++;
+				lat.wait_ms += (t - from) / 1e6;
+				__atomic_fetch_add(&held_ns, t - from, __ATOMIC_RELAXED);
+			}
+			return;
+		}
+		if (!from) from = t;
 		SDL_Delay(5);
 	}
 }
+
+static int lat_on(void) { return shm && shm != &local_shm; }
 
 /* Sample a w x h picture (pitch in pixels) down to 128x128 and publish it. */
 static void publish(const uint32_t *px, int w, int h, int pitch)
@@ -269,6 +540,8 @@ static void publish(const uint32_t *px, int w, int h, int pitch)
 	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 	__atomic_store_n(&shm->frame_seq, seq + 2, __ATOMIC_RELEASE);
 	__atomic_store_n(&shm->ready, 1, __ATOMIC_RELEASE);
+	lat_frame(seq + 2);
+	align_frame(now_ns());
 }
 
 EXPORT SDL_Surface *SDL_GetWindowSurface(void *p)
@@ -419,8 +692,10 @@ static int npending;
 
 static void sync_keys(void)
 {
+	lat_poll();
 	uint32_t b = __atomic_load_n(&shm->buttons, __ATOMIC_ACQUIRE);
 	if (b == buttons_seen) return;
+	lat_read(b);
 	Uint8 want[NUM_SCANCODES] = { 0 };
 	for (int i = 0; i < NKEYS; i++)
 		if (b & (1u << keymap[i].button)) want[keymap[i].scancode] = 1;

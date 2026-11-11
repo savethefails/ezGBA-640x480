@@ -86,7 +86,7 @@ fn the_fast_forward_row_offers_the_four_ceilings_the_card_can_hold() {
     }
 }
 
-/// ezGBA keeps only Date & Time and About.
+/// ezGBA keeps Date & Time, Wi-Fi and About as the rows that open something.
 #[test]
 fn the_rows_run_in_the_order_the_user_chose() {
     let labels = QuickRow::ALL.map(QuickRow::label);
@@ -105,12 +105,22 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Colour Depth",
             "Run-Ahead",
             "SNES Emulator",
+            "Wi-Fi",
+            "Patcher",
             "About",
             "Brightness"
         ]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
-    assert_eq!(opens, [QuickRow::DateTime, QuickRow::About]);
+    assert_eq!(
+        opens,
+        [
+            QuickRow::DateTime,
+            QuickRow::Wifi,
+            QuickRow::Patcher,
+            QuickRow::About
+        ]
+    );
 }
 
 #[test]

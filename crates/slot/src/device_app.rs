@@ -20,6 +20,40 @@ const EMU_WAIT: Duration = Duration::from_millis(14);
 
 pub fn run() {
     slot::boot_time::mark("start");
+    // Before any thread exists, since changing the environment under a running thread is not
+    // safe: PICO-8's downloads run `wget` from `PATH`, and the one BaseOS has cannot do HTTPS
+    // the way PICO-8 asks. See `pico8_net`.
+    let bin = std::path::Path::new(slot::pico8_net::BIN);
+    let card = std::env::var_os("SLOT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(CARD));
+    // Every download PICO-8 asks for, and how it went, on the card where it can be read after.
+    std::env::set_var(
+        slot::pico8_net::LOG_VAR,
+        slot::root::logs_dir(&card).join(slot::pico8_net::LOG_NAME),
+    );
+    // PICO-8 itself through a script that keeps its output on the card. The core starts it
+    // through whatever P8CORE_WRAPPER names.
+    match slot::pico8_net::install_run(bin) {
+        Ok(run) => {
+            std::env::set_var(
+                slot::pico8_net::RUN_LOG_VAR,
+                slot::root::logs_dir(&card).join(slot::pico8_net::RUN_LOG_NAME),
+            );
+            std::env::set_var("P8CORE_WRAPPER", run);
+        }
+        Err(e) => slot::pico8_net::note(&format!("slot: could not write the PICO-8 runner: {e}")),
+    }
+    match slot::pico8_net::install_wget(bin) {
+        Ok(_) => std::env::set_var(
+            "PATH",
+            slot::pico8_net::path_with(bin, std::env::var_os("PATH")),
+        ),
+        Err(e) => {
+            eprintln!("slot: pico8: no wget of our own: {e}");
+            slot::pico8_net::note(&format!("slot: could not write {}: {e}", bin.display()));
+        }
+    }
     // Off the boot path, while the panel and the GPU come up: parsing the fonts, and opening
     // the audio device, which BaseOS's own startup sound can keep busy. From slot 8a52c5d.
     let _ = std::thread::Builder::new()
@@ -58,6 +92,12 @@ pub fn run() {
     };
     slot::boot_time::mark("audio");
     let mut frontend = Frontend::boot_with(Box::new(platform), sink);
+    // The worker starts with the radio left as it is: it is only brought up if the player has
+    // Wi-Fi on. Through the card's slotlink.sh, as a link brings up its own network.
+    frontend.set_wifi(slot::wifi::Wifi::spawn(Box::new(slot::wifi::sp::Wpa::new(
+        slot::wifi::sp::System,
+        root.clone(),
+    ))));
     slot::boot_time::mark("frontend");
     frontend.upload_boot_faces(&mut compositor);
     slot::boot_time::mark("faces");
