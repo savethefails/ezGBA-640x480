@@ -66,7 +66,7 @@ fn reflect_is_one_opaque_texel_a_block_and_black_for_a_black_frame() {
 }
 
 /// Red down the game's left half and blue down its right: the left bar glows red and the right
-/// blue, each dimmer away from the game, with the game's square and the block against it black.
+/// blue, each brightest against the game and dimmer away from it, with the game's square black.
 #[test]
 fn each_bar_reflects_its_own_edge_of_the_game_and_fades_outward() {
     let face = reflected(&frame(|x, _| {
@@ -76,10 +76,17 @@ fn each_bar_reflects_its_own_edge_of_the_game_and_fades_outward() {
     for x in BAR_TEXELS..REFLECT_W - BAR_TEXELS {
         assert_eq!(texel(&face, x, y), [0, 0, 0], "under the game at {x}");
     }
-    assert_eq!(texel(&face, BAR_TEXELS - 1, y), [0, 0, 0]);
-    assert_eq!(texel(&face, REFLECT_W - BAR_TEXELS, y), [0, 0, 0]);
-    let near_left = texel(&face, BAR_TEXELS - 2, y);
-    let near_right = texel(&face, REFLECT_W - BAR_TEXELS + 1, y);
+    // No dark line between the picture and the glass: the block against it is the brightest.
+    let near_left = texel(&face, BAR_TEXELS - 1, y);
+    let near_right = texel(&face, REFLECT_W - BAR_TEXELS, y);
+    assert!(
+        near_left[0] > texel(&face, BAR_TEXELS - 2, y)[0],
+        "{near_left:?}"
+    );
+    assert!(
+        near_right[2] > texel(&face, REFLECT_W - BAR_TEXELS + 1, y)[2],
+        "{near_right:?}"
+    );
     assert!(
         near_left[0] > near_left[2],
         "left bar not red: {near_left:?}"

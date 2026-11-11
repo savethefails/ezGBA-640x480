@@ -209,8 +209,8 @@ const SATURATION: f32 = 1.15;
 /// Reflect's bars from one frame of the game, `xrgb` being `size` pixels of XRGB8888 as the core
 /// draws them, into `out` as `REFLECT_W` x `REFLECT_H` RGBA. Each bar mirrors the game's edge
 /// beside it, as the glass round a CRT does: blurred wider and dimmed the further out it is, a
-/// little short of the picture's colour, and black for the block touching the game, so the
-/// picture keeps its edge. The game's square is left black; a frame that is no picture leaves
+/// up to the picture's own edge, with no dark line between them: the glass, dimmer than the
+/// picture, is edge enough. The game's square is left black; a frame that is no picture leaves
 /// all of it black.
 pub fn reflect_face(xrgb: &[u8], (w, h): (u32, u32), out: &mut Vec<u8>) {
     out.clear();
@@ -251,9 +251,6 @@ pub fn reflect_face(xrgb: &[u8], (w, h): (u32, u32), out: &mut Vec<u8>) {
     for (x0, left) in [(0, true), (REFLECT_W - BAR_BLOCKS, false)] {
         for bx in 0..BAR_BLOCKS {
             let d = if left { BAR_BLOCKS - 1 - bx } else { bx };
-            if d == 0 {
-                continue;
-            }
             let into = d as f32 * (BLOCK as f32 * across) * SQUEEZE;
             let reach = 0.6 + SPREAD * into;
             let cx = if left { into } else { fw as f32 - into };
