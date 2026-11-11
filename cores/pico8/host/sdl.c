@@ -99,9 +99,6 @@ static uint64_t now_ns(void)
 	return (uint64_t)ts.tv_sec * 1000000000u + ts.tv_nsec;
 }
 static uint64_t start_ns;
-/* PICO-8's main thread, and the last kick its clock has counted: see "time" below. */
-static pthread_t main_thread;
-static uint32_t clock_kick;
 
 /* ---- the latency log ----
  * A press followed from the frontend changing the buttons, to PICO-8 taking them in, to the
@@ -240,11 +237,6 @@ __attribute__((constructor)) static void shim_init(void)
 		shm->magic = P8HOST_MAGIC;
 		shm->version = P8HOST_VERSION;
 	}
-	main_thread = pthread_self();
-	if (shm != &local_shm) {
-		clock_kick = __atomic_load_n(&shm->kick, __ATOMIC_ACQUIRE);
-		__atomic_store_n(&shm->lockstep, 1, __ATOMIC_RELEASE);
-	}
 }
 
 /* ---- core ---- */
@@ -255,64 +247,19 @@ EXPORT const char *SDL_GetError(void) { return ""; }
 EXPORT void SDL_ClearError(void) {}
 EXPORT SDL_bool SDL_SetHint(const char *n, const char *v) { (void)n; (void)v; return 1; }
 EXPORT void SDL_free(void *p) { free(p); }
-/* ---- time ----
- * With a frontend, PICO-8 runs in lockstep with it: its clock is not the wall's but moves one
- * frame (1/60 s) each time the frontend asks for a frame (`kick`). PICO-8 waits on that clock
- * to start each frame, so it starts the moment the frontend has written the buttons, and the
- * frontend, waiting a few milliseconds, shows that frame in the same frame of its own. Free
- * running, the two clocks drift past each other and a press waited up to a frame of each.
- * The same clock holds PICO-8 still while the frontend takes no frames, and its boot check
- * always sees full speed. Without a frontend, the wall clock as before. */
-#define FRAME_US 16667ull
-/* A frontend that stalled for longer does not make PICO-8 race through what it missed. */
-#define MAX_CATCH_UP 4u
-static pthread_mutex_t clock_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t clock_us;
-static int lat_on(void);
-
-static int lockstep(void) { return lat_on(); }
-
-/* PICO-8's time, moved on by every kick since it was last asked. */
-static uint64_t clock_now_us(void)
-{
-	pthread_mutex_lock(&clock_lock);
-	uint32_t k = __atomic_load_n(&shm->kick, __ATOMIC_ACQUIRE);
-	uint32_t n = k - clock_kick;
-	if (n) {
-		clock_us += (uint64_t)(n > MAX_CATCH_UP ? MAX_CATCH_UP : n) * FRAME_US;
-		clock_kick = k;
-	}
-	uint64_t t = clock_us;
-	pthread_mutex_unlock(&clock_lock);
-	return t;
-}
-
+/* Time PICO-8 spent held by wait_for_host, taken out of its clock: to PICO-8 the frontend
+ * being away is time that did not pass. Seen as a slow frame, the half second ezGBA takes to
+ * put a cart in had PICO-8 warn at boot that it was running below 30fps. */
+static uint64_t held_ns;
 EXPORT Uint32 SDL_GetTicks(void)
 {
-	if (lockstep()) return (Uint32)(clock_now_us() / 1000);
-	return (Uint32)((now_ns() - start_ns) / 1000000);
+	uint64_t held = __atomic_load_n(&held_ns, __ATOMIC_RELAXED);
+	return (Uint32)((now_ns() - start_ns - held) / 1000000);
 }
-
-static void sleep_ns(uint64_t ns)
-{
-	struct timespec ts = { (time_t)(ns / 1000000000ull), (long)(ns % 1000000000ull) };
-	while (nanosleep(&ts, &ts) != 0) {}
-}
-
 EXPORT void SDL_Delay(Uint32 ms)
 {
-	/* PICO-8's main loop waiting for its next frame: it is done with this kick, and waits for
-	 * the next one rather than for the wall. Bounded, so nothing waits forever on a frontend
-	 * that has stopped asking. Other threads (the sound) sleep for real. */
-	if (lockstep() && pthread_equal(pthread_self(), main_thread)) {
-		uint32_t k = (clock_now_us(), clock_kick);
-		__atomic_store_n(&shm->done_kick, k, __ATOMIC_RELEASE);
-		uint64_t until = now_ns() + 100000000ull;
-		while (__atomic_load_n(&shm->kick, __ATOMIC_ACQUIRE) == k && now_ns() < until)
-			sleep_ns(200000);
-		return;
-	}
-	sleep_ns((uint64_t)ms * 1000000ull);
+	struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000 };
+	while (nanosleep(&ts, &ts) != 0) {}
 }
 
 /* ---- threads ---- */
@@ -463,8 +410,7 @@ EXPORT void SDL_UnlockSurface(SDL_Surface *s) { (void)s; }
 #define HOST_STALE_NS 200000000ull
 static void wait_for_host(void)
 {
-	/* In lockstep the clock itself holds PICO-8 while the frontend is away. */
-	if (shm == &local_shm || lockstep()) return;
+	if (shm == &local_shm) return;
 	uint64_t from = 0;
 	for (;;) {
 		uint64_t h = __atomic_load_n(&shm->host_ns, __ATOMIC_ACQUIRE);
@@ -473,6 +419,7 @@ static void wait_for_host(void)
 			if (from) {
 				lat.waits++;
 				lat.wait_ms += (t - from) / 1e6;
+				__atomic_fetch_add(&held_ns, t - from, __ATOMIC_RELAXED);
 			}
 			return;
 		}
