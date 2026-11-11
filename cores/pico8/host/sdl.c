@@ -100,6 +100,10 @@ static uint64_t now_ns(void)
 }
 static uint64_t start_ns;
 static pthread_t main_thread;         /* PICO-8's: see "alignment" */
+static int64_t adjust_ns;               /* taken off PICO-8's clock; negative runs it ahead */
+/* For the summary: frame starts measured, and their sum, since the last one. */
+static int64_t align_sum_ns;
+static unsigned align_n, align_skipped;
 
 /* ---- the latency log ----
  * A press followed from the frontend changing the buttons, to PICO-8 taking them in, to the
@@ -144,6 +148,20 @@ static void lat_summary(uint64_t t)
 		AVG(lat.to_draw), lat.to_draw.max, AVG(lat.to_pick), lat.to_pick.max,
 		AVG(lat.total), lat.total.max);
 #undef AVG
+	{
+		static uint32_t waited, missed;
+		uint32_t w = shm->waited, m = shm->missed;
+		fprintf(stderr, "[sdl]   alignment: %s; frames started %.1f ms after the buttons on "
+			"average (%u measured, %u not), clock moved %.1f ms in all; the core waits "
+			"every %u call(s): %u frames had, %u not in time\n",
+			__atomic_load_n(&shm->aligned, __ATOMIC_ACQUIRE) ? "aligned" : "NOT aligned",
+			align_n ? align_sum_ns / 1e6 / align_n : 0.0, align_n, align_skipped,
+			-adjust_ns / 1e6, shm->waits_every, w - waited, m - missed);
+		waited = w;
+		missed = m;
+		align_sum_ns = 0;
+		align_n = align_skipped = 0;
+	}
 	lat.since_ns = t;
 	lat.frames = lat.polls = lat.waits = 0;
 	lat.frame_gap = lat.poll_gap = lat.wait_ms = 0;
@@ -270,12 +288,12 @@ static uint64_t held_ns;
 #define ALIGN_NEAR_NS 1500000ll         /* within this of the target counts as aligned */
 #define ALIGN_FAR_NS 3000000ll          /* past this, no longer aligned */
 #define ALIGN_RUN 8                     /* frames near the target in a row to be aligned */
-static int64_t adjust_ns;               /* taken off PICO-8's clock; negative runs it ahead */
 static uint64_t last_ticks_ns;          /* never goes back */
 static pthread_mutex_t ticks_lock = PTHREAD_MUTEX_INITIALIZER;
 /* On PICO-8's main thread: when it last woke from a wait, and the frontend's frame then. */
 static uint64_t woke_ns, woke_host_ns, published_ns;
 static int near_run;
+
 
 EXPORT Uint32 SDL_GetTicks(void)
 {
@@ -298,10 +316,12 @@ static void align_frame(uint64_t t)
 	uint64_t start = woke_ns > published_ns ? woke_ns : published_ns;
 	uint64_t host = woke_ns > published_ns ? woke_host_ns : 0;
 	published_ns = t;
-	if (!host || start < host) return;
+	if (!host || start < host) { align_skipped++; return; }
 	int64_t period = 16800000ll;
 	int64_t e = (int64_t)(start - host) % period;
 	if (e > period / 2) e -= period;            /* started just before the next buttons */
+	align_sum_ns += e;
+	align_n++;
 	int64_t err = e - ALIGN_TARGET_NS;
 	int64_t step = err * 3 / 10;
 	if (step > ALIGN_STEP_NS) step = ALIGN_STEP_NS;

@@ -42,6 +42,8 @@ struct p8host {
 	/* Alignment (version 3): PICO-8 starts its frames just after the frontend writes the
 	 * buttons, and says so here; the frontend then waits for that frame. */
 	uint32_t aligned;                   /* PICO-8: frames start just after host_ns */
+	uint32_t waits_every;               /* frontend: waits for a frame every this many calls */
+	uint32_t waited, missed;            /* frontend: frames waited for and had, and not had */
 };
 
 #endif

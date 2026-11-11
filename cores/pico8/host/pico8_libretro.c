@@ -467,8 +467,8 @@ static void wait_for_frame(uint32_t before)
 	uint64_t until = now_ns() + ALIGNED_WAIT_NS;
 	for (;;) {
 		uint32_t s = __atomic_load_n(&shm->frame_seq, __ATOMIC_ACQUIRE);
-		if (s != before && !(s & 1)) return;
-		if (now_ns() >= until) return;
+		if (s != before && !(s & 1)) { shm->waited++; return; }
+		if (now_ns() >= until) { shm->missed++; return; }
 		struct timespec ts = { 0, 100000 };
 		nanosleep(&ts, NULL);
 	}
@@ -494,6 +494,7 @@ static void count_frames(uint32_t between)
 		unsigned twos = 0;
 		for (int i = 0; i < GAPS; i++) twos += gaps[i] == 2;
 		runs_per_frame = twos * 4 >= GAPS * 3 ? 2 : 1;
+		shm->waits_every = runs_per_frame;
 		runs_since_frame = late;
 	}
 }
