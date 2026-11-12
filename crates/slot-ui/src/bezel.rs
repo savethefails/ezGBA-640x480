@@ -202,6 +202,12 @@ const SPREAD: f32 = 0.4;
 /// The bezel slopes away from the screen, so it mirrors more of the picture than its own width:
 /// each block out reaches this many blocks into the game.
 const SQUEEZE: f32 = 1.6;
+/// The blur's height against its width: under 1, a bright spot spreads more along the glass
+/// than up and down it, so text does not fan out above and below itself.
+const VERTICAL: f32 = 0.6;
+/// The blur as boxes of these sizes (of the full reach) and weights, summing to 1: soft in the
+/// middle and fading out, rather than one hard-edged box.
+const BOXES: [(f32, f32); 3] = [(1.0, 0.25), (0.55, 0.35), (0.25, 0.4)];
 /// How much of the picture's colour the glass keeps: a little more than the picture has, since
 /// the dimming takes some of it back.
 const SATURATION: f32 = 1.15;
@@ -260,7 +266,22 @@ pub fn reflect_face(xrgb: &[u8], (w, h): (u32, u32), out: &mut Vec<u8>) {
             let glass = GLASS * (-(d as f32) / FALLOFF).exp();
             for by in 0..REFLECT_H {
                 let cy = (by * BLOCK) as f32 * down + BLOCK as f32 * down / 2.0;
-                let c = mean(cx - reach, cy - reach, cx + reach, cy + reach);
+                // Several boxes, each smaller and weighted more, rather than one: one box lights
+                // a growing square round each bright pixel, and its hard edges fan out as a
+                // wedge. Nested ones fall off softly from the middle.
+                let (rx, ry) = (reach, reach * VERTICAL);
+                let mut c = [0f32; 3];
+                for (size, weight) in BOXES {
+                    let m = mean(
+                        cx - rx * size,
+                        cy - ry * size,
+                        cx + rx * size,
+                        cy + ry * size,
+                    );
+                    for (ch, v) in m.into_iter().enumerate() {
+                        c[ch] += v * weight;
+                    }
+                }
                 let grey = (c[0] + c[1] + c[2]) / 3.0;
                 let at = ((by * REFLECT_W + x0 + bx) * 4) as usize;
                 for (ch, v) in c.into_iter().enumerate() {
